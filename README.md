@@ -1,18 +1,20 @@
 # Thesis System (Frontend)
 
-This repository currently contains the frontend setup for the thesis system. 
+This repository currently contains the frontend setup for the thesis system.
 
 ## Setup & Running Locally
 
 This project is built using React Native with Expo. Since this is currently a frontend-only setup, all you need is the Expo CLI and Node.js environment to get started.
 
 ### Prerequisites
+
 - Node.js installed on your machine.
 - [Expo Go](https://expo.dev/client) app installed on your physical mobile device if you want to test on a real device, or an Android/iOS emulator installed on your computer.
 
 ### Installation
 
 1. Navigate to the frontend directory:
+
    ```bash
    cd frontend
    ```
@@ -29,9 +31,11 @@ To start the development server, run the following command inside the `frontend`
 ```bash
 npx expo start
 ```
-*Note: You can run `npx expo start --tunnel` if you want to expose your local server to the internet, which can be useful for testing on a physical device.*
+
+_Note: You can run `npx expo start --tunnel` if you want to expose your local server to the internet, which can be useful for testing on a physical device._
 
 Once the server starts, you can:
+
 - **Scan the QR code** using the Expo Go app on your physical device.
 - Press **`a`** to open the app on an Android emulator.
 - Press **`i`** to open the app on an iOS simulator.
