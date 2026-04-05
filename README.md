@@ -19,7 +19,7 @@ This project is built using React Native with Expo. Since this is currently a fr
    cd frontend
    ```
 
-2. Install the necessary dependencies:
+2. Install the necessary dependencies: a
    ```bash
    npm install
    ```
