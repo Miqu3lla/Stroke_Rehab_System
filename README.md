@@ -1,25 +1,80 @@
-# Thesis System (Frontend)
+# Stroke Rehab System
 
-This repository currently contains the frontend setup for the thesis system.
+Mobile-Based Computer Vision and Machine Learning application for stroke rehabilitation.
 
-## Setup & Running Locally
+## Project Goal
 
-This project is built using React Native with Expo. Since this is currently a frontend-only setup, all you need is the Expo CLI and Node.js environment to get started.
+This system acts as a digital physical therapist by combining:
 
-### Prerequisites
+1. React Native mobile app for guided exercise sessions.
+2. MediaPipe pose extraction for 33-point skeletal tracking.
+3. LSTM-based movement form classification (correct vs incorrect).
+4. Random Forest recommendation engine for adaptive exercise plans.
 
-- Node.js installed on your machine.
-- [Expo Go](https://expo.dev/client) app installed on your physical mobile device if you want to test on a real device, or an Android/iOS emulator installed on your computer.
+## Why This Matters
 
-### Installation
+Stroke patients often lose supervised feedback after clinic sessions. This project closes that gap with real-time guidance, safer at-home rehabilitation, and progress-aware exercise recommendations.
 
-1. Navigate to the frontend directory:
+## Project Structure
+
+```text
+Stroke_Rehab_System/
+├── README.md
+├── .gitignore
+├── docs/
+│   ├── Concept_Paper.docx
+│   └── Title_Defense.pptx
+├── datasets/
+│   ├── archive/
+│   ├── Ready_Dataset/
+│   │   ├── train/
+│   │   ├── val/
+│   │   └── test/
+│   └── processed_data/
+├── backend/
+│   ├── requirements.txt
+│   ├── main_api.py
+│   ├── models/
+│   │   ├── lstm_weights.pth
+│   │   └── rf_recommender.pkl
+│   ├── core/
+│   │   ├── mediapipe_vision.py
+│   │   ├── neural_network.py
+│   │   └── recommender.py
+│   └── scripts/
+│       ├── dataset_splitter.py
+│       └── train_model.py
+└── frontend/
+    ├── assets/
+    ├── src/
+    │   ├── api/
+    │   ├── components/
+    │   │   ├── common/
+    │   │   └── exercise/
+    │   ├── constants/
+    │   ├── hooks/
+    │   ├── navigation/
+    │   ├── screens/
+    │   ├── services/
+    │   ├── store/
+    │   └── utils/
+    ├── App.js
+    ├── app.json
+    ├── index.js
+    ├── tailwind.config.js
+    └── package.json
+```
+
+## Frontend Setup (Expo)
+
+1. Open terminal at project root.
+2. Run:
 
    ```bash
    cd frontend
    ```
 
-2. Install the necessary dependencies: a
+3. Install the necessary dependencies:
    ```bash
    npm install
    ```
@@ -29,33 +84,36 @@ This project is built using React Native with Expo. Since this is currently a fr
 To start the development server, run the following command inside the `frontend` directory:
 
 ```bash
-npx expo start
+cd backend/scripts
+python train_model.py --data-dir ../../datasets/processed_data --out ../models/lstm_weights.pth --epochs 10
 ```
 
-_Note: You can run `npx expo start --tunnel` if you want to expose your local server to the internet, which can be useful for testing on a physical device._
+Output artifact:
 
-Once the server starts, you can:
+1. backend/models/lstm_weights.pth
 
-- **Scan the QR code** using the Expo Go app on your physical device.
-- Press **`a`** to open the app on an Android emulator.
-- Press **`i`** to open the app on an iOS simulator.
-- Press **`w`** to run the app in a web browser.
+### 4. Run the backend API
 
-## Current Folder Structure
+```bash
+cd backend
+uvicorn main_api:app --reload
+```
 
-The current structure of the project is as follows:
+Backend health endpoint:
 
 ```text
-thesis_system-for-now-/
-├── frontend/             # The main frontend directory
-│   ├── assets/           # Static assets like images and fonts
-│   ├── src/              # Source code for the application components and screens
-│   ├── App.js            # Main entry point component of the application
-│   ├── app.json          # Expo configuration file
-│   ├── index.js          # Entry file registered with Expo
-│   ├── package.json      # Project dependencies and scripts
-│   └── package-lock.json # Dependency lockfile
-└── README.md             # This documentation file
+GET http://127.0.0.1:8000/health
 ```
 
-> **Note:** This folder structure is preliminary and is expected to be updated as the project evolves and more features (like a backend) are integrated.
+### 5. Available backend endpoints
+
+1. GET /health
+2. POST /predict/form
+3. POST /predict/form-from-video
+4. POST /recommendation
+
+## Notes
+
+1. The model files in backend/models are placeholders until you train and save real weights.
+2. The recommender loads backend/models/rf_recommender.pkl when available, then falls back to rule-based recommendation.
+3. Dataset folders are scaffolded and ready for your train/val/test assets.
