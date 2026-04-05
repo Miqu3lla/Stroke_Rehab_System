@@ -1,0 +1,22 @@
+# Node / Expo
+frontend/node_modules/
+frontend/.expo/
+frontend/.expo-shared/
+
+# Python
+backend/.venv/
+backend/venv/
+backend/__pycache__/
+backend/**/*.pyc
+
+# Model artifacts
+backend/models/*.pth
+backend/models/*.pkl
+
+# Environment files
+.env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
