@@ -8,6 +8,7 @@ DEFAULT_MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "rf_rec
 _MODEL_CACHE: Dict[str, Any] = {"model": None, "loaded": False, "source": "rule_based"}
 
 
+# Normalize the stroke type so the recommender can map it to numeric features.
 def _encode_stroke_type(stroke_type: str) -> int:
     mapping = {
         "ischemic": 0,
@@ -37,6 +38,7 @@ def _load_rf_model(model_path: Path = DEFAULT_MODEL_PATH) -> Dict[str, Any]:
 
 
 def _build_features(stroke_type: str, months_in_recovery: int, latest_form_score: float) -> pd.DataFrame:
+    # Keep the feature row explicit so model input stays easy to inspect.
     score = max(0.0, min(1.0, latest_form_score))
     return pd.DataFrame(
         [
@@ -51,6 +53,7 @@ def _build_features(stroke_type: str, months_in_recovery: int, latest_form_score
 
 
 def _rule_based_intensity(months_in_recovery: int, latest_form_score: float) -> str:
+    # Fallback logic keeps the app useful even when the RF model file is missing.
     if months_in_recovery < 3 or latest_form_score < 0.5:
         return "low"
     if latest_form_score > 0.85 and months_in_recovery >= 6:
@@ -74,6 +77,7 @@ def recommend_next_plan(
     months_in_recovery: int,
     latest_form_score: float,
 ) -> Dict[str, Any]:
+    # Use the saved RF model when present, otherwise fall back to deterministic rules.
     cache = _load_rf_model()
     features = _build_features(stroke_type, months_in_recovery, latest_form_score)
 

@@ -2,14 +2,15 @@ services:
   backend:
     build: ./backend
     platform: linux/amd64
+    gpus: all # Pass through the NVIDIA GPU for CUDA training/inference when available
     ports:
-      - "8000:8000"
+      - "8001:8000" # Host 8001 avoids colliding with local Supabase/cloudflared on 8000
     volumes:
       - ./backend:/app # Syncs code changes instantly
       - ./datasets:/app/datasets # Mounted to root /datasets to match relative script paths
     environment:
       - PYTHONUNBUFFERED=1 # Lets you see logs in real-time
-    command: uvicorn main_api:app --host 0.0.0.0 --port 8000 --reload #start command to run the app
+      - PYTHONPATH=/app
   frontend:
     build: ./frontend
     ports:
@@ -19,3 +20,5 @@ services:
       - /app/node_modules
     environment:
       - NODE_ENV=development
+      - EXPO_DEVTOOLS_LISTEN_ADDRESS=0.0.0.0
+    command: npm run start -- --clear --host lan

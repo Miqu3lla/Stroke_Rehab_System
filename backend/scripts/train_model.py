@@ -1,5 +1,7 @@
 import argparse
+from contextlib import nullcontext
 from pathlib import Path
+from typing import Dict
 
 import numpy as np
 import pandas as pd
@@ -11,6 +13,7 @@ INPUT_SIZE = 99
 SEQUENCE_LEN = 40
 
 
+# Small LSTM classifier for sequence-based form detection.
 class StrokeLSTMClassifier(nn.Module):
     def __init__(self, input_size: int = INPUT_SIZE, hidden_size: int = 128, num_layers: int = 2):
         super().__init__()
@@ -32,18 +35,55 @@ class StrokeLSTMClassifier(nn.Module):
         return self.head(outputs[:, -1, :])
 
 
-def _build_synthetic_loader(batch_size: int = 16) -> DataLoader:
+def _build_synthetic_loader(
+    batch_size: int = 16,
+    num_workers: int = 0,
+    pin_memory: bool = False,
+) -> DataLoader:
+    # Synthetic data keeps the training script runnable even before CSV exports exist.
     samples = 256
     x = torch.randn(samples, SEQUENCE_LEN, INPUT_SIZE)
     y = (x.mean(dim=(1, 2)) > 0).long()
     dataset = TensorDataset(x, y)
-    return DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    return _create_loader(
+        dataset,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+    )
 
 
-def _load_dataset_loader(data_dir: Path, batch_size: int = 16) -> DataLoader:
+def _create_loader(
+    dataset: TensorDataset,
+    batch_size: int,
+    num_workers: int,
+    pin_memory: bool,
+) -> DataLoader:
+    # Pinning memory helps CUDA transfers when training on the GPU.
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=num_workers > 0,
+    )
+
+
+def _load_dataset_loader(
+    data_dir: Path,
+    batch_size: int = 16,
+    num_workers: int = 0,
+    pin_memory: bool = False,
+) -> DataLoader:
+    # Read processed CSV sequences and turn them into fixed-size tensors.
     csv_files = sorted(data_dir.rglob("*.csv"))
     if not csv_files:
-        return _build_synthetic_loader(batch_size=batch_size)
+        return _build_synthetic_loader(
+            batch_size=batch_size,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
 
     frames = []
     labels = []
@@ -66,19 +106,62 @@ def _load_dataset_loader(data_dir: Path, batch_size: int = 16) -> DataLoader:
             arr = arr[-SEQUENCE_LEN:, :]
 
         frames.append(arr)
-        # TODO: Replace filename-derived labels with annotation file parsing.
+        # Filename convention is used as a lightweight label source for now.
         label = 1 if "correct" in csv_path.stem.lower() else 0
         labels.append(label)
 
     if not frames:
-        return _build_synthetic_loader(batch_size=batch_size)
+        return _build_synthetic_loader(
+            batch_size=batch_size,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
 
     x = torch.tensor(np.stack(frames), dtype=torch.float32)
     y = torch.tensor(labels, dtype=torch.long)
-    return DataLoader(TensorDataset(x, y), batch_size=batch_size, shuffle=True)
+    return _create_loader(
+        TensorDataset(x, y),
+        batch_size=batch_size,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+    )
 
 
-def train_lstm(data_dir: Path, output_weights: Path, epochs: int = 5) -> None:
+def _autocast_context(device: torch.device, runtime: Dict[str, object]):
+    if device.type == "cuda" and runtime["amp_dtype"] is not None:
+        return torch.autocast("cuda", dtype=runtime["amp_dtype"])
+    return nullcontext()
+
+
+def _configure_cuda_runtime(device: torch.device) -> Dict[str, object]:
+    runtime = {
+        "cuda_enabled": device.type == "cuda",
+        "amp_dtype": None,
+    }
+
+    if device.type != "cuda":
+        return runtime
+
+    # Enable faster kernels and Tensor Core-friendly math where possible.
+    torch.backends.cudnn.benchmark = True
+    if hasattr(torch.backends.cuda.matmul, "allow_tf32"):
+        torch.backends.cuda.matmul.allow_tf32 = True
+    if hasattr(torch.backends.cudnn, "allow_tf32"):
+        torch.backends.cudnn.allow_tf32 = True
+
+    torch.set_float32_matmul_precision("high")
+    runtime["amp_dtype"] = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    return runtime
+
+
+def train_lstm(
+    data_dir: Path,
+    output_weights: Path,
+    epochs: int = 5,
+    batch_size: int = 32,
+    num_workers: int = 4,
+    compile_model: bool = True,
+) -> None:
     """
     Train a baseline LSTM classifier and save its state_dict.
     Falls back to synthetic data when no CSV sequences are available.
@@ -88,23 +171,58 @@ def train_lstm(data_dir: Path, output_weights: Path, epochs: int = 5) -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    loader = _load_dataset_loader(data_dir)
+    runtime = _configure_cuda_runtime(device)
+    if device.type == "cuda":
+        # Print GPU details so you can confirm the RTX 5060 Ti path is active.
+        gpu_name = torch.cuda.get_device_name(0)
+        capability = torch.cuda.get_device_capability(0)
+        print(f"CUDA device: {gpu_name} | capability={capability}")
+        print(f"AMP dtype: {runtime['amp_dtype']}")
+
+    loader = _load_dataset_loader(
+        data_dir,
+        batch_size=batch_size,
+        num_workers=num_workers if device.type == "cuda" else 0,
+        pin_memory=device.type == "cuda",
+    )
     model = StrokeLSTMClassifier().to(device)
+    if compile_model and device.type == "cuda" and hasattr(torch, "compile"):
+        try:
+            # torch.compile can fuse ops for better throughput on modern GPUs.
+            model = torch.compile(model, mode="max-autotune")
+            print("torch.compile enabled (max-autotune)")
+        except Exception as exc:
+            print(f"torch.compile skipped: {exc}")
+
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    use_fp16_scaler = device.type == "cuda" and runtime["amp_dtype"] == torch.float16
+    scaler = torch.amp.GradScaler("cuda", enabled=use_fp16_scaler)
 
     model.train()
     for epoch in range(epochs):
         running_loss = 0.0
         for batch_x, batch_y in loader:
-            batch_x = batch_x.to(device)
-            batch_y = batch_y.to(device)
+            # Keep host-to-device copies asynchronous on CUDA.
+            batch_x = batch_x.to(device, non_blocking=device.type == "cuda")
+            batch_y = batch_y.to(device, non_blocking=device.type == "cuda")
 
-            optimizer.zero_grad()
-            logits = model(batch_x)
-            loss = criterion(logits, batch_y)
-            loss.backward()
-            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+            with _autocast_context(device, runtime):
+                logits = model(batch_x)
+                loss = criterion(logits, batch_y)
+
+            if scaler.is_enabled():
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                # Clip gradients to stabilize training on mixed precision.
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                optimizer.step()
 
             running_loss += float(loss.item())
 
@@ -112,7 +230,8 @@ def train_lstm(data_dir: Path, output_weights: Path, epochs: int = 5) -> None:
         print(f"Epoch {epoch + 1}/{epochs} | loss={avg_loss:.4f}")
 
     output_weights.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(model.state_dict(), output_weights)
+    model_to_save = model._orig_mod if hasattr(model, "_orig_mod") else model
+    torch.save(model_to_save.state_dict(), output_weights)
     print(f"Saved LSTM weights to: {output_weights.resolve()}")
 
 
@@ -129,10 +248,24 @@ if __name__ == "__main__":
         help="Output model checkpoint path",
     )
     parser.add_argument("--epochs", type=int, default=5, help="Training epochs")
+    parser.add_argument("--batch-size", type=int, default=32, help="Mini-batch size")
+    parser.add_argument("--num-workers", type=int, default=4, help="Dataloader workers")
+    parser.add_argument(
+        "--no-compile",
+        action="store_true",
+        help="Disable torch.compile even when CUDA is available",
+    )
     args = parser.parse_args()
 
     script_dir = Path(__file__).resolve().parent
     data_dir = (script_dir / args.data_dir).resolve() if not Path(args.data_dir).is_absolute() else Path(args.data_dir)
     out_path = (script_dir / args.out).resolve() if not Path(args.out).is_absolute() else Path(args.out)
 
-    train_lstm(data_dir, out_path, epochs=args.epochs)
+    train_lstm(
+        data_dir,
+        out_path,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        compile_model=not args.no_compile,
+    )

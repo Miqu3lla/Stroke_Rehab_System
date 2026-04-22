@@ -5,6 +5,7 @@ from shutil import copy2
 
 
 def split_dataset(source: Path, target: Path, seed: int = 42) -> None:
+    # Shuffle first so the split is reproducible and not biased by folder order.
     random.seed(seed)
     files = [p for p in source.rglob("*") if p.is_file()]
     random.shuffle(files)
@@ -22,6 +23,7 @@ def split_dataset(source: Path, target: Path, seed: int = 42) -> None:
         split_dir = target / split_name
         split_dir.mkdir(parents=True, exist_ok=True)
         for file_path in split_files:
+            # Copy files into each split bucket without changing the original archive.
             destination = split_dir / file_path.name
             copy2(file_path, destination)
 
