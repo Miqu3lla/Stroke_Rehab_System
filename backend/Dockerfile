@@ -7,14 +7,16 @@ WORKDIR /app
 
 #install system dependencies required for both windows and linux when runnign the container 
 RUN apt-get update && apt-get install -y \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
+    build-essential \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 #copy the requirements file into the container
 
-COPY requrements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt .
+RUN pip install --no-cache-dir --default-timeout=1000 -r requirements.txt
 
 # 5. Copy the rest of the backend code
 COPY . .

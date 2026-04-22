@@ -1,0 +1,21 @@
+services:
+  backend:
+    build: ./backend
+    platform: linux/amd64
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app # Syncs code changes instantly
+      - ./datasets:/app/datasets # Mounted to root /datasets to match relative script paths
+    environment:
+      - PYTHONUNBUFFERED=1 # Lets you see logs in real-time
+    command: uvicorn main_api:app --host 0.0.0.0 --port 8000 --reload #start command to run the app
+  frontend:
+    build: ./frontend
+    ports:
+      - "8081:8081"
+    volumes: 
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
