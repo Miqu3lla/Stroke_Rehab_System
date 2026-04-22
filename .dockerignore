@@ -1,4 +1,26 @@
-# Git
+# Keep docker build contexts small and stable.
+.git
+.github
+.vscode
+**/.DS_Store
+**/Thumbs.db
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+backend/.venv
+backend/venv
+backend/models/*.pth
+backend/models/*.pkl
+frontend/node_modules
+frontend/.expo
+frontend/.expo-shared
+datasets/archive
+datasets/Ready_Dataset
+datasets/processed_data# Git
 **/.git
 **/.gitignore
 

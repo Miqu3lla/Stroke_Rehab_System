@@ -1,4 +1,5 @@
 from pathlib import Path
+from contextlib import nullcontext
 from typing import Any, Dict, Iterable, List, Sequence
 
 import torch
@@ -10,6 +11,7 @@ DEFAULT_SEQUENCE_LEN = 40
 DEFAULT_MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "lstm_weights.pth"
 
 
+# LSTM classifier used for form correctness scoring.
 class StrokeLSTMClassifier(nn.Module):
     def __init__(self, input_size: int = KEYPOINT_DIM, hidden_size: int = 128, num_layers: int = 2):
         super().__init__()
@@ -37,7 +39,31 @@ _MODEL_CACHE: Dict[str, Any] = {"model": None, "loaded": False, "source": "rule_
 
 
 def _get_device() -> torch.device:
+    # Prefer CUDA whenever the user has an NVIDIA GPU available.
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def _configure_cuda_runtime(device: torch.device) -> Dict[str, Any]:
+    runtime = {"amp_dtype": None}
+    if device.type != "cuda":
+        return runtime
+
+    # These settings bias execution toward Tensor Core-friendly paths.
+    torch.backends.cudnn.benchmark = True
+    if hasattr(torch.backends.cuda.matmul, "allow_tf32"):
+        torch.backends.cuda.matmul.allow_tf32 = True
+    if hasattr(torch.backends.cudnn, "allow_tf32"):
+        torch.backends.cudnn.allow_tf32 = True
+
+    torch.set_float32_matmul_precision("high")
+    runtime["amp_dtype"] = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    return runtime
+
+
+def _autocast_context(device: torch.device, runtime: Dict[str, Any]):
+    if device.type == "cuda" and runtime["amp_dtype"] is not None:
+        return torch.autocast("cuda", dtype=runtime["amp_dtype"])
+    return nullcontext()
 
 
 def _extract_keypoints(frame: Any) -> List[float]:
@@ -60,6 +86,7 @@ def _extract_keypoints(frame: Any) -> List[float]:
 
 
 def _prepare_input_tensor(sequence: Sequence[Any], target_len: int = DEFAULT_SEQUENCE_LEN) -> torch.Tensor:
+    # Pad or trim the pose sequence so the model sees a fixed-length window.
     keypoint_frames = [_extract_keypoints(frame) for frame in sequence]
     if len(keypoint_frames) > target_len:
         keypoint_frames = keypoint_frames[-target_len:]
@@ -78,9 +105,11 @@ def _load_model(model_path: Path = DEFAULT_MODEL_PATH) -> Dict[str, Any]:
     model = StrokeLSTMClassifier()
     device = _get_device()
     source = "rule_based"
+    runtime = _configure_cuda_runtime(device)
 
     if model_path.exists() and model_path.stat().st_size > 0:
         try:
+            # Load saved weights if the training step has already produced them.
             state = torch.load(model_path, map_location=device)
             if isinstance(state, dict) and "state_dict" in state:
                 state = state["state_dict"]
@@ -90,9 +119,23 @@ def _load_model(model_path: Path = DEFAULT_MODEL_PATH) -> Dict[str, Any]:
             source = "rule_based"
 
     model.to(device)
+
+    if device.type == "cuda" and hasattr(torch, "compile"):
+        try:
+            model = torch.compile(model, mode="reduce-overhead")
+        except Exception:
+            pass
+
     model.eval()
 
-    _MODEL_CACHE.update({"model": model, "loaded": True, "source": source})
+    _MODEL_CACHE.update(
+        {
+            "model": model,
+            "loaded": True,
+            "source": source,
+            "runtime": runtime,
+        }
+    )
     return _MODEL_CACHE
 
 
@@ -121,12 +164,15 @@ def classify_form_sequence(exercise_type: str, sequence: Iterable[Any]) -> Dict[
     cache = _load_model()
     model: StrokeLSTMClassifier = cache["model"]
     device = _get_device()
+    runtime: Dict[str, Any] = cache.get("runtime", {"amp_dtype": None})
     input_tensor = _prepare_input_tensor(sequence).to(device)
 
-    with torch.no_grad():
-        logits = model(input_tensor)
-        probabilities = torch.softmax(logits, dim=-1).squeeze(0)
-        confidence, predicted_idx = torch.max(probabilities, dim=0)
+    # inference_mode removes autograd overhead during live prediction.
+    with torch.inference_mode():
+        with _autocast_context(device, runtime):
+            logits = model(input_tensor)
+            probabilities = torch.softmax(logits, dim=-1).squeeze(0)
+            confidence, predicted_idx = torch.max(probabilities, dim=0)
 
     label = "correct" if int(predicted_idx.item()) == 1 else "incorrect"
     return {

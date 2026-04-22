@@ -9,6 +9,7 @@ KEYPOINT_DIM = LANDMARK_COUNT * 3
 
 
 def _empty_keypoints() -> List[float]:
+    # MediaPipe returns 33 landmarks; zeros mark frames where pose detection fails.
     return [0.0] * KEYPOINT_DIM
 
 
@@ -17,6 +18,7 @@ def extract_pose_keypoints_from_frame(frame: Any, pose_estimator: Optional[Any] 
     Extract flattened 33x3 (x, y, z) landmarks from one BGR frame.
     Returns a zero vector when no pose is detected.
     """
+    # The frontend/backend video pipeline feeds OpenCV BGR frames here.
     if frame is None:
         return _empty_keypoints()
 
@@ -50,6 +52,7 @@ def extract_sequence_from_video(
     """
     Parse video into a sequence of keypoint frames for downstream LSTM inference.
     """
+    # Resolve and validate the file before opening it with OpenCV.
     resolved = Path(video_path)
     if not resolved.exists():
         raise FileNotFoundError(f"Video file not found: {video_path}")
@@ -72,6 +75,7 @@ def extract_sequence_from_video(
         min_detection_confidence=0.5,
         min_tracking_confidence=0.5,
     ) as pose:
+        # Sample frames so the model gets a compact motion sequence instead of raw video.
         while True:
             has_frame, frame = capture.read()
             if not has_frame:

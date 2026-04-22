@@ -76,6 +76,29 @@ npm install
 npx expo start
 ```
 
+## Docker Setup
+
+The project now includes Docker files for both services and a root compose file.
+
+### Build and run
+
+```bash
+docker compose up --build
+```
+
+### Services and ports
+
+1. Backend API: `http://localhost:8001`
+2. Frontend Expo: `http://localhost:8081`
+
+### Notes
+
+1. Backend host port uses `8001` so it does not collide with your local Supabase/cloudflared service on `8000`.
+2. The backend container still listens internally on `8000`.
+3. The root `.dockerignore` keeps build contexts small and avoids copying local caches, node_modules, and dataset archives into image builds.
+4. Backend Docker uses the CUDA 12.8 PyTorch wheel (`torch==2.11.0+cu128`) and requests GPU access with `gpus: all`.
+5. To use the RTX 5060 Ti inside Docker, Docker Desktop must have GPU support enabled and the NVIDIA container runtime must be available on the host.
+
 ## Backend Setup (FastAPI + CV-ML)
 
 This project backend uses the current active Python interpreter.
