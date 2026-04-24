@@ -2,6 +2,8 @@
 
 Mobile-Based Computer Vision and Machine Learning application for stroke rehabilitation.
 
+Forged and run on NVIDIA Blackwell architecture (RTX 5060 Ti) with PyTorch 2.11.0+cu128.
+
 ## Project Goal
 
 This system acts as a digital physical therapist by combining:
