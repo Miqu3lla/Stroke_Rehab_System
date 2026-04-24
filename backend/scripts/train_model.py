@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 INPUT_SIZE = 99
 SEQUENCE_LEN = 40
+DEFAULT_BATCH_SIZE = 256
 
 
 # Small LSTM classifier for sequence-based form detection.
@@ -35,12 +36,7 @@ class StrokeLSTMClassifier(nn.Module):
         return self.head(outputs[:, -1, :])
 
 
-def _build_synthetic_loader(
-    batch_size: int = 16,
-    num_workers: int = 0,
-    pin_memory: bool = False,
-) -> DataLoader:
-    # Synthetic data keeps the training script runnable even before CSV exports exist.
+def _build_synthetic_loader(batch_size: int, num_workers: int, pin_memory: bool) -> DataLoader:
     samples = 256
     x = torch.randn(samples, SEQUENCE_LEN, INPUT_SIZE)
     y = (x.mean(dim=(1, 2)) > 0).long()
@@ -72,11 +68,10 @@ def _create_loader(
 
 def _load_dataset_loader(
     data_dir: Path,
-    batch_size: int = 16,
-    num_workers: int = 0,
-    pin_memory: bool = False,
+    batch_size: int,
+    num_workers: int,
+    pin_memory: bool,
 ) -> DataLoader:
-    # Read processed CSV sequences and turn them into fixed-size tensors.
     csv_files = sorted(data_dir.rglob("*.csv"))
     if not csv_files:
         return _build_synthetic_loader(
@@ -158,7 +153,7 @@ def train_lstm(
     data_dir: Path,
     output_weights: Path,
     epochs: int = 5,
-    batch_size: int = 32,
+    batch_size: int = DEFAULT_BATCH_SIZE,
     num_workers: int = 4,
     compile_model: bool = True,
 ) -> None:
@@ -170,7 +165,6 @@ def train_lstm(
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
-
     runtime = _configure_cuda_runtime(device)
     if device.type == "cuda":
         # Print GPU details so you can confirm the RTX 5060 Ti path is active.
@@ -248,8 +242,18 @@ if __name__ == "__main__":
         help="Output model checkpoint path",
     )
     parser.add_argument("--epochs", type=int, default=5, help="Training epochs")
-    parser.add_argument("--batch-size", type=int, default=32, help="Mini-batch size")
-    parser.add_argument("--num-workers", type=int, default=4, help="Dataloader workers")
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=DEFAULT_BATCH_SIZE,
+        help="Batch size (increase on large-VRAM GPUs)",
+    )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=4,
+        help="DataLoader worker processes",
+    )
     parser.add_argument(
         "--no-compile",
         action="store_true",
