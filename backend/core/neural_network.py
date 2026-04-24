@@ -11,7 +11,6 @@ DEFAULT_SEQUENCE_LEN = 40
 DEFAULT_MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "lstm_weights.pth"
 
 
-# LSTM classifier used for form correctness scoring.
 class StrokeLSTMClassifier(nn.Module):
     def __init__(self, input_size: int = KEYPOINT_DIM, hidden_size: int = 128, num_layers: int = 2):
         super().__init__()
@@ -39,13 +38,11 @@ _MODEL_CACHE: Dict[str, Any] = {
     "model": None,
     "loaded": False,
     "source": "rule_based",
-    "runtime": {"amp_dtype": None},
     "compiled": False,
 }
 
 
 def _get_device() -> torch.device:
-    # Prefer CUDA whenever the user has an NVIDIA GPU available.
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -53,16 +50,18 @@ def _configure_cuda_runtime() -> None:
     if not torch.cuda.is_available():
         return
 
+    # Fixed-size sequence inference benefits from cuDNN autotuning and TF32 kernels.
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
     torch.set_float32_matmul_precision("high")
 
 
-def _autocast_context(device: torch.device, runtime: Dict[str, Any]):
+def _autocast_context(device: torch.device):
     if device.type != "cuda":
         return nullcontext()
-    return torch.autocast("cuda", dtype=runtime["amp_dtype"])
+    amp_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    return torch.autocast(device_type="cuda", dtype=amp_dtype)
 
 
 def _extract_keypoints(frame: Any) -> List[float]:
@@ -85,7 +84,6 @@ def _extract_keypoints(frame: Any) -> List[float]:
 
 
 def _prepare_input_tensor(sequence: Sequence[Any], target_len: int = DEFAULT_SEQUENCE_LEN) -> torch.Tensor:
-    # Pad or trim the pose sequence so the model sees a fixed-length window.
     keypoint_frames = [_extract_keypoints(frame) for frame in sequence]
     if len(keypoint_frames) > target_len:
         keypoint_frames = keypoint_frames[-target_len:]
@@ -105,13 +103,9 @@ def _load_model(model_path: Path = DEFAULT_MODEL_PATH) -> Dict[str, Any]:
     device = _get_device()
     _configure_cuda_runtime()
     source = "rule_based"
-    runtime: Dict[str, Any] = {"amp_dtype": None}
-    if device.type == "cuda":
-        runtime["amp_dtype"] = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
 
     if model_path.exists() and model_path.stat().st_size > 0:
         try:
-            # Load saved weights if the training step has already produced them.
             state = torch.load(model_path, map_location=device)
             if isinstance(state, dict) and "state_dict" in state:
                 state = state["state_dict"]
@@ -126,21 +120,12 @@ def _load_model(model_path: Path = DEFAULT_MODEL_PATH) -> Dict[str, Any]:
     compiled = False
     if device.type == "cuda" and hasattr(torch, "compile"):
         try:
-            # Compile once, then reuse from cache for faster repeated inference.
             model = torch.compile(model, mode="reduce-overhead")
             compiled = True
         except Exception:
             compiled = False
 
-    _MODEL_CACHE.update(
-        {
-            "model": model,
-            "loaded": True,
-            "source": source,
-            "runtime": runtime,
-            "compiled": compiled,
-        }
-    )
+    _MODEL_CACHE.update({"model": model, "loaded": True, "source": source, "compiled": compiled})
     return _MODEL_CACHE
 
 
@@ -169,11 +154,10 @@ def classify_form_sequence(exercise_type: str, sequence: Iterable[Any]) -> Dict[
     cache = _load_model()
     model = cache["model"]
     device = _get_device()
-    runtime: Dict[str, Any] = cache.get("runtime", {"amp_dtype": None})
     input_tensor = _prepare_input_tensor(sequence).to(device, non_blocking=device.type == "cuda")
 
     with torch.inference_mode():
-        with _autocast_context(device, runtime):
+        with _autocast_context(device):
             logits = model(input_tensor)
             probabilities = torch.softmax(logits, dim=-1).squeeze(0)
             confidence, predicted_idx = torch.max(probabilities, dim=0)

@@ -14,7 +14,6 @@ SEQUENCE_LEN = 40
 DEFAULT_BATCH_SIZE = 256
 
 
-# Small LSTM classifier for sequence-based form detection.
 class StrokeLSTMClassifier(nn.Module):
     def __init__(self, input_size: int = INPUT_SIZE, hidden_size: int = 128, num_layers: int = 2):
         super().__init__()
@@ -55,7 +54,7 @@ def _create_loader(
     num_workers: int,
     pin_memory: bool,
 ) -> DataLoader:
-    # Pinning memory helps CUDA transfers when training on the GPU.
+    # Pinning memory helps asynchronous CUDA transfers.
     return DataLoader(
         dataset,
         batch_size=batch_size,
@@ -101,7 +100,7 @@ def _load_dataset_loader(
             arr = arr[-SEQUENCE_LEN:, :]
 
         frames.append(arr)
-        # Filename convention is used as a lightweight label source for now.
+        # TODO: Replace filename-derived labels with annotation file parsing.
         label = 1 if "correct" in csv_path.stem.lower() else 0
         labels.append(label)
 
@@ -137,14 +136,14 @@ def _configure_cuda_runtime(device: torch.device) -> Dict[str, object]:
     if device.type != "cuda":
         return runtime
 
-    # Enable faster kernels and Tensor Core-friendly math where possible.
+    # Enable Tensor Core friendly kernels on fixed-shape workloads.
     torch.backends.cudnn.benchmark = True
     if hasattr(torch.backends.cuda.matmul, "allow_tf32"):
         torch.backends.cuda.matmul.allow_tf32 = True
     if hasattr(torch.backends.cudnn, "allow_tf32"):
         torch.backends.cudnn.allow_tf32 = True
-
     torch.set_float32_matmul_precision("high")
+
     runtime["amp_dtype"] = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     return runtime
 
@@ -167,7 +166,6 @@ def train_lstm(
     print(f"Using device: {device}")
     runtime = _configure_cuda_runtime(device)
     if device.type == "cuda":
-        # Print GPU details so you can confirm the RTX 5060 Ti path is active.
         gpu_name = torch.cuda.get_device_name(0)
         capability = torch.cuda.get_device_capability(0)
         print(f"CUDA device: {gpu_name} | capability={capability}")
@@ -182,7 +180,6 @@ def train_lstm(
     model = StrokeLSTMClassifier().to(device)
     if compile_model and device.type == "cuda" and hasattr(torch, "compile"):
         try:
-            # torch.compile can fuse ops for better throughput on modern GPUs.
             model = torch.compile(model, mode="max-autotune")
             print("torch.compile enabled (max-autotune)")
         except Exception as exc:
@@ -197,7 +194,6 @@ def train_lstm(
     for epoch in range(epochs):
         running_loss = 0.0
         for batch_x, batch_y in loader:
-            # Keep host-to-device copies asynchronous on CUDA.
             batch_x = batch_x.to(device, non_blocking=device.type == "cuda")
             batch_y = batch_y.to(device, non_blocking=device.type == "cuda")
 
@@ -209,7 +205,6 @@ def train_lstm(
             if scaler.is_enabled():
                 scaler.scale(loss).backward()
                 scaler.unscale_(optimizer)
-                # Clip gradients to stabilize training on mixed precision.
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 scaler.step(optimizer)
                 scaler.update()
