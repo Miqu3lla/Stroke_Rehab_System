@@ -1,5 +1,5 @@
-from pathlib import Path
 from contextlib import nullcontext
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
 
 import torch
@@ -35,7 +35,13 @@ class StrokeLSTMClassifier(nn.Module):
         return self.head(last_hidden)
 
 
-_MODEL_CACHE: Dict[str, Any] = {"model": None, "loaded": False, "source": "rule_based"}
+_MODEL_CACHE: Dict[str, Any] = {
+    "model": None,
+    "loaded": False,
+    "source": "rule_based",
+    "runtime": {"amp_dtype": None},
+    "compiled": False,
+}
 
 
 def _get_device() -> torch.device:
@@ -43,27 +49,20 @@ def _get_device() -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def _configure_cuda_runtime(device: torch.device) -> Dict[str, Any]:
-    runtime = {"amp_dtype": None}
-    if device.type != "cuda":
-        return runtime
+def _configure_cuda_runtime() -> None:
+    if not torch.cuda.is_available():
+        return
 
-    # These settings bias execution toward Tensor Core-friendly paths.
     torch.backends.cudnn.benchmark = True
-    if hasattr(torch.backends.cuda.matmul, "allow_tf32"):
-        torch.backends.cuda.matmul.allow_tf32 = True
-    if hasattr(torch.backends.cudnn, "allow_tf32"):
-        torch.backends.cudnn.allow_tf32 = True
-
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
     torch.set_float32_matmul_precision("high")
-    runtime["amp_dtype"] = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-    return runtime
 
 
 def _autocast_context(device: torch.device, runtime: Dict[str, Any]):
-    if device.type == "cuda" and runtime["amp_dtype"] is not None:
-        return torch.autocast("cuda", dtype=runtime["amp_dtype"])
-    return nullcontext()
+    if device.type != "cuda":
+        return nullcontext()
+    return torch.autocast("cuda", dtype=runtime["amp_dtype"])
 
 
 def _extract_keypoints(frame: Any) -> List[float]:
@@ -104,8 +103,11 @@ def _load_model(model_path: Path = DEFAULT_MODEL_PATH) -> Dict[str, Any]:
 
     model = StrokeLSTMClassifier()
     device = _get_device()
+    _configure_cuda_runtime()
     source = "rule_based"
-    runtime = _configure_cuda_runtime(device)
+    runtime: Dict[str, Any] = {"amp_dtype": None}
+    if device.type == "cuda":
+        runtime["amp_dtype"] = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
 
     if model_path.exists() and model_path.stat().st_size > 0:
         try:
@@ -119,14 +121,16 @@ def _load_model(model_path: Path = DEFAULT_MODEL_PATH) -> Dict[str, Any]:
             source = "rule_based"
 
     model.to(device)
+    model.eval()
 
+    compiled = False
     if device.type == "cuda" and hasattr(torch, "compile"):
         try:
+            # Compile once, then reuse from cache for faster repeated inference.
             model = torch.compile(model, mode="reduce-overhead")
+            compiled = True
         except Exception:
-            pass
-
-    model.eval()
+            compiled = False
 
     _MODEL_CACHE.update(
         {
@@ -134,6 +138,7 @@ def _load_model(model_path: Path = DEFAULT_MODEL_PATH) -> Dict[str, Any]:
             "loaded": True,
             "source": source,
             "runtime": runtime,
+            "compiled": compiled,
         }
     )
     return _MODEL_CACHE
@@ -162,12 +167,11 @@ def classify_form_sequence(exercise_type: str, sequence: Iterable[Any]) -> Dict[
         }
 
     cache = _load_model()
-    model: StrokeLSTMClassifier = cache["model"]
+    model = cache["model"]
     device = _get_device()
     runtime: Dict[str, Any] = cache.get("runtime", {"amp_dtype": None})
-    input_tensor = _prepare_input_tensor(sequence).to(device)
+    input_tensor = _prepare_input_tensor(sequence).to(device, non_blocking=device.type == "cuda")
 
-    # inference_mode removes autograd overhead during live prediction.
     with torch.inference_mode():
         with _autocast_context(device, runtime):
             logits = model(input_tensor)
