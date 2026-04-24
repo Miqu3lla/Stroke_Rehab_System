@@ -21,6 +21,8 @@ Stroke patients often lose supervised feedback after clinic sessions. This proje
 Stroke_Rehab_System/
 ├── README.md
 ├── .gitignore
+├── .dockerignore
+├── docker-compose.yaml
 ├── docs/
 │   ├── Concept_Paper.docx
 │   └── Title_Defense.pptx
@@ -32,6 +34,7 @@ Stroke_Rehab_System/
 │   │   └── test/
 │   └── processed_data/
 ├── backend/
+│   ├── Dockerfile
 │   ├── requirements.txt
 │   ├── main_api.py
 │   ├── models/
@@ -45,6 +48,7 @@ Stroke_Rehab_System/
 │       ├── dataset_splitter.py
 │       └── train_model.py
 └── frontend/
+    ├── Dockerfile
     ├── assets/
     ├── src/
     │   ├── api/
@@ -164,3 +168,5 @@ GET http://127.0.0.1:8000/health
 1. The model files in backend/models are placeholders until you train and save real weights.
 2. The recommender loads backend/models/rf_recommender.pkl when available, then falls back to rule-based recommendation.
 3. Dataset folders are scaffolded and ready for your train/val/test assets.
+4. The LSTM training and inference paths are tuned for a Blackwell-class GPU like the RTX 5060 Ti 16GB using `torch==2.11.0+cu128`, AMP autocast, `torch.compile`, `torch.inference_mode`, TF32, cuDNN benchmark mode, pinned-memory loading, and non-blocking transfers.
+5. Actual speed still depends on your NVIDIA driver, CUDA runtime, and how much sequence data you feed into the model.
