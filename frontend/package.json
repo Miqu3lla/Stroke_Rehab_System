@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "start": "REACT_NATIVE_PACKAGER_HOSTNAME=192.168.1.13 expo start --lan",
+    "android": "REACT_NATIVE_PACKAGER_HOSTNAME=192.168.1.13 expo start --android",
+    "ios": "REACT_NATIVE_PACKAGER_HOSTNAME=192.168.1.13 expo start --ios",
     "web": "expo start --web"
   },
   "dependencies": {

@@ -6,6 +6,7 @@ import "./global.css"
 
 export default function App() {
   return (
+    //AppNavigator is wrapped in NavigationContainer to manage navigation state and linking
     <NavigationContainer>
       <AppNavigator />
     </NavigationContainer >
