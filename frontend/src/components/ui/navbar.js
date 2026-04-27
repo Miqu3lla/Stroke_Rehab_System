@@ -1,49 +1,41 @@
-import React from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
-import { Home, Settings, Sparkles, UserRound } from "lucide-react-native";
+import React, { useState } from "react";
+import { Pressable, Text, View } from "react-native";
+import { Menu } from "lucide-react-native";
+import Sidebar from "./sidebar";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-const sidebarItems = [
-  { label: "Dashboard", icon: Home },
-  { label: "Sessions", icon: Sparkles },
-  { label: "Patients", icon: UserRound },
-  { label: "Settings", icon: Settings },
-];
+const Navbar = ({ title, children }) => {
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-const Navbar = ({ title, subtitle, children }) => {
+  const insets = useSafeAreaInsets();
+
   return (
     <View className="flex-1 bg-slate-100">
-      <Navbar />
-
-      <View className="flex-1 flex-row">
-        <View className="w-28 border-r border-slate-200 bg-slate-950 px-3 py-5">
-          {sidebarItems.map(({ label, icon: Icon }, index) => (
-            <Pressable
-              key={label}
-              className={`mb-3 items-center rounded-2xl px-2 py-3 ${
-                index === 0 ? "bg-slate-800" : "bg-transparent"
-              }`}
-            >
-              <View className="mb-2 h-10 w-10 items-center justify-center rounded-2xl bg-slate-900">
-                <Icon color="#e2e8f0" size={18} />
-              </View>
-              <Text className="text-center text-xs font-medium text-slate-200">{label}</Text>
-            </Pressable>
-          ))}
+      {/* Horizontal Navbar */}
+      <View 
+        className="flex-row items-center bg-white px-4 shadow-sm border-b border-slate-200"
+        style={{ paddingTop: Math.max(insets.top, 16), paddingBottom: 16 }}
+      >
+        <Pressable 
+          onPress={() => setIsSidebarOpen(true)}
+          className="p-2 mr-3 bg-slate-100 rounded-lg"
+        >
+          <Menu color="#0f172a" size={24} />
+        </Pressable>
+        <View>
+          <Text className="text-xl font-bold text-slate-900">{title}</Text>
         </View>
-
-        <ScrollView className="flex-1" contentContainerStyle={{ padding: 20 }}>
-          <View className="rounded-3xl bg-white p-5 shadow-sm">
-            <Text className="text-2xl font-semibold text-slate-900">{title}</Text>
-            {subtitle ? (
-              <Text className="mt-2 text-sm leading-5 text-slate-600">{subtitle}</Text>
-            ) : null}
-          </View>
-
-          <View className="mt-5">{children}</View>
-        </ScrollView>
       </View>
+
+      {/* Main Content Area */}
+      <View className="flex-1 bg-white p-4">
+        {children}
+      </View>
+
+      {/* Sidebar Overlay */}
+      <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
     </View>
   );
 };
 
-export default NavBar;
+export default Navbar;

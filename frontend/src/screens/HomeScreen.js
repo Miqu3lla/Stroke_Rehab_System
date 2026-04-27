@@ -1,13 +1,10 @@
 import React from "react";
 import { Text, View } from "react-native";
-import NavBar from "../components/ui/navbar";
+
 
 const HomeScreen = () => {
   return (
-    <NavBar
-      title="Stroke Rehab Home"
-      subtitle="Track progress, start sessions, and view recommendations."
-    >
+    
       <View className="gap-4">
         <View className="rounded-3xl bg-emerald-50 p-5">
           <Text className="text-base font-semibold text-emerald-900">Today's Overview</Text>
@@ -23,7 +20,6 @@ const HomeScreen = () => {
           </Text>
         </View>
       </View>
-    </NavBar>
   );
 };
 
