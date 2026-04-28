@@ -5,6 +5,8 @@ from typing import Any, Dict, Iterable, List, Sequence
 import torch
 from torch import nn
 
+from core.mediapipe_vision import _normalize_keypoints_to_hip_center
+
 KEYPOINT_DIM = 99
 MIN_SEQUENCE_FRAMES = 20
 DEFAULT_SEQUENCE_LEN = 40
@@ -140,6 +142,11 @@ def classify_form_sequence(exercise_type: str, sequence: Iterable[Any]) -> Dict[
             "device": str(_get_device()),
             "model_source": "none",
         }
+
+    # CRITICAL: Normalize keypoints to hip center to match training data distribution.
+    # This ensures inference data matches the normalized pose data the model was trained on.
+    # Without this, live data from the mobile app will cause the model to fail.
+    sequence = _normalize_keypoints_to_hip_center(sequence)
 
     if len(sequence) < MIN_SEQUENCE_FRAMES:
         return {
