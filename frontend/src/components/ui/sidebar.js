@@ -4,6 +4,7 @@ import { Home, Settings, Sparkles, UserRound, X, Activity } from "lucide-react-n
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 
+//sideBar items
 const sidebarItems = [
   { label: "Dashboard", route: "Dashboard", icon: Home },
   { label: "Sessions", route: "Sessions", icon: Sparkles },
@@ -12,7 +13,8 @@ const sidebarItems = [
   { label: "Settings", route: "Settings", icon: Settings },
 ];
 
-const Sidebar = ({ isOpen, onClose }) => {
+const Sidebar = ({ isOpen, onClose, currentRoute }) => {
+  
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
 
@@ -32,7 +34,9 @@ const Sidebar = ({ isOpen, onClose }) => {
           </Pressable>
         </View>
 
-        {sidebarItems.map(({ label, route, icon: Icon }, index) => (
+        {sidebarItems.map(({ label, route, icon: Icon }) => {
+          const isActive = currentRoute === route;
+          return (
           <Pressable
             key={label}
             onPress={() => {
@@ -41,15 +45,15 @@ const Sidebar = ({ isOpen, onClose }) => {
               onClose();
             }}
             className={`flex-row items-center mb-4 rounded-xl px-4 py-3 ${
-              index === 0 ? "bg-slate-800" : "bg-transparent"
+              isActive ? "bg-slate-800" : "bg-transparent"
             }`}
           >
-            <View className="h-8 w-8 items-center justify-center rounded-lg bg-slate-900 mr-4">
-              <Icon color="#e2e8f0" size={18} />
+            <View className={`h-8 w-8 items-center justify-center rounded-lg mr-4 ${isActive ? "bg-slate-700" : "bg-slate-900"}`}>
+              <Icon color={isActive ? "#ffffff" : "#e2e8f0"} size={18} />
             </View>
-            <Text className="text-sm font-medium text-slate-200">{label}</Text>
+            <Text className={`text-sm font-medium ${isActive ? "text-white" : "text-slate-200"}`}>{label}</Text>
           </Pressable>
-        ))}
+        )})}
       </View>
     </View>
   );

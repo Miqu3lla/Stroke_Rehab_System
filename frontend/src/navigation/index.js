@@ -13,6 +13,7 @@ const AppNavigator = () => {
         headerShown: false,
       }}
     >
+      
       <Stack.Screen name="Dashboard" component={HomeScreen} />
       <Stack.Screen name="Exercise" component={ExerciseScreen} />
     </Stack.Navigator>
