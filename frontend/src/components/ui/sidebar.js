@@ -2,17 +2,19 @@ import React from "react";
 import { Pressable, Text, View, StyleSheet, Dimensions, Animated } from "react-native";
 import { Home, Settings, Sparkles, UserRound, X, Activity } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useNavigation } from "@react-navigation/native";
 
 const sidebarItems = [
-  { label: "Dashboard", icon: Home },
-  { label: "Sessions", icon: Sparkles },
-  { label: "Patients", icon: UserRound },
-  { label: "Exercise", icon: Activity },
-  { label: "Settings", icon: Settings },
+  { label: "Dashboard", route: "Dashboard", icon: Home },
+  { label: "Sessions", route: "Sessions", icon: Sparkles },
+  { label: "Patients", route: "Patients", icon: UserRound },
+  { label: "Exercise", route: "Exercise", icon: Activity },
+  { label: "Settings", route: "Settings", icon: Settings },
 ];
 
 const Sidebar = ({ isOpen, onClose }) => {
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
 
   if (!isOpen) return null;
 
@@ -30,9 +32,14 @@ const Sidebar = ({ isOpen, onClose }) => {
           </Pressable>
         </View>
 
-        {sidebarItems.map(({ label, icon: Icon }, index) => (
+        {sidebarItems.map(({ label, route, icon: Icon }, index) => (
           <Pressable
             key={label}
+            onPress={() => {
+              // Note: Make sure the route exists in your navigator before navigating.
+              try { navigation.navigate(route); } catch (e) {}
+              onClose();
+            }}
             className={`flex-row items-center mb-4 rounded-xl px-4 py-3 ${
               index === 0 ? "bg-slate-800" : "bg-transparent"
             }`}
