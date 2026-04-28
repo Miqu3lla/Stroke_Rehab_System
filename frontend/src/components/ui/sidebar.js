@@ -1,12 +1,13 @@
 import React from "react";
 import { Pressable, Text, View, StyleSheet, Dimensions, Animated } from "react-native";
-import { Home, Settings, Sparkles, UserRound, X } from "lucide-react-native";
+import { Home, Settings, Sparkles, UserRound, X, Activity } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const sidebarItems = [
   { label: "Dashboard", icon: Home },
   { label: "Sessions", icon: Sparkles },
   { label: "Patients", icon: UserRound },
+  { label: "Exercise", icon: Activity },
   { label: "Settings", icon: Settings },
 ];
 
