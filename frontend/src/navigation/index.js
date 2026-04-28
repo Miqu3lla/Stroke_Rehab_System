@@ -1,19 +1,21 @@
 import React from "react";
 import { createStackNavigator } from "@react-navigation/stack";
 import HomeScreen from "../screens/HomeScreen";
-
+import ExerciseScreen from "../screens/ExerciseScreen";
 
 const Stack = createStackNavigator();
 
 const AppNavigator = () => {
   return (
     <Stack.Navigator
-      initialRouteName="Home"
+      initialRouteName="Dashboard"
       screenOptions={{
         headerShown: false,
       }}
     >
-      <Stack.Screen name="Home" component={HomeScreen} />
+      
+      <Stack.Screen name="Dashboard" component={HomeScreen} />
+      <Stack.Screen name="Exercise" component={ExerciseScreen} />
     </Stack.Navigator>
   );
 };

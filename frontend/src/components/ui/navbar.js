@@ -4,7 +4,7 @@ import { Menu } from "lucide-react-native";
 import Sidebar from "./sidebar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-const Navbar = ({ title, children }) => {
+const Navbar = ({ title, currentRoute, children }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const insets = useSafeAreaInsets();
@@ -33,7 +33,11 @@ const Navbar = ({ title, children }) => {
       </View>
 
       {/* Sidebar Overlay */}
-      <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
+r      <Sidebar 
+        isOpen={isSidebarOpen} 
+        onClose={() => setIsSidebarOpen(false)} 
+        currentRoute={currentRoute} 
+      />
     </View>
   );
 };

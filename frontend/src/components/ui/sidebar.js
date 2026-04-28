@@ -1,17 +1,22 @@
 import React from "react";
 import { Pressable, Text, View, StyleSheet, Dimensions, Animated } from "react-native";
-import { Home, Settings, Sparkles, UserRound, X } from "lucide-react-native";
+import { Home, Settings, Sparkles, UserRound, X, Activity } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useNavigation } from "@react-navigation/native";
 
+//sideBar items
 const sidebarItems = [
-  { label: "Dashboard", icon: Home },
-  { label: "Sessions", icon: Sparkles },
-  { label: "Patients", icon: UserRound },
-  { label: "Settings", icon: Settings },
+  { label: "Dashboard", route: "Dashboard", icon: Home },
+  { label: "Sessions", route: "Sessions", icon: Sparkles },
+  { label: "Patients", route: "Patients", icon: UserRound },
+  { label: "Exercise", route: "Exercise", icon: Activity },
+  { label: "Settings", route: "Settings", icon: Settings },
 ];
 
-const Sidebar = ({ isOpen, onClose }) => {
+const Sidebar = ({ isOpen, onClose, currentRoute }) => {
+  
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
 
   if (!isOpen) return null;
 
@@ -29,19 +34,26 @@ const Sidebar = ({ isOpen, onClose }) => {
           </Pressable>
         </View>
 
-        {sidebarItems.map(({ label, icon: Icon }, index) => (
+        {sidebarItems.map(({ label, route, icon: Icon }) => {
+          const isActive = currentRoute === route;
+          return (
           <Pressable
             key={label}
+            onPress={() => {
+              // Note: Make sure the route exists in your navigator before navigating.
+              try { navigation.navigate(route); } catch (e) {}
+              onClose();
+            }}
             className={`flex-row items-center mb-4 rounded-xl px-4 py-3 ${
-              index === 0 ? "bg-slate-800" : "bg-transparent"
+              isActive ? "bg-slate-800" : "bg-transparent"
             }`}
           >
-            <View className="h-8 w-8 items-center justify-center rounded-lg bg-slate-900 mr-4">
-              <Icon color="#e2e8f0" size={18} />
+            <View className={`h-8 w-8 items-center justify-center rounded-lg mr-4 ${isActive ? "bg-slate-700" : "bg-slate-900"}`}>
+              <Icon color={isActive ? "#ffffff" : "#e2e8f0"} size={18} />
             </View>
-            <Text className="text-sm font-medium text-slate-200">{label}</Text>
+            <Text className={`text-sm font-medium ${isActive ? "text-white" : "text-slate-200"}`}>{label}</Text>
           </Pressable>
-        ))}
+        )})}
       </View>
     </View>
   );
