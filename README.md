@@ -126,8 +126,7 @@ python -m uvicorn main_api:app --host 0.0.0.0 --port 8001
 
 # Terminal 2
 cd backend
-.\cloudflared\cloudflared.exe tunnel run --token $env:CLOUDFLARED_TOKEN
-```
+.\cloudflared\cloudflared.exe tunnel run --token eyJhIjoiNjY4Zjc4YzVhOTU4MWM1MDUxYmQ2MGE0OTg1ZDYxNjYiLCJzIjoiWlRKa1pHVTJaR1l0T0RBNE1DMDBNVFF3TFRreU1UVXRabUV3TUdZME16QXpZV1V6IiwidCI6ImZkM2NlNTE1LTU5MjktNDdiZC1hYTY5LTA1MjczOWY4ZmY1MiJ9
 
 **Test it:**
 ```powershell
