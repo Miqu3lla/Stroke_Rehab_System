@@ -1,0 +1,29 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Run Uvicorn",
+      "type": "shell",
+      "command": "python",
+      "args": ["-m", "uvicorn", "main_api:app", "--reload", "--host", "0.0.0.0", "--port", "8001"],
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run Cloudflared",
+      "type": "shell",
+      "command": "${workspaceFolder}\\backend\\cloudflared\\cloudflared.exe",
+      "args": ["tunnel", "run", "--token", "${env:CLOUDFLARED_TOKEN}"],
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "problemMatcher": []
+    }
+  ],
+  "compounds": [
+    {
+      "label": "Run API & Tunnel",
+      "tasks": ["Run Uvicorn", "Run Cloudflared"]
+    }
+  ]
+}
