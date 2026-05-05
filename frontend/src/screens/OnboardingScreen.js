@@ -1,13 +1,18 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, Pressable, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, Pressable, StyleSheet, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CheckCircle2, Circle } from 'lucide-react-native';
 
 const QUESTIONS = [
   {
+    id: 'name',
+    title: 'What is your name?',
+    options: [],
+  },
+  {
     id: 'stroke_type',
     title: 'What type of stroke did you experience?',
-    options: ['Ischemic', 'Hemorrhagic', 'TIA', 'Unknown'],
+    options: ['Ischemic', 'Hemorrhagic'],
   },
   {
     id: 'months_in_recovery',
@@ -69,37 +74,48 @@ export default function OnboardingScreen({ navigation }) {
             {currentQuestion.title}
           </Text>
 
-          {/* Options */}
+          {/* Options or Text Input */}
           <View style={styles.optionsContainer}>
-            {currentQuestion.options.map((option, index) => {
-              const isSelected = selectedOption === option;
+            {currentQuestion.options && currentQuestion.options.length > 0 ? (
+              currentQuestion.options.map((option, index) => {
+                const isSelected = selectedOption === option;
 
-              return (
-                <Pressable
-                  key={index}
-                  onPress={() => handleSelect(option)}
-                  style={[
-                    styles.optionButton,
-                    isSelected ? styles.optionSelected : styles.optionDefault,
-                  ]}
-                >
-                  <Text
+                return (
+                  <Pressable
+                    key={index}
+                    onPress={() => handleSelect(option)}
                     style={[
-                      styles.optionText,
-                      isSelected ? styles.optionTextSelected : styles.optionTextDefault,
+                      styles.optionButton,
+                      isSelected ? styles.optionSelected : styles.optionDefault,
                     ]}
                   >
-                    {option}
-                  </Text>
+                    <Text
+                      style={[
+                        styles.optionText,
+                        isSelected ? styles.optionTextSelected : styles.optionTextDefault,
+                      ]}
+                    >
+                      {option}
+                    </Text>
 
-                  {isSelected ? (
-                    <CheckCircle2 color="white" size={24} strokeWidth={2.5} />
-                  ) : (
-                    <Circle color="#cbd5e1" size={24} strokeWidth={2.5} />
-                  )}
-                </Pressable>
-              );
-            })}
+                    {isSelected ? (
+                      <CheckCircle2 color="white" size={24} strokeWidth={2.5} />
+                    ) : (
+                      <Circle color="#cbd5e1" size={24} strokeWidth={2.5} />
+                    )}
+                  </Pressable>
+                );
+              })
+            ) : (
+              <TextInput
+                style={styles.textInput}
+                placeholder="Type your answer here..."
+                placeholderTextColor="#94a3b8"
+                value={selectedOption || ''}
+                onChangeText={handleSelect}
+                autoFocus
+              />
+            )}
           </View>
         </View>
 
@@ -197,6 +213,16 @@ const styles = StyleSheet.create({
     color: '#ffffff',
   },
   optionTextDefault: {
+    color: '#1e293b',
+  },
+  textInput: {
+    backgroundColor: '#f8fafc',
+    borderWidth: 2,
+    borderColor: '#f1f5f9',
+    borderRadius: 16,
+    padding: 20,
+    fontSize: 18,
+    fontWeight: '600',
     color: '#1e293b',
   },
   bottomArea: {
