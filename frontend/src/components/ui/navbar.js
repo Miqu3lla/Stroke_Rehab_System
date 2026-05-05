@@ -9,6 +9,11 @@ const Navbar = ({ title, currentRoute, children }) => {
 
   const insets = useSafeAreaInsets();
 
+  // Hide the navbar entirely when on the Onboarding screen
+  if (currentRoute === "Onboarding") {
+    return <View className="flex-1 bg-slate-50">{children}</View>;
+  }
+
   return (
     <View className="flex-1 bg-slate-100">
       {/* Horizontal Navbar */}
