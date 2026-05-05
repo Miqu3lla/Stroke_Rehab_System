@@ -13,7 +13,7 @@ const QUESTIONS = [
     id: 'months_in_recovery',
     title: 'How many months are you in recovery?',
     // We can map these to integers later for the backend
-    options: ['Less than 3', '3 to 6', '6 to 12', 'More than 12'],
+    options: ['1 Month', '2 months', '3 months'],
   },
   {
     id: 'affected_part',
@@ -46,6 +46,12 @@ export default function OnboardingScreen({ navigation }) {
       console.log('Finished Onboarding! Answers:', answers);
       // Replace prevents the user from swiping back to the onboarding screen
       navigation.replace('Dashboard');
+    }
+  };
+
+  const handleBack = () => {
+    if (currentStep > 0) {
+      setCurrentStep(currentStep - 1);
     }
   };
 
@@ -97,8 +103,17 @@ export default function OnboardingScreen({ navigation }) {
           </View>
         </View>
 
-        {/* Next Button */}
+        {/* Navigation Buttons */}
         <View style={styles.bottomArea}>
+          {currentStep > 0 && (
+            <TouchableOpacity
+              onPress={handleBack}
+              style={styles.backButton}
+            >
+              <Text style={styles.backButtonText}>Back</Text>
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity
             disabled={!selectedOption}
             onPress={handleNext}
@@ -187,8 +202,23 @@ const styles = StyleSheet.create({
   bottomArea: {
     marginTop: 'auto',
     marginBottom: 40,
+    flexDirection: 'row',
+    gap: 12,
+  },
+  backButton: {
+    flex: 1,
+    paddingVertical: 16,
+    borderRadius: 9999,
+    alignItems: 'center',
+    backgroundColor: '#f1f5f9',
+  },
+  backButtonText: {
+    color: '#64748b',
+    fontSize: 18,
+    fontWeight: '700',
   },
   nextButton: {
+    flex: 2,
     paddingVertical: 16,
     borderRadius: 9999,
     alignItems: 'center',
