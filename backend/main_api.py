@@ -29,6 +29,8 @@ class RecommendationRequest(BaseModel):
     stroke_type: str
     months_in_recovery: int = Field(..., ge=0)
     latest_form_score: float = Field(..., ge=0.0, le=1.0)
+    affected_area: str = Field(..., description="arms | legs | both")
+    affected_side: str = Field(..., description="left | right | both")
 
 
 @app.get("/health")
@@ -89,5 +91,7 @@ def get_recommendation(payload: RecommendationRequest) -> dict:
         stroke_type=payload.stroke_type,
         months_in_recovery=payload.months_in_recovery,
         latest_form_score=payload.latest_form_score,
+        affected_area=payload.affected_area,
+        affected_side=payload.affected_side,
     )
     return {"patient_id": payload.patient_id, "recommendation": recommendation}
