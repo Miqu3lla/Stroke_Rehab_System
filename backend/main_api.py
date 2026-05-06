@@ -1,6 +1,10 @@
 import tempfile
+import re
 from pathlib import Path
 from typing import Any, Dict, List
+
+from dotenv import load_dotenv
+load_dotenv()
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
@@ -8,6 +12,12 @@ from pydantic import BaseModel, Field
 from core.mediapipe_vision import extract_sequence_from_video
 from core.neural_network import classify_form_sequence
 from core.recommender import recommend_next_plan
+import os
+import logging
+from core import supabase_db as supabase_db_module
+from core.supabase_db import save_patient_profile, save_recommendation_log
+
+logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title="Stroke Rehab API", version="0.1.0")
 
@@ -33,9 +43,46 @@ class RecommendationRequest(BaseModel):
     affected_side: str = Field(..., description="left | right | both")
 
 
+class PatientProfileRequest(BaseModel):
+    name: str
+    stroke_type: str
+    months_in_recovery: str = Field(..., description="1 Month | 2 months | 3 months")
+    affected_part: str = Field(..., description="Arms | Legs | Both")
+    affected_side: str = Field(..., description="Left | Right | Both")
+
+
 @app.get("/health")
 def health_check() -> dict:
     return {"status": "ok", "service": "stroke-rehab-backend"}
+
+
+def _parse_months_label(months_label: str) -> int:
+    match = re.search(r"\d+", months_label or "")
+    return int(match.group()) if match else 0
+
+
+@app.post("/patients")
+def create_patient_profile(payload: PatientProfileRequest) -> dict:
+    record = {
+        "name": payload.name,
+        "stroke_type": payload.stroke_type,
+        "months_in_recovery": payload.months_in_recovery,
+        "months_in_recovery_value": _parse_months_label(payload.months_in_recovery),
+        "affected_part": payload.affected_part,
+        "affected_side": payload.affected_side,
+        "source_app": "frontend",
+    }
+    # Log supabase env/config status for debugging
+    try:
+        logger.info("SUPABASE configured? %s, SERVICE_ROLE_KEY present? %s", supabase_db_module._configured(), bool(os.getenv("SUPABASE_SERVICE_ROLE_KEY")))
+    except Exception:
+        logger.info("Could not evaluate supabase config state")
+
+    database_result = save_patient_profile(record)
+    saved_patient_id = None
+    if database_result.get("stored") and database_result.get("data"):
+        saved_patient_id = database_result["data"][0].get("id")
+    return {"patient_id": saved_patient_id, "patient_profile": record, "database": database_result}
 
 
 # This endpoint accepts already-extracted pose sequences from the app.
@@ -94,4 +141,15 @@ def get_recommendation(payload: RecommendationRequest) -> dict:
         affected_area=payload.affected_area,
         affected_side=payload.affected_side,
     )
-    return {"patient_id": payload.patient_id, "recommendation": recommendation}
+    database_result = save_recommendation_log(
+        {
+            "patient_id": payload.patient_id,
+            "stroke_type": payload.stroke_type,
+            "months_in_recovery": payload.months_in_recovery,
+            "latest_form_score": payload.latest_form_score,
+            "affected_area": payload.affected_area,
+            "affected_side": payload.affected_side,
+            "recommendation": recommendation,
+        }
+    )
+    return {"patient_id": payload.patient_id, "recommendation": recommendation, "database": database_result}
