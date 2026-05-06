@@ -4,7 +4,7 @@ import { Text, View } from "react-native";
 
 const HomeScreen = () => {
   return (
-    
+    <View style={{ flex: 1 }}>
       <View className="gap-4">
         <View className="rounded-3xl bg-emerald-50 p-5">
           <Text className="text-base font-semibold text-emerald-900">Today's Overview</Text>
@@ -20,6 +20,7 @@ const HomeScreen = () => {
           </Text>
         </View>
       </View>
+    </View>
   );
 };
 

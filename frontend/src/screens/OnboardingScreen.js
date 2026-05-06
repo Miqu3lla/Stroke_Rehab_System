@@ -1,88 +1,30 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { View, Text, TouchableOpacity, Pressable, StyleSheet, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CheckCircle2, Circle } from 'lucide-react-native';
-import { instance } from '../lib/api';
-
-const QUESTIONS = [
-  {
-    id: 'name',
-    title: 'What is your name?',
-    options: [],
-  },
-  {
-    id: 'stroke_type',
-    title: 'What type of stroke did you experience?',
-    options: ['Ischemic', 'Hemorrhagic'],
-  },
-  {
-    id: 'months_in_recovery',
-    title: 'How many months are you in recovery?',
-    // We can map these to integers later for the backend
-    options: ['1 Month', '2 months', '3 months'],
-  },
-  {
-    id: 'affected_part',
-    title: 'Which part did the stroke affect you?',
-    options: ['Arms', 'Legs', 'Both'],
-  },
-  {
-    id: 'affected_side',
-    title: 'Left or right?',
-    options: ['Left', 'Right', 'Both'],
-  },
-];
+import usePatientStore from '../store/usePatientStore';
 
 export default function OnboardingScreen({ navigation }) {
-  const [currentStep, setCurrentStep] = useState(0);
-  const [answers, setAnswers] = useState({});
+  const {
+    currentStep,
+    questions,
+    isSubmitting,
+    getCurrentQuestion,
+    getSelectedOption,
+    setAnswer,
+    handleNext,
+    handleBack,
+  } = usePatientStore();
 
-  const currentQuestion = QUESTIONS[currentStep];
-  const selectedOption = answers[currentQuestion.id];
-
-  const handleSelect = (option) => {
-    setAnswers((prev) => ({ ...prev, [currentQuestion.id]: option }));
-  };
-
-  const handleNext = () => {
-    if (currentStep < QUESTIONS.length - 1) {
-      setCurrentStep(currentStep + 1);
-    } else {
-      // Final step: Save the onboarding profile to the backend before navigating away.
-      const payload = {
-        name: answers.name,
-        stroke_type: answers.stroke_type,
-        months_in_recovery: answers.months_in_recovery,
-        affected_part: answers.affected_part,
-        affected_side: answers.affected_side,
-      };
-
-      instance.post('/patients', payload)
-        .then((response) => {
-          console.log('Saved patient profile:', response.data);
-        })
-        .catch((error) => {
-          console.error('Failed to save patient profile:', error?.response?.data || error.message);
-        })
-        .finally(() => {
-          // Replace prevents the user from swiping back to the onboarding screen
-          navigation.replace('Dashboard');
-        });
-    }
-  };
-
-  const handleBack = () => {
-    if (currentStep > 0) {
-      setCurrentStep(currentStep - 1);
-    }
-  };
+  const currentQuestion = getCurrentQuestion();
+  const selectedOption = getSelectedOption();
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.content}>
         {/* Step Indicator */}
         <Text style={styles.stepLabel}>
-          STEP {currentStep + 1} OF {QUESTIONS.length}
+          STEP {currentStep + 1} OF {questions.length}
         </Text>
 
         {/* Question Card */}
@@ -100,7 +42,7 @@ export default function OnboardingScreen({ navigation }) {
                 return (
                   <Pressable
                     key={index}
-                    onPress={() => handleSelect(option)}
+                    onPress={() => setAnswer(option)}
                     style={[
                       styles.optionButton,
                       isSelected ? styles.optionSelected : styles.optionDefault,
@@ -129,7 +71,7 @@ export default function OnboardingScreen({ navigation }) {
                 placeholder="Type your answer here..."
                 placeholderTextColor="#94a3b8"
                 value={selectedOption || ''}
-                onChangeText={handleSelect}
+                onChangeText={setAnswer}
                 autoFocus
               />
             )}
@@ -148,15 +90,15 @@ export default function OnboardingScreen({ navigation }) {
           )}
 
           <TouchableOpacity
-            disabled={!selectedOption}
-            onPress={handleNext}
+            disabled={!selectedOption || isSubmitting}
+            onPress={() => handleNext(navigation)}
             style={[
               styles.nextButton,
-              selectedOption ? styles.nextButtonActive : styles.nextButtonDisabled,
+              selectedOption && !isSubmitting ? styles.nextButtonActive : styles.nextButtonDisabled,
             ]}
           >
             <Text style={styles.nextButtonText}>
-              {currentStep === QUESTIONS.length - 1 ? 'Finish' : 'Next'}
+              {isSubmitting ? 'Saving...' : currentStep === questions.length - 1 ? 'Finish' : 'Next'}
             </Text>
           </TouchableOpacity>
         </View>
