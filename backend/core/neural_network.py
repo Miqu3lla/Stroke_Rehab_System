@@ -1,8 +1,11 @@
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
 
 import torch
 from torch import nn
+
+from core.mediapipe_vision import _normalize_keypoints_to_hip_center
 
 KEYPOINT_DIM = 99
 MIN_SEQUENCE_FRAMES = 20
@@ -33,11 +36,34 @@ class StrokeLSTMClassifier(nn.Module):
         return self.head(last_hidden)
 
 
-_MODEL_CACHE: Dict[str, Any] = {"model": None, "loaded": False, "source": "rule_based"}
+_MODEL_CACHE: Dict[str, Any] = {
+    "model": None,
+    "loaded": False,
+    "source": "rule_based",
+    "compiled": False,
+}
 
 
 def _get_device() -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def _configure_cuda_runtime() -> None:
+    if not torch.cuda.is_available():
+        return
+
+    # Fixed-size sequence inference benefits from cuDNN autotuning and TF32 kernels.
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.set_float32_matmul_precision("high")
+
+
+def _autocast_context(device: torch.device):
+    if device.type != "cuda":
+        return nullcontext()
+    amp_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    return torch.autocast(device_type="cuda", dtype=amp_dtype)
 
 
 def _extract_keypoints(frame: Any) -> List[float]:
@@ -77,6 +103,7 @@ def _load_model(model_path: Path = DEFAULT_MODEL_PATH) -> Dict[str, Any]:
 
     model = StrokeLSTMClassifier()
     device = _get_device()
+    _configure_cuda_runtime()
     source = "rule_based"
 
     if model_path.exists() and model_path.stat().st_size > 0:
@@ -92,7 +119,15 @@ def _load_model(model_path: Path = DEFAULT_MODEL_PATH) -> Dict[str, Any]:
     model.to(device)
     model.eval()
 
-    _MODEL_CACHE.update({"model": model, "loaded": True, "source": source})
+    compiled = False
+    if device.type == "cuda" and hasattr(torch, "compile"):
+        try:
+            model = torch.compile(model, mode="reduce-overhead")
+            compiled = True
+        except Exception:
+            compiled = False
+
+    _MODEL_CACHE.update({"model": model, "loaded": True, "source": source, "compiled": compiled})
     return _MODEL_CACHE
 
 
@@ -108,6 +143,11 @@ def classify_form_sequence(exercise_type: str, sequence: Iterable[Any]) -> Dict[
             "model_source": "none",
         }
 
+    # CRITICAL: Normalize keypoints to hip center to match training data distribution.
+    # This ensures inference data matches the normalized pose data the model was trained on.
+    # Without this, live data from the mobile app will cause the model to fail.
+    sequence = _normalize_keypoints_to_hip_center(sequence)
+
     if len(sequence) < MIN_SEQUENCE_FRAMES:
         return {
             "label": "incorrect",
@@ -119,14 +159,15 @@ def classify_form_sequence(exercise_type: str, sequence: Iterable[Any]) -> Dict[
         }
 
     cache = _load_model()
-    model: StrokeLSTMClassifier = cache["model"]
+    model = cache["model"]
     device = _get_device()
-    input_tensor = _prepare_input_tensor(sequence).to(device)
+    input_tensor = _prepare_input_tensor(sequence).to(device, non_blocking=device.type == "cuda")
 
-    with torch.no_grad():
-        logits = model(input_tensor)
-        probabilities = torch.softmax(logits, dim=-1).squeeze(0)
-        confidence, predicted_idx = torch.max(probabilities, dim=0)
+    with torch.inference_mode():
+        with _autocast_context(device):
+            logits = model(input_tensor)
+            probabilities = torch.softmax(logits, dim=-1).squeeze(0)
+            confidence, predicted_idx = torch.max(probabilities, dim=0)
 
     label = "correct" if int(predicted_idx.item()) == 1 else "incorrect"
     return {

@@ -12,6 +12,7 @@ from core.recommender import recommend_next_plan
 app = FastAPI(title="Stroke Rehab API", version="0.1.0")
 
 
+# API request models keep the input shape strict for the mobile client.
 class JointFrame(BaseModel):
     frame_index: int = Field(..., ge=0)
     keypoints: List[float] = Field(..., description="Flattened 33x3 keypoints")
@@ -28,6 +29,8 @@ class RecommendationRequest(BaseModel):
     stroke_type: str
     months_in_recovery: int = Field(..., ge=0)
     latest_form_score: float = Field(..., ge=0.0, le=1.0)
+    affected_area: str = Field(..., description="arms | legs | both")
+    affected_side: str = Field(..., description="left | right | both")
 
 
 @app.get("/health")
@@ -35,6 +38,7 @@ def health_check() -> dict:
     return {"status": "ok", "service": "stroke-rehab-backend"}
 
 
+# This endpoint accepts already-extracted pose sequences from the app.
 @app.post("/predict/form")
 def predict_form(payload: FormRequest) -> dict:
     prediction = classify_form_sequence(payload.exercise_type, payload.sequence)
@@ -51,6 +55,7 @@ async def predict_form_from_video(
     exercise_type: str = Form(...),
     video: UploadFile = File(...),
 ) -> Dict[str, Any]:
+    # Save the uploaded video temporarily so OpenCV can process it frame by frame.
     suffix = Path(video.filename or "session.mp4").suffix or ".mp4"
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp:
@@ -79,11 +84,14 @@ async def predict_form_from_video(
     }
 
 
+# Recommendation endpoint adapts exercise difficulty based on patient context.
 @app.post("/recommendation")
 def get_recommendation(payload: RecommendationRequest) -> dict:
     recommendation = recommend_next_plan(
         stroke_type=payload.stroke_type,
         months_in_recovery=payload.months_in_recovery,
         latest_form_score=payload.latest_form_score,
+        affected_area=payload.affected_area,
+        affected_side=payload.affected_side,
     )
     return {"patient_id": payload.patient_id, "recommendation": recommendation}

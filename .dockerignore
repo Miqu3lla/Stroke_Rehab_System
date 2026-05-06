@@ -1,0 +1,68 @@
+# Keep docker build contexts small and stable.
+.git
+.github
+.vscode
+**/.DS_Store
+**/Thumbs.db
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+backend/.venv
+backend/venv
+backend/models/*.pth
+backend/models/*.pkl
+frontend/node_modules
+frontend/.expo
+frontend/.expo-shared
+datasets/archive
+datasets/Ready_Dataset
+datasets/processed_data# Git
+**/.git
+**/.gitignore
+
+# IDE / Editor configuration
+**/.vscode
+**/.idea
+
+# Environment Variables
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.template
+
+# OS generated files
+**/.DS_Store
+**/Thumbs.db
+
+# Logs
+**/*.log
+**/npm-debug.log*
+**/yarn-debug.log*
+**/yarn-error.log*
+
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+**/*.so
+**/.pytest_cache/
+**/.venv/
+**/venv/
+**/env/
+**/ENV/
+
+# Node and UI built artifacts
+**/node_modules/
+**/.npm/
+**/build/
+**/dist/
+
+# Expo specific
+**/.expo/
+
+# Large folders 
+ datasets/
