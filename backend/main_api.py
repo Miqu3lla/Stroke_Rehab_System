@@ -3,6 +3,9 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 

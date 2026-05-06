@@ -1,15 +1,7 @@
 import axios from "axios"
-import { Platform } from "react-native"
-
-const getBaseURL = () => {
-    if (__DEV__) {
-        return Platform.OS === "android" ? "http://10.0.2.2:8002" : "http://localhost:8002"
-    }
-    return "https://api.necookie.dev"
-}
 
 export const instance = axios.create({
-    baseURL: getBaseURL(),
+    baseURL: "https://api.necookie.dev",
 })
 
 if (__DEV__) {
@@ -33,4 +25,3 @@ if (__DEV__) {
         return Promise.reject(err)
     })
 }
-
