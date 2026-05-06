@@ -82,6 +82,107 @@ npm install
 npx expo start
 ```
 
+## Android Emulator Setup & Testing
+
+### Prerequisites
+
+- Android Studio installed with Android SDK
+- Emulator already created (AVD: `Medium_Phone_API_35`)
+- Backend API running with Cloudflare tunnel active
+
+### Step 1: Start Backend API (Terminal 1)
+
+```powershell
+cd backend
+python -m uvicorn main_api:app --reload --host 0.0.0.0 --port 8001
+```
+
+Wait for: `Application startup complete`
+
+### Step 2: Start Cloudflare Tunnel (Terminal 2)
+
+```powershell
+cd backend
+$env:CLOUDFLARED_TOKEN = "YOUR_TOKEN_HERE"
+.\cloudflared\cloudflared.exe tunnel run --token $env:CLOUDFLARED_TOKEN
+```
+
+Verify tunnel works:
+```powershell
+curl https://api.necookie.dev/health
+```
+
+Expected: `{"status":"ok","service":"stroke-rehab-backend"}`
+
+### Step 3: Launch Android Emulator (Terminal 3)
+
+```powershell
+$env:ANDROID_SDK_ROOT = "$env:LOCALAPPDATA\Android\Sdk"
+& "$env:ANDROID_SDK_ROOT\emulator\emulator.exe" -avd Medium_Phone_API_35 -netdelay none -netspeed full
+```
+
+Wait 30-45 seconds for the emulator window to appear and boot.
+
+### Step 4: Start Expo Dev Server (Terminal 4)
+
+```powershell
+cd frontend
+npx expo start --android --tunnel
+```
+
+When prompted about installing `@expo/ngrok`, press `Y`. The app will:
+1. Bundle all modules (35-40 seconds)
+2. Automatically launch on the emulator
+3. Display a QR code
+
+The emulator should now show your **TheraMotion** app!
+
+### Testing the App
+
+**Quick Tests:**
+
+1. **Health Check** — Check if backend is reachable:
+   ```powershell
+   curl https://api.necookie.dev/health
+   ```
+
+2. **Recommendation Endpoint** — Test exercise recommendations:
+   ```powershell
+   curl -X POST https://api.necookie.dev/recommendation `
+     -H "Content-Type: application/json" `
+     -d '{
+       "patient_id": "P001",
+       "stroke_type": "ischemic",
+       "months_in_recovery": 3,
+       "latest_form_score": 0.75,
+       "affected_area": "legs",
+       "affected_side": "left"
+     }'
+   ```
+
+3. **Interactive Testing** — Navigate through the app on the emulator and verify:
+   - Screens load without errors
+   - No API connection issues
+   - Recommendations display correctly
+
+**Expo Terminal Commands:**
+
+- **r** — Reload app (after code changes)
+- **a** — Relaunch emulator
+- **w** — Open web version
+- **j** — Open debugger
+- **m** — Toggle menu
+- **Ctrl+C** — Stop dev server
+
+### Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| App shows "Text strings must be rendered within a <Text> component" | Raw text is outside `<Text>` wrapper. Press `r` to reload. |
+| Backend unreachable | Ensure tunnel is running and `https://api.necookie.dev/health` returns 200. |
+| Emulator slow or freezing | Close other apps. Check GPU acceleration is enabled in emulator settings. |
+| "Cannot connect to adb daemon" | Restart adb: `$env:ANDROID_SDK_ROOT\platform-tools\adb kill-server` |
+
 ## Docker Setup
 
 The project now includes Docker files for both services and a root compose file.
