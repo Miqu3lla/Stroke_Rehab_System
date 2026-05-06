@@ -5,7 +5,7 @@ const QUESTIONS = [
   {
     id: 'name',
     title: 'What is your name?',
-    options: [],
+    options: [], // No options -> render a TextInput for free text
   },
   {
     id: 'stroke_type',
@@ -29,21 +29,32 @@ const QUESTIONS = [
   },
 ];
 
+
+// ZUSTAND STORE
+// The store holds the onboarding wizard state (current step, collected answers,
+// and a submitting flag) and exposes actions that the UI can call.
+// Using Zustand gives us a lightweight global store without the boilerplate of
+// Redux, making the screen component purely presentational.
 const usePatientStore = create((set, get) => ({
   // State
-  currentStep: 0,
-  answers: {},
-  isSubmitting: false,
-  questions: QUESTIONS,
+  currentStep: 0,               // Index of the currently displayed question
+  answers: {},                  // { [questionId]: selectedOption }
+  isSubmitting: false,          // Shows a loading spinner on the final button
+  questions: QUESTIONS,         // Expose the static question list to the UI
 
-  // Derived helpers
+  
+  // Derived helpers – computed values that depend on the current state
+  // Returns the question object for the current step
   getCurrentQuestion: () => QUESTIONS[get().currentStep],
+
+  // Returns the answer that the user has already selected for the current question
   getSelectedOption: () => {
     const question = QUESTIONS[get().currentStep];
     return get().answers[question.id];
   },
 
-  // Actions
+  // Actions – functions that mutate the store state
+  // Store a new answer for the currently displayed question
   setAnswer: (option) => {
     const question = QUESTIONS[get().currentStep];
     set((state) => ({
@@ -51,13 +62,17 @@ const usePatientStore = create((set, get) => ({
     }));
   },
 
+  // Advance to the next step or, if on the final step, submit the data to the backend.
+  // The navigation object is passed in from the screen so we can route after a
+  // successful save.
   handleNext: async (navigation) => {
     const { currentStep, answers } = get();
 
+    // If we are not on the last question just move the step forward.
     if (currentStep < QUESTIONS.length - 1) {
       set({ currentStep: currentStep + 1 });
     } else {
-      // Final step: Save the onboarding profile to the backend before navigating away.
+      // FINAL STEP – POST the collected onboarding data to the API.
       set({ isSubmitting: true });
 
       const payload = {
@@ -75,12 +90,14 @@ const usePatientStore = create((set, get) => ({
         console.error('Failed to save patient profile:', error?.response?.data || error.message);
       } finally {
         set({ isSubmitting: false });
-        // Replace prevents the user from swiping back to the onboarding screen
+        // Replace removes the onboarding screen from the navigation stack so the user
+        // cannot swipe back into it after completing the flow.
         navigation.replace('Dashboard');
       }
     }
   },
 
+  // Go back one step – disabled on the first question.
   handleBack: () => {
     const { currentStep } = get();
     if (currentStep > 0) {
@@ -88,7 +105,7 @@ const usePatientStore = create((set, get) => ({
     }
   },
 
-  // Reset the store (useful for re-onboarding)
+  // Utility to reset the wizard – useful when a user wants to start over.
   reset: () => set({ currentStep: 0, answers: {}, isSubmitting: false }),
 }));
 
