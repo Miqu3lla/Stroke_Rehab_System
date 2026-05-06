@@ -4,7 +4,7 @@ services:
     platform: linux/amd64
     gpus: all # Pass through the NVIDIA GPU for CUDA training/inference when available
     ports:
-      - "8001:8000" # Host 8001 avoids colliding with local Supabase/cloudflared on 8000
+      - "8002:8000" # Host 8002 avoids colliding with local Supabase/cloudflared on 8001
     volumes:
       - ./backend:/app # Syncs code changes instantly
       - ./datasets:/app/datasets # Mounted to root /datasets to match relative script paths
