@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, Pressable, StyleSheet, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CheckCircle2, Circle } from 'lucide-react-native';
+import { instance } from '../lib/api';
 
 const QUESTIONS = [
   {
@@ -47,10 +48,26 @@ export default function OnboardingScreen({ navigation }) {
     if (currentStep < QUESTIONS.length - 1) {
       setCurrentStep(currentStep + 1);
     } else {
-      // Final step: Save data and navigate away
-      console.log('Finished Onboarding! Answers:', answers);
-      // Replace prevents the user from swiping back to the onboarding screen
-      navigation.replace('Dashboard');
+      // Final step: Save the onboarding profile to the backend before navigating away.
+      const payload = {
+        name: answers.name,
+        stroke_type: answers.stroke_type,
+        months_in_recovery: answers.months_in_recovery,
+        affected_part: answers.affected_part,
+        affected_side: answers.affected_side,
+      };
+
+      instance.post('/patients', payload)
+        .then((response) => {
+          console.log('Saved patient profile:', response.data);
+        })
+        .catch((error) => {
+          console.error('Failed to save patient profile:', error?.response?.data || error.message);
+        })
+        .finally(() => {
+          // Replace prevents the user from swiping back to the onboarding screen
+          navigation.replace('Dashboard');
+        });
     }
   };
 

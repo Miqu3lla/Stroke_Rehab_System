@@ -5,7 +5,7 @@
       "label": "Run Uvicorn",
       "type": "shell",
       "command": "python",
-      "args": ["-m", "uvicorn", "main_api:app", "--reload", "--host", "0.0.0.0", "--port", "8001"],
+      "args": ["-m", "uvicorn", "main_api:app", "--reload", "--host", "0.0.0.0", "--port", "8002"],
       "options": { "cwd": "${workspaceFolder}/backend" },
       "presentation": { "reveal": "always", "panel": "dedicated" },
       "problemMatcher": []
