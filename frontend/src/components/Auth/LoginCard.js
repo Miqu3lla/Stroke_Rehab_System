@@ -26,23 +26,8 @@ const LoginCard = ({ navigation }) => {
     setLoading(false);
   };
 
-  const handleSignUp = async () => {
-    if (!email || !password) {
-      Alert.alert('Error', 'Please enter both email and password');
-      return;
-    }
-    setLoading(true);
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-    });
-
-    if (error) {
-      Alert.alert('Signup Failed', error.message);
-    } else {
-      Alert.alert('Success', 'Check your email for the login link!');
-    }
-    setLoading(false);
+  const handleSignUpNav = () => {
+    navigation.replace('Signup');
   };
 
   return (
@@ -86,7 +71,7 @@ const LoginCard = ({ navigation }) => {
 
       <TouchableOpacity
         className="w-full py-4 justify-center items-center"
-        onPress={handleSignUp}
+        onPress={handleSignUpNav}
         disabled={loading}
       >
         <Text className="text-[#0052CC] text-[20px] font-bold">New user? Sign Up</Text>

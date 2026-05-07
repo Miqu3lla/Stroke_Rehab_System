@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { instance } from '../lib/api';
+import { supabase } from '../services/supabase';
 
 const QUESTIONS = [
   {
@@ -75,10 +76,14 @@ const usePatientStore = create((set, get) => ({
       // FINAL STEP – POST the collected onboarding data to the API.
       set({ isSubmitting: true });
 
+      // Get the authenticated user's ID to link the patient record
+      const { data: { user } } = await supabase.auth.getUser();
+
       const payload = {
+        user_id: user?.id,
         name: answers.name,
         stroke_type: answers.stroke_type,
-        months_in_recovery: answers.months_in_recovery,
+        months_in_recovery: parseInt(answers.months_in_recovery, 10) || 0,
         affected_part: answers.affected_part,
         affected_side: answers.affected_side,
       };
