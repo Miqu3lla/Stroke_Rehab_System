@@ -23,8 +23,8 @@ const Navbar = ({ title, currentRoute, children }) => {
 
   const insets = useSafeAreaInsets();
 
-  // Hide the navbar entirely when not logged in, or when on the Onboarding or Login screens
-  if (!session || currentRoute === "Onboarding" || currentRoute === "Login") {
+  // Hide the navbar entirely when not logged in, or when on the Onboarding, Login, or Signup screens
+  if (!session || currentRoute === "Onboarding" || currentRoute === "Login" || currentRoute === "Signup") {
     return <View className="flex-1 bg-[#FAFAFA]">{children}</View>;
   }
 
