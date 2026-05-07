@@ -61,9 +61,7 @@ def health_check() -> dict:
     return {"status": "ok", "service": "stroke-rehab-backend"}
 
 
-def _parse_months_label(months_label: str) -> int:
-    match = re.search(r"\d+", months_label or "")
-    return int(match.group()) if match else 0
+
 
 
 @app.post("/patients")
@@ -72,7 +70,7 @@ def create_patient_profile(payload: PatientProfileRequest) -> dict:
         "name": payload.name,
         "stroke_type": payload.stroke_type,
         "months_in_recovery": payload.months_in_recovery,
-        "months_in_recovery_value": _parse_months_label(payload.months_in_recovery),
+        "months_in_recovery_value": payload.months_in_recovery,
         "affected_part": payload.affected_part,
         "affected_side": payload.affected_side,
         "source_app": "frontend",
