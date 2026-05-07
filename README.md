@@ -323,6 +323,7 @@ docker compose up --build
 **Fastest way to get the backend running with public access:**
 
 1. Set tunnel token (one-time):
+
 ```powershell
 $env:CLOUDFLARED_TOKEN = "YOUR_TUNNEL_TOKEN_HERE"
 ```
@@ -332,7 +333,8 @@ $env:CLOUDFLARED_TOKEN = "YOUR_TUNNEL_TOKEN_HERE"
    Done! Backend runs on `http://localhost:8002` and `https://api.necookie.dev`
 
 **Alternative: Two-terminal setup**
-```powershell
+
+````powershell
 # Terminal 1
 cd backend
 python -m uvicorn main_api:app --host 0.0.0.0 --port 8002
@@ -345,7 +347,7 @@ cd backend
 ```powershell
 curl http://localhost:8002/health
 curl https://api.necookie.dev/health
-```
+````
 
 ---
 
@@ -363,22 +365,9 @@ cd backend
 pip install -r requirements.txt
 ```
 
-### 2. Verify key backend arsenal packages
+### Running the Application
 
-```bash
-python -c "import torch, cv2, mediapipe, sklearn; print('torch:', torch.__version__); print('cuda:', torch.cuda.is_available())"
-```
-
-If CUDA is available, the backend LSTM training and inference automatically use GPU.
-
-### 3. Train the LSTM action classifier
-
-Expected data source:
-
-1. Place extracted CSV sequence files in datasets/processed_data.
-2. Include a clear naming pattern where files containing the word correct are treated as positive samples.
-
-Run training:
+To start the development server, run the following command inside the `frontend` directory:
 
 ```bash
 cd backend/scripts
@@ -409,11 +398,13 @@ To expose your local FastAPI backend through a public HTTPS URL using Cloudflare
 **Option A: Use VS Code compound task (recommended)**
 
 1. Set the tunnel token in PowerShell (one-time per session):
+
 ```powershell
 $env:CLOUDFLARED_TOKEN = "YOUR_TUNNEL_TOKEN_HERE"
 ```
 
 Or persist it permanently:
+
 ```powershell
 setx CLOUDFLARED_TOKEN "YOUR_TUNNEL_TOKEN_HERE"
 ```
@@ -425,23 +416,27 @@ This opens two integrated terminals: Uvicorn (localhost:8002) and cloudflared.
 **Option B: Manual setup (two terminals)**
 
 Terminal 1 (FastAPI):
+
 ```powershell
 cd backend
 python -m uvicorn main_api:app --reload --host 0.0.0.0 --port 8002
 ```
 
 Terminal 2 (Cloudflared connector):
+
 ```powershell
 cd backend
 .\cloudflared\cloudflared.exe tunnel run --token "YOUR_TUNNEL_TOKEN_HERE"
 ```
 
 **To obtain your tunnel token:**
+
 ```powershell
 & "C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel token stroke-rehab-api
 ```
 
 **Verify public URL:**
+
 ```bash
 curl https://api.necookie.dev/health
 ```
@@ -449,6 +444,7 @@ curl https://api.necookie.dev/health
 Expected response: `{"status":"ok","service":"stroke-rehab-backend"}`
 
 **Public endpoints:**
+
 - Health: https://api.necookie.dev/health
 - Swagger docs: https://api.necookie.dev/docs
 - Redoc: https://api.necookie.dev/redoc
@@ -458,7 +454,7 @@ Expected response: `{"status":"ok","service":"stroke-rehab-backend"}`
 ### 5. Available backend endpoints
 
 1. **GET /health** — Service health check.
-2. **POST /predict/form** — Classify pre-extracted pose sequence. 
+2. **POST /predict/form** — Classify pre-extracted pose sequence.
    - Request body: `patient_id`, `exercise_type`, `sequence` (list of frames with 33×3 keypoints).
 3. **POST /predict/form-from-video** — Upload video, extract poses, classify form.
    - Form data: `patient_id`, `exercise_type`, `video` file.
@@ -471,5 +467,3 @@ Expected response: `{"status":"ok","service":"stroke-rehab-backend"}`
 1. The model files in backend/models are placeholders until you train and save real weights.
 2. The recommender loads backend/models/rf_recommender.pkl when available, then falls back to rule-based recommendation.
 3. Dataset folders are scaffolded and ready for your train/val/test assets.
-4. The LSTM training and inference paths are tuned for a Blackwell-class GPU like the RTX 5060 Ti 16GB using `torch==2.11.0+cu128`, AMP autocast, `torch.compile`, `torch.inference_mode`, TF32, cuDNN benchmark mode, pinned-memory loading, and non-blocking transfers.
-5. Actual speed still depends on your NVIDIA driver, CUDA runtime, and how much sequence data you feed into the model.
