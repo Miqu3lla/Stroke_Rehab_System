@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import { supabase } from '../../services/supabase';
 
-const LoginCard = () => {
+const LoginCard = ({ navigation }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -20,6 +20,8 @@ const LoginCard = () => {
 
     if (error) {
       Alert.alert('Login Failed', error.message);
+    } else {
+      navigation.replace('Onboarding');
     }
     setLoading(false);
   };
