@@ -1,17 +1,31 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Pressable, Text, View } from "react-native";
 import { Menu } from "lucide-react-native";
 import Sidebar from "./sidebar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { supabase } from "../../services/supabase";
 
 const Navbar = ({ title, currentRoute, children }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [session, setSession] = useState(null);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
 
   const insets = useSafeAreaInsets();
 
-  // Hide the navbar entirely when on the Onboarding screen
-  if (currentRoute === "Onboarding") {
-    return <View className="flex-1 bg-slate-50">{children}</View>;
+  // Hide the navbar entirely when not logged in, or when on the Onboarding or Login screens
+  if (!session || currentRoute === "Onboarding" || currentRoute === "Login") {
+    return <View className="flex-1 bg-[#FAFAFA]">{children}</View>;
   }
 
   return (
@@ -38,7 +52,7 @@ const Navbar = ({ title, currentRoute, children }) => {
       </View>
 
       {/* Sidebar Overlay */}
-r      <Sidebar 
+      <Sidebar 
         isOpen={isSidebarOpen} 
         onClose={() => setIsSidebarOpen(false)} 
         currentRoute={currentRoute} 
