@@ -75,20 +75,22 @@ const usePatientStore = create((set, get) => ({
     } else {
       // FINAL STEP – POST the collected onboarding data to the API.
       set({ isSubmitting: true });
-
-      // Get the authenticated user's ID to link the patient record
-      const { data: { user } } = await supabase.auth.getUser();
-
-      const payload = {
-        user_id: user?.id,
-        name: answers.name,
-        stroke_type: answers.stroke_type,
-        months_in_recovery: parseInt(answers.months_in_recovery, 10) || 0,
-        affected_part: answers.affected_part,
-        affected_side: answers.affected_side,
-      };
-
       try {
+        // Get the current authenticated user
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError || !user) {
+          throw new Error('User not authenticated');
+        }
+
+        const payload = {
+          name: answers.name,
+          stroke_type: answers.stroke_type,
+          months_in_recovery: parseInt(answers.months_in_recovery, 10) || 0,
+          affected_part: answers.affected_part,
+          affected_side: answers.affected_side,
+          user_id: user.id,
+        };
+
         const response = await instance.post('/patients', payload);
         console.log('Saved patient profile:', response.data);
       } catch (error) {

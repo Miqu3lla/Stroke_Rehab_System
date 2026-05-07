@@ -252,8 +252,9 @@ def save_patient_profile(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
     normalized_payload = {
         "name": payload.get("name", "").strip(),
+        "id": payload.get("user_id"),
         "stroke_type": payload.get("stroke_type", "").strip().lower(),
-        "months_in_recovery": parse_months_value(payload.get("months_in_recovery", "")),
+        "months_in_recovery": int(payload.get("months_in_recovery", 0)),
         "affected_area": payload.get("affected_part", "").strip().lower(),
         "affected_side": payload.get("affected_side", "").strip().lower(),
         "source_app": payload.get("source_app", "frontend"),
