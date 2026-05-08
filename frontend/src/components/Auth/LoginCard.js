@@ -13,17 +13,43 @@ const LoginCard = ({ navigation }) => {
       return;
     }
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-    if (error) {
-      Alert.alert('Login Failed', error.message);
-    } else {
-      navigation.replace('Onboarding');
+      if (error) {
+        Alert.alert('Login Failed', error.message);
+        return;
+      }
+
+      const userId = data?.user?.id;
+      if (!userId) {
+        Alert.alert('Login Failed', 'Could not determine authenticated user.');
+        return;
+      }
+
+      const { data: patientProfile, error: profileError } = await supabase
+        .from('patients')
+        .select('id')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (profileError) {
+        console.log('Profile lookup failed, defaulting to onboarding:', profileError.message);
+        navigation.replace('Onboarding');
+        return;
+      }
+
+      if (patientProfile?.id) {
+        navigation.replace('Dashboard');
+      } else {
+        navigation.replace('Onboarding');
+      }
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const handleSignUpNav = () => {
