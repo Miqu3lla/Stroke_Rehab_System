@@ -16,18 +16,10 @@ import os
 import logging
 from core import supabase_db as supabase_db_module
 from core.supabase_db import save_patient_profile, save_recommendation_log
-from supabase import create_client
+
 
 logger = logging.getLogger("uvicorn.error")
 app = FastAPI(title="Stroke Rehab API", version="0.1.0")
-
-
-# Initialize Supabase client (used by storage module)
-supabase = create_client(
-    os.getenv("SUPABASE_URL"), 
-    os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-)
-
 
 # API request models keep the input shape strict for the mobile client.
 class JointFrame(BaseModel):
