@@ -3,14 +3,13 @@ import { View, Text, TextInput, TouchableOpacity, Alert, ActivityIndicator } fro
 import { supabase } from '../../services/supabase';
 
 const SignupCard = ({ navigation }) => {
-  const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSignUp = async () => {
-    if (!fullName || !email || !password || !confirmPassword) {
+    if (!email || !password || !confirmPassword) {
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
@@ -21,15 +20,9 @@ const SignupCard = ({ navigation }) => {
     }
 
     setLoading(true);
-    // You can pass the full name to the user's metadata in Supabase
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: {
-        data: {
-          full_name: fullName,
-        }
-      }
     });
 
     if (error) {
@@ -48,18 +41,6 @@ const SignupCard = ({ navigation }) => {
 
   return (
     <View className="w-full max-w-sm p-6 bg-white rounded-[32px] shadow-sm border border-gray-100">
-      <View className="mb-6">
-        <Text className="text-gray-900 font-bold mb-2 text-xl ml-2">Full Name</Text>
-        <TextInput
-          className="w-full h-[72px] bg-[#FAFAFA] border border-[#c3c6d6] rounded-[24px] px-6 text-xl text-gray-900"
-          placeholder="Enter your full name"
-          placeholderTextColor="#737685"
-          value={fullName}
-          onChangeText={setFullName}
-          autoCapitalize="words"
-        />
-      </View>
-
       <View className="mb-6">
         <Text className="text-gray-900 font-bold mb-2 text-xl ml-2">Email Address</Text>
         <TextInput
