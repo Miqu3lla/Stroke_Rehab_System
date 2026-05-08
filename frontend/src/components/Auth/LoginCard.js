@@ -7,7 +7,9 @@ const LoginCard = ({ navigation }) => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
+  //login logic
   const handleLogin = async () => {
+    //checks if the email or password fields are empty
     if (!email || !password) {
       Alert.alert('Error', 'Please enter both email and password');
       return;

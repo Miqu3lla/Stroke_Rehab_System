@@ -12,17 +12,20 @@ export default function App() {
   const [currentRoute, setCurrentRoute] = useState("Dashboard");
 
   return (
-    //AppNavigator is wrapped in NavigationContainer to manage navigation state and linkingr
+    //AppNavigator is wrapped in NavigationContainer to manage navigation state and linking
     <SafeAreaProvider>
       <NavigationContainer
         ref={navigationRef}
         onReady={() => {
+          //gets current route when navigation is ready
           setCurrentRoute(navigationRef.getCurrentRoute()?.name ?? "Dashboard");
         }}
         onStateChange={() => {
+          //gets current route when navigation state changes
           setCurrentRoute(navigationRef.getCurrentRoute()?.name ?? "Dashboard");
         }}
       >
+        
         <Navbar title="TheraMotion" currentRoute={currentRoute}>
           <AppNavigator />
         </Navbar>

@@ -9,15 +9,16 @@ const Navbar = ({ title, currentRoute, children }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [session, setSession] = useState(null);
 
+  //get user session to check if user is logged in or not 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
     });
-
+    //watches wheter the session changes wheter the user logs out
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
     });
-
+    //cleanup removes the subscription when the component unmounts
     return () => subscription.unsubscribe();
   }, []);
 
