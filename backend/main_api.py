@@ -66,7 +66,6 @@ def create_patient_profile(payload: PatientProfileRequest) -> dict:
         "id": payload.id,
         "stroke_type": payload.stroke_type,
         "months_in_recovery": payload.months_in_recovery,
-        "months_in_recovery_value": payload.months_in_recovery,
         "affected_part": payload.affected_part,
         "affected_side": payload.affected_side,
         "source_app": "frontend",
