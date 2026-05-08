@@ -21,6 +21,8 @@ from supabase import create_client
 logger = logging.getLogger("uvicorn.error")
 app = FastAPI(title="Stroke Rehab API", version="0.1.0")
 
+
+# Initialize Supabase client (used by storage module)
 supabase = create_client(
     os.getenv("SUPABASE_URL"), 
     os.getenv("SUPABASE_SERVICE_ROLE_KEY")
