@@ -94,7 +94,7 @@ npx expo start
 
 ```powershell
 cd backend
-python -m uvicorn main_api:app --reload --host 0.0.0.0 --port 8002
+python -m uvicorn main_api:app --reload --host 0.0.0.0 --port 8001
 ```
 
 Wait for: `Application startup complete`
@@ -141,7 +141,7 @@ The emulator should now show your **TheraMotion** app!
 
 Use these PowerShell commands when developing on Windows — one terminal per step.
 
-- Terminal 1 — Backend (start Uvicorn on :8002)
+- Terminal 1 — Backend (start Uvicorn on :8001)
 ```powershell
 cd backend
 $env:SUPABASE_URL = "http://localhost:8000"
@@ -151,16 +151,17 @@ $env:POSTGRES_DB = "postgres"
 $env:POSTGRES_USER = "supabase_admin"
 $env:POSTGRES_PASSWORD = "Bossman1234"
 $env:SUPABASE_DOCKER_CONTAINER = "supabase-db"
-python -m uvicorn main_api:app --host 0.0.0.0 --port 8002
+python -m uvicorn main_api:app --host 0.0.0.0 --port 8001
 ```
 
 - Terminal 2 — Cloudflared tunnel (optional; replace token)
 ```powershell
 cd backend
 # If using the bundled cloudflared.exe:
-.\cloudflared\cloudflared.exe tunnel run eyJhIjoiNjY4Zjc4YzVhOTU4MWM1MDUxYmQ2MGE0OTg1ZDYxNjYiLCJzIjoiWlRKa1pHVTJaR1l0T0RBNE1DMDBNVFF3TFRreU1UVXRabUV3TUdZME16QXpZV1V6IiwidCI6ImZkM2NlNTE1LTU5MjktNDdiZC1hYTY5LTA1MjczOWY4ZmY1MiJ9
+# Or run tunnel mapped to local port 8001
+.\cloudflared\cloudflared.exe tunnel run --url http://localhost:8001 eyJhIjoiNjY4Zjc4YzVhOTU4MWM1MDUxYmQ2MGE0OTg1ZDYxNjYiLCJzIjoiWlRKa1pHVTJaR1l0T0RBNE1DMDBNVFF3TFRreU1UVXRabUV3TUdZME16QXpZV1V6IiwidCI6ImZkM2NlNTE1LTU5MjktNDdiZC1hYTY5LTA1MjczOWY4ZmY1MiJ9
 # Or, if cloudflared is on PATH:
-cloudflared tunnel run eyJhIjoiNjY4Zjc4YzVhOTU4MWM1MDUxYmQ2MGE0OTg1ZDYxNjYiLCJzIjoiWlRKa1pHVTJaR1l0T0RBNE1DMDBNVFF3TFRreU1UVXRabUV3TUdZME16QXpZV1V6IiwidCI6ImZkM2NlNTE1LTU5MjktNDdiZC1hYTY5LTA1MjczOWY4ZmY1MiJ9
+cloudflared tunnel run --url http://localhost:8001 eyJhIjoiNjY4Zjc4YzVhOTU4MWM1MDUxYmQ2MGE0OTg1ZDYxNjYiLCJzIjoiWlRKa1pHVTJaR1l0T0RBNE1DMDBNVFF3TFRreU1UVXRabUV3TUdZME16QXpZV1V6IiwidCI6ImZkM2NlNTE1LTU5MjktNDdiZC1hYTY5LTA1MjczOWY4ZmY1MiJ9
 ```
 
 - Terminal 3 — Android emulator (start AVD)
@@ -178,9 +179,12 @@ npx expo start --lan
 
 Notes:
 - Replace `YOUR_CLOUDFLARED_TOKEN_HERE` with your real Cloudflare token when using tunnels.
-- From the Android emulator use `http://10.0.2.2:8002` to reach the backend running on your host.
-- For a real phone, use your PC's LAN IP (for example `http://192.168.1.42:8002`) or the cloudflared tunnel URL.
-- Ensure Windows Firewall allows inbound connections to port `8002` if using a real device over LAN.
+ - From the Android emulator use `http://10.0.2.2:8001` to reach the backend running on your host.
+ - For a real phone, use your PC's LAN IP (for example `http://192.168.1.42:8001`) or the cloudflared tunnel URL.
+ - Ensure Windows Firewall allows inbound connections to port `8001` if using a real device over LAN.
+ - From the Android emulator use `http://10.0.2.2:8001` to reach the backend running on your host.
+ - For a real phone, use your PC's LAN IP (for example `http://192.168.1.42:8001`) or the cloudflared tunnel URL.
+ - Ensure Windows Firewall allows inbound connections to port `8001` if using a real device over LAN.
 
 
 ### Testing the App
@@ -229,72 +233,6 @@ Notes:
 | Emulator slow or freezing | Close other apps. Check GPU acceleration is enabled in emulator settings. |
 | "Cannot connect to adb daemon" | Restart adb: `$env:ANDROID_SDK_ROOT\platform-tools\adb kill-server` |
 
-## Database Setup (Supabase)
-
-The app stores onboarding data in your Supabase database using the `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` values from your local Supabase Docker setup.
-
-### Environment variables for FastAPI
-
-Set these in your backend environment before starting Uvicorn. Use the values from your local Supabase Docker stack:
-
-```powershell
-$env:SUPABASE_URL = "http://localhost:8000"
-$env:SUPABASE_SERVICE_ROLE_KEY = "YOUR_SUPABASE_SERVICE_ROLE_KEY"
-$env:POSTGRES_HOST = "localhost"
-$env:POSTGRES_PORT = "5432"
-$env:POSTGRES_DB = "postgres"
-$env:POSTGRES_USER = "supabase_admin"
-$env:POSTGRES_PASSWORD = "YOUR_POSTGRES_PASSWORD"
-```
-
-### Create the `patients` table
-
-Run this in the Supabase SQL editor:
-
-```sql
-create table if not exists public.patients (
-   id uuid primary key default gen_random_uuid(),
-   name text not null,
-   stroke_type text not null,
-   months_in_recovery text not null,
-   months_in_recovery_value integer not null default 0,
-   affected_part text not null,
-   affected_area text not null,
-   affected_side text not null,
-   source_app text not null default 'frontend',
-   onboarding_payload jsonb not null default '{}'::jsonb,
-   created_at timestamptz not null default now()
-);
-```
-
-### Create the `recommendation_logs` table
-
-```sql
-create table if not exists public.recommendation_logs (
-   id uuid primary key default gen_random_uuid(),
-   patient_id text null,
-   stroke_type text not null,
-   months_in_recovery integer not null,
-   latest_form_score numeric(4,3) not null,
-   affected_area text not null,
-   affected_side text not null,
-   recommendation jsonb not null,
-   created_at timestamptz not null default now()
-);
-```
-
-### What gets saved from the app
-
-The onboarding screen sends these values to `POST /patients`:
-
-- `name`
-- `stroke_type`
-- `months_in_recovery`
-- `affected_part`
-- `affected_side`
-
-FastAPI stores the raw inputs and also saves normalized fields for querying.
-
 ## Docker Setup
 
 The project now includes Docker files for both services and a root compose file.
@@ -307,12 +245,12 @@ docker compose up --build
 
 ### Services and ports
 
-1. Backend API: `http://localhost:8002`
+1. Backend API: `http://localhost:8001`
 2. Frontend Expo: `http://localhost:8081`
 
 ### Notes
 
-1. Backend host port uses `8002` so it does not collide with your local Supabase Docker service on `8001`.
+1. Backend host port uses `8001`.
 2. The backend container still listens internally on `8000`.
 3. The root `.dockerignore` keeps build contexts small and avoids copying local caches, node_modules, and dataset archives into image builds.
 4. Backend Docker uses the CUDA 12.8 PyTorch wheel (`torch==2.11.0+cu128`) and requests GPU access with `gpus: all`.
@@ -330,14 +268,14 @@ $env:CLOUDFLARED_TOKEN = "YOUR_TUNNEL_TOKEN_HERE"
 
 2. From VS Code: **Terminal → Run Task → Run API & Tunnel**
    
-   Done! Backend runs on `http://localhost:8002` and `https://api.necookie.dev`
+   Done! Backend runs on `http://localhost:8001` and `https://api.necookie.dev`
 
 **Alternative: Two-terminal setup**
 
 ````powershell
 # Terminal 1
 cd backend
-python -m uvicorn main_api:app --host 0.0.0.0 --port 8002
+python -m uvicorn main_api:app --host 0.0.0.0 --port 8001
 
 # Terminal 2
 cd backend
@@ -345,7 +283,7 @@ cd backend
 
 **Test it:**
 ```powershell
-curl http://localhost:8002/health
+curl http://localhost:8001/health
 curl https://api.necookie.dev/health
 ````
 
@@ -382,13 +320,13 @@ Output artifact:
 
 ```bash
 cd backend
-python -m uvicorn main_api:app --reload --host 0.0.0.0 --port 8002
+python -m uvicorn main_api:app --reload --host 0.0.0.0 --port 8001
 ```
 
 Backend health endpoint:
 
 ```text
-GET http://127.0.0.1:8002/health
+GET http://127.0.0.1:8001/health
 ```
 
 ### 4.5 Run with Cloudflare Tunnel (Public URL)
@@ -411,7 +349,7 @@ setx CLOUDFLARED_TOKEN "YOUR_TUNNEL_TOKEN_HERE"
 
 2. In VS Code: Terminal → Run Task → Run API & Tunnel
 
-This opens two integrated terminals: Uvicorn (localhost:8002) and cloudflared.
+This opens two integrated terminals: Uvicorn (localhost:8001) and cloudflared.
 
 **Option B: Manual setup (two terminals)**
 
@@ -419,7 +357,7 @@ Terminal 1 (FastAPI):
 
 ```powershell
 cd backend
-python -m uvicorn main_api:app --reload --host 0.0.0.0 --port 8002
+python -m uvicorn main_api:app --reload --host 0.0.0.0 --port 8001
 ```
 
 Terminal 2 (Cloudflared connector):
