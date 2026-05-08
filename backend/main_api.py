@@ -54,7 +54,7 @@ class PatientProfileRequest(BaseModel):
     months_in_recovery: int = Field(..., description="1 Month | 2 months | 3 months")
     affected_part: str = Field(..., description="Arms | Legs | Both")
     affected_side: str = Field(..., description="Left | Right | Both")
-    user_id: str = Field(..., description="Supabase Auth user UUID")
+    id: str = Field(..., description="Supabase Auth user UUID")
 
 
 @app.get("/health")
@@ -69,7 +69,7 @@ def health_check() -> dict:
 def create_patient_profile(payload: PatientProfileRequest) -> dict:
     record = {
         "name": payload.name,
-        "user_id": payload.user_id,
+        "id": payload.id,
         "stroke_type": payload.stroke_type,
         "months_in_recovery": payload.months_in_recovery,
         "months_in_recovery_value": payload.months_in_recovery,

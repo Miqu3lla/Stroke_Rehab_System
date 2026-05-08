@@ -251,8 +251,8 @@ def save_patient_profile(payload: Dict[str, Any]) -> Dict[str, Any]:
     querying in the DB.
     """
     normalized_payload = {
+        "id": payload.get("id") or payload.get("user_id"),
         "name": payload.get("name", "").strip(),
-        "id": payload.get("user_id"),
         "stroke_type": payload.get("stroke_type", "").strip().lower(),
         "months_in_recovery": int(payload.get("months_in_recovery", 0)),
         "affected_area": payload.get("affected_part", "").strip().lower(),

@@ -83,12 +83,12 @@ const usePatientStore = create((set, get) => ({
         }
 
         const payload = {
+          id: user.id,
           name: answers.name,
           stroke_type: answers.stroke_type,
           months_in_recovery: parseInt(answers.months_in_recovery, 10) || 0,
           affected_part: answers.affected_part,
           affected_side: answers.affected_side,
-          user_id: user.id,
         };
 
         const response = await instance.post('/patients', payload);

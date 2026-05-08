@@ -1,7 +1,6 @@
 -- Create patients table
 CREATE TABLE IF NOT EXISTS patients (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   stroke_type TEXT NOT NULL CHECK (stroke_type IN ('ischemic', 'hemorrhagic', 'tia')),
   months_in_recovery INTEGER NOT NULL,
