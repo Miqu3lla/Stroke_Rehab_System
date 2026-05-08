@@ -17,10 +17,9 @@ import logging
 from core import supabase_db as supabase_db_module
 from core.supabase_db import save_patient_profile, save_recommendation_log
 
+
 logger = logging.getLogger("uvicorn.error")
-
 app = FastAPI(title="Stroke Rehab API", version="0.1.0")
-
 
 # API request models keep the input shape strict for the mobile client.
 class JointFrame(BaseModel):
@@ -46,9 +45,10 @@ class RecommendationRequest(BaseModel):
 class PatientProfileRequest(BaseModel):
     name: str
     stroke_type: str
-    months_in_recovery: str = Field(..., description="1 Month | 2 months | 3 months")
+    months_in_recovery: int = Field(..., description="1 Month | 2 months | 3 months")
     affected_part: str = Field(..., description="Arms | Legs | Both")
     affected_side: str = Field(..., description="Left | Right | Both")
+    id: str = Field(..., description="Supabase Auth user UUID")
 
 
 @app.get("/health")
@@ -56,18 +56,16 @@ def health_check() -> dict:
     return {"status": "ok", "service": "stroke-rehab-backend"}
 
 
-def _parse_months_label(months_label: str) -> int:
-    match = re.search(r"\d+", months_label or "")
-    return int(match.group()) if match else 0
+
 
 
 @app.post("/patients")
 def create_patient_profile(payload: PatientProfileRequest) -> dict:
     record = {
         "name": payload.name,
+        "id": payload.id,
         "stroke_type": payload.stroke_type,
         "months_in_recovery": payload.months_in_recovery,
-        "months_in_recovery_value": _parse_months_label(payload.months_in_recovery),
         "affected_part": payload.affected_part,
         "affected_side": payload.affected_side,
         "source_app": "frontend",

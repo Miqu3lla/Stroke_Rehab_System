@@ -35,6 +35,7 @@ const Sidebar = ({ isOpen, onClose, currentRoute }) => {
         </View>
 
         {sidebarItems.map(({ label, route, icon: Icon }) => {
+          //makes the currentroute matches the one on the sidebarItems routes
           const isActive = currentRoute === route;
           return (
           <Pressable
