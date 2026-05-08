@@ -13,9 +13,16 @@ const ExpoSecureStoreAdapter = {
   removeItem: (key) => SecureStore.deleteItemAsync(key),
 };
 
-// You will need to replace these with your actual keys
+
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.error("Missing Supabase environment variables:");
+  if (!supabaseUrl) console.error("- EXPO_PUBLIC_SUPABASE_URL");
+  if (!supabaseAnonKey) console.error("- EXPO_PUBLIC_SUPABASE_ANON_KEY");
+  throw new Error("Supabase configuration is incomplete. Please check your .env file.");
+}
 
 
 //sets up how the frontend talks to supabase and stores the users data

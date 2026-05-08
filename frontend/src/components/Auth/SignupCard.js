@@ -20,20 +20,23 @@ const SignupCard = ({ navigation }) => {
     }
 
     setLoading(true);
+
+    try {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
     });
-
-    if (error) {
-      Alert.alert('Signup Failed', error.message);
-    } else {
-      Alert.alert('Success', 'Check your email for the login link! Or log in if email confirmation is off.');
-      // Optionally navigate to login
-      navigation.replace('Login');
-    }
+    
+    
+    Alert.alert('Success', 'Check your email for the login link! Or log in if email confirmation is off.');
+    // Optionally navigate to login
+    navigation.replace('Login');
+  } catch (error) {
+    Alert.alert('Signup Failed', error.message);
+  } finally {
     setLoading(false);
-  };
+  }
+  };  
 
   const handleLoginNav = () => {
     navigation.replace('Login');

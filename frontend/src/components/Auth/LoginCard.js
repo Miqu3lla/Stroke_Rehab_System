@@ -15,7 +15,9 @@ const LoginCard = ({ navigation }) => {
       return;
     }
     setLoading(true);
+    //try catch block for the login logic
     try {
+      //runs the supabase auth signin logic and gets the email password from the user input
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
