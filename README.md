@@ -137,45 +137,6 @@ When prompted about installing `@expo/ngrok`, press `Y`. The app will:
 
 The emulator should now show your **TheraMotion** app!
 
-### Quick Run (copy/paste)
-
-Use these PowerShell commands when developing on Windows — one terminal per step.
-
-- Terminal 1 — Backend (start Uvicorn on :8001)
-```powershell
-cd backend
-$env:SUPABASE_URL = "http://localhost:8000"
-$env:POSTGRES_HOST = "localhost"
-$env:POSTGRES_PORT = "5432"
-$env:POSTGRES_DB = "postgres"
-$env:POSTGRES_USER = "supabase_admin"
-$env:POSTGRES_PASSWORD = "Bossman1234"
-$env:SUPABASE_DOCKER_CONTAINER = "supabase-db"
-python -m uvicorn main_api:app --host 0.0.0.0 --port 8001
-```
-
-- Terminal 2 — Cloudflared tunnel (optional; replace token)
-```powershell
-cd backend
-# If using the bundled cloudflared.exe:
-# Or run tunnel mapped to local port 8001
-.\cloudflared\cloudflared.exe tunnel run --url http://localhost:8001 eyJhIjoiNjY4Zjc4YzVhOTU4MWM1MDUxYmQ2MGE0OTg1ZDYxNjYiLCJzIjoiWlRKa1pHVTJaR1l0T0RBNE1DMDBNVFF3TFRreU1UVXRabUV3TUdZME16QXpZV1V6IiwidCI6ImZkM2NlNTE1LTU5MjktNDdiZC1hYTY5LTA1MjczOWY4ZmY1MiJ9
-# Or, if cloudflared is on PATH:
-cloudflared tunnel run --url http://localhost:8001 eyJhIjoiNjY4Zjc4YzVhOTU4MWM1MDUxYmQ2MGE0OTg1ZDYxNjYiLCJzIjoiWlRKa1pHVTJaR1l0T0RBNE1DMDBNVFF3TFRreU1UVXRabUV3TUdZME16QXpZV1V6IiwidCI6ImZkM2NlNTE1LTU5MjktNDdiZC1hYTY5LTA1MjczOWY4ZmY1MiJ9
-```
-
-- Terminal 3 — Android emulator (start AVD)
-```powershell
-$env:ANDROID_SDK_ROOT = "$env:LOCALAPPDATA\Android\Sdk"
-& "$env:ANDROID_SDK_ROOT\emulator\emulator.exe" -avd Medium_Phone_API_35 -netdelay none -netspeed full
-```
-
-- Terminal 4 — Expo (LAN mode — recommended for emulator)
-```powershell
-cd frontend
-npx expo start --lan
-# then press "a" to open on the Android emulator or scan the QR with Expo Go on a real device
-```
 
 Notes:
 - Replace `YOUR_CLOUDFLARED_TOKEN_HERE` with your real Cloudflare token when using tunnels.
@@ -327,50 +288,6 @@ Backend health endpoint:
 
 ```text
 GET http://127.0.0.1:8001/health
-```
-
-### 4.5 Run with Cloudflare Tunnel (Public URL)
-
-To expose your local FastAPI backend through a public HTTPS URL using Cloudflare Tunnel:
-
-**Option A: Use VS Code compound task (recommended)**
-
-1. Set the tunnel token in PowerShell (one-time per session):
-
-```powershell
-$env:CLOUDFLARED_TOKEN = "YOUR_TUNNEL_TOKEN_HERE"
-```
-
-Or persist it permanently:
-
-```powershell
-setx CLOUDFLARED_TOKEN "YOUR_TUNNEL_TOKEN_HERE"
-```
-
-2. In VS Code: Terminal → Run Task → Run API & Tunnel
-
-This opens two integrated terminals: Uvicorn (localhost:8001) and cloudflared.
-
-**Option B: Manual setup (two terminals)**
-
-Terminal 1 (FastAPI):
-
-```powershell
-cd backend
-python -m uvicorn main_api:app --reload --host 0.0.0.0 --port 8001
-```
-
-Terminal 2 (Cloudflared connector):
-
-```powershell
-cd backend
-.\cloudflared\cloudflared.exe tunnel run --token "YOUR_TUNNEL_TOKEN_HERE"
-```
-
-**To obtain your tunnel token:**
-
-```powershell
-& "C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel token stroke-rehab-api
 ```
 
 **Verify public URL:**
