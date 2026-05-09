@@ -15,6 +15,12 @@ const useAuthStore = create((set, get) => ({
       return;
     }
 
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      Alert.alert('Error', 'Please enter a valid email address');
+      return;
+    }
+
     set({ loading: true });
 
     try {
@@ -52,6 +58,8 @@ const useAuthStore = create((set, get) => ({
       } else {
         navigation.replace('Onboarding');
       }
+    } catch (error) {
+      Alert.alert('Login Failed', error.message);
     } finally {
       set({ loading: false });
     }
@@ -66,6 +74,15 @@ const useAuthStore = create((set, get) => ({
       return;
     }
 
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      Alert.alert('Error', 'Please enter a valid email address');
+      return;
+    }
+    if (password.length < 6) {
+      Alert.alert('Error', 'Password must be at least 6 characters long');
+      return;
+    } 
     if (password !== confirmPassword) {
       Alert.alert('Error', 'Passwords do not match');
       return;
@@ -74,14 +91,35 @@ const useAuthStore = create((set, get) => ({
     set({ loading: true });
 
     try {
-      await supabase.auth.signUp({
+      const {data, error} = await supabase.auth.signUp({
         email,
         password,
       });
-      Alert.alert(
-        'Success',
-        'Check your email for the login link! Or log in if email confirmation is off.',
-      );
+
+      if (error) {
+        Alert.alert('Signup Failed', error.message);
+        return;
+      }
+
+      const userId = data?.user?.id;
+      if (!userId) {
+        Alert.alert('Signup Failed', 'Could not determine authenticated user.');
+        return;
+      }
+
+      const { error: profileError } = await supabase
+        .from('patients')
+        .insert({
+          id: userId,
+          email,
+        });
+
+      if (profileError) {
+        console.log('Profile creation failed:', profileError.message);
+        Alert.alert('Signup Failed', 'Could not create patient profile.');
+        return;
+      }
+      Alert.alert('Account created Succesfully!, Welcome to TheraMotion!')
       navigation.replace('Login');
     } catch (error) {
       Alert.alert('Signup Failed', error.message);
