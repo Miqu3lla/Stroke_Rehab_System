@@ -1,46 +1,13 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
-import { supabase } from '../../services/supabase';
+import { View, Text, TextInput, TouchableOpacity, ActivityIndicator } from 'react-native';
+import useAuthStore from '../../store/useAuthStore';
 
 const SignupCard = ({ navigation }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [loading, setLoading] = useState(false);
 
-  const handleSignUp = async () => {
-    if (!email || !password || !confirmPassword) {
-      Alert.alert('Error', 'Please fill in all fields');
-      return;
-    }
-    
-    if (password !== confirmPassword) {
-      Alert.alert('Error', 'Passwords do not match');
-      return;
-    }
-
-    setLoading(true);
-
-    try {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-    });
-    
-    
-    Alert.alert('Success', 'Check your email for the login link! Or log in if email confirmation is off.');
-    // Optionally navigate to login
-    navigation.replace('Login');
-  } catch (error) {
-    Alert.alert('Signup Failed', error.message);
-  } finally {
-    setLoading(false);
-  }
-  };  
-
-  const handleLoginNav = () => {
-    navigation.replace('Login');
-  };
+  const { handleSignUp, loading } = useAuthStore();
 
   return (
     <View className="w-full max-w-sm p-6 bg-white rounded-[32px] shadow-sm border border-gray-100">
@@ -83,7 +50,7 @@ const SignupCard = ({ navigation }) => {
 
       <TouchableOpacity
         className="w-full h-[72px] bg-[#0052CC] rounded-full justify-center items-center mb-4"
-        onPress={handleSignUp}
+        onPress={() => handleSignUp(email, password, confirmPassword, navigation)}
         disabled={loading}
       >
         {loading ? (
@@ -95,7 +62,7 @@ const SignupCard = ({ navigation }) => {
 
       <TouchableOpacity
         className="w-full py-4 justify-center items-center"
-        onPress={handleLoginNav}
+        onPress={() => navigation.replace('Login')}
         disabled={loading}
       >
         <Text className="text-[#0052CC] text-[20px] font-bold">Already have an account? Login</Text>
