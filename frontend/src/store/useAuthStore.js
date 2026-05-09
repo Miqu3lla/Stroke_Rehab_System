@@ -40,10 +40,10 @@ const useAuthStore = create((set, get) => ({
         return;
       }
 
-      // Check if a patient profile already exists for this user
+      // Check if onboarding has been completed (name is filled in during onboarding)
       const { data: patientProfile, error: profileError } = await supabase
         .from('patients')
-        .select('id')
+        .select('name')
         .eq('id', userId)
         .maybeSingle();
 
@@ -53,7 +53,7 @@ const useAuthStore = create((set, get) => ({
         return;
       }
 
-      if (patientProfile?.id) {
+      if (patientProfile?.name) {
         navigation.replace('Dashboard');
       } else {
         navigation.replace('Onboarding');
@@ -107,20 +107,8 @@ const useAuthStore = create((set, get) => ({
         return;
       }
 
-      const { error: profileError } = await supabase
-        .from('patients')
-        .insert({
-          id: userId,
-          email,
-        });
-
-      if (profileError) {
-        console.log('Profile creation failed:', profileError.message);
-        Alert.alert('Signup Failed', 'Could not create patient profile.');
-        return;
-      }
       Alert.alert('Account created Succesfully!, Welcome to TheraMotion!')
-      navigation.replace('Login');
+      navigation.replace('Onboarding');
     } catch (error) {
       Alert.alert('Signup Failed', error.message);
     } finally {
