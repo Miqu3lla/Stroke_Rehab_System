@@ -111,7 +111,6 @@ const useAuthStore = create((set, get) => ({
         .from('patients')
         .insert({
           id: userId,
-          email,
         });
 
       if (profileError) {
