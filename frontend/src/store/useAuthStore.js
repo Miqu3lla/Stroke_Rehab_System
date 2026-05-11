@@ -12,13 +12,16 @@ const useAuthStore = create((set, get) => ({
 
     if (error) {
       console.error('Error fetching session:', error.message);
+      set({ user: null });
       return null;
     }
-    
+
     if (session) {
       set({ user: session.user });
+    } else {
+      set({ user: null });
     }
-    
+
     return session;
   },
 
@@ -155,7 +158,11 @@ const useAuthStore = create((set, get) => ({
       }
       
       // Now destroy the session
-      await supabase.auth.signOut();
+      const { error: signOutError } = await supabase.auth.signOut();
+      if (signOutError) {
+        console.error('[useAuthStore] signOut failed:', signOutError.message);
+        Alert.alert('Logout Failed', signOutError.message);
+      }
     } catch (error) {
       Alert.alert('Logout Failed', error.message);
     }
