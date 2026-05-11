@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -7,14 +7,17 @@ import {
 } from 'react-native';
 import { ChevronRight, Clock } from 'lucide-react-native';
 import usePatientStore from '../store/usePatientStore';
+import ExerciseModal from './ui/ExerciseModal';
 
 const RecommendationCard = ({ navigation }) => {
   const {
     recommendedExercises,
     recommendationLoading,
     recommendationError,
-    startExercise,
   } = usePatientStore();
+
+  const [selectedExercise, setSelectedExercise] = useState(null);
+  const [modalVisible, setModalVisible] = useState(false);
 
   if (recommendationLoading) {
     return (
@@ -41,8 +44,9 @@ const RecommendationCard = ({ navigation }) => {
     );
   }
 
-  const handleStartExercise = async (exercise) => {
-    await startExercise(exercise, navigation);
+  const handleOpenModal = (exercise) => {
+    setSelectedExercise(exercise);
+    setModalVisible(true);
   };
 
   return (
@@ -53,7 +57,7 @@ const RecommendationCard = ({ navigation }) => {
           <TouchableOpacity
             key={exercise.id}
             className="w-full flex-row items-center justify-between p-4 bg-[#ededf8] border-2 border-[#e7e7f2] rounded-xl active:opacity-80 min-h-[60px]"
-            onPress={() => handleStartExercise(exercise)}
+            onPress={() => handleOpenModal(exercise)}
           >
             <View className="flex-col gap-1 flex-1 pr-3">
               <Text className="text-[16px] font-bold text-[#191b23] flex-wrap leading-tight">{exercise.name}</Text>
@@ -68,6 +72,12 @@ const RecommendationCard = ({ navigation }) => {
           </TouchableOpacity>
         ))}
       </View>
+
+      <ExerciseModal 
+        visible={modalVisible}
+        exercise={selectedExercise}
+        onClose={() => setModalVisible(false)}
+      />
     </View>
   );
 };
