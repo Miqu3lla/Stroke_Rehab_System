@@ -4,7 +4,6 @@ import {
   Text,
   TouchableOpacity,
   ActivityIndicator,
-  StyleSheet,
 } from 'react-native';
 import usePatientStore from '../store/usePatientStore';
 
@@ -18,25 +17,25 @@ const RecommendationCard = ({ navigation }) => {
 
   if (recommendationLoading) {
     return (
-      <View style={styles.container}>
+      <View className="my-4 mx-4">
         <ActivityIndicator size="large" color="#4CAF50" />
-        <Text style={styles.loadingText}>Loading your exercise options...</Text>
+        <Text className="mt-3 text-sm text-[#666] text-center">Loading your exercise options...</Text>
       </View>
     );
   }
 
   if (recommendationError) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.errorText}>Unable to load recommendations</Text>
+      <View className="my-4 mx-4">
+        <Text className="text-sm text-[#f44336] text-center">Unable to load recommendations</Text>
       </View>
     );
   }
 
   if (!recommendedExercises || recommendedExercises.length === 0) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.emptyText}>No exercise recommendations yet</Text>
+      <View className="my-4 mx-4">
+        <Text className="text-sm text-[#999] text-center py-6">No exercise recommendations yet</Text>
       </View>
     );
   }
@@ -46,161 +45,49 @@ const RecommendationCard = ({ navigation }) => {
   };
 
   return (
-    <View style={styles.container}>
+    <View className="my-4 mx-4">
       {recommendedExercises.map((exercise, index) => (
-        <View key={exercise.id} style={styles.card}>
+        <View key={exercise.id} className="bg-white rounded-xl p-4 mb-3 shadow-sm elevation-3">
           {/* Exercise Header */}
-          <View style={styles.header}>
-            <Text style={styles.title}>{exercise.name}</Text>
-            <View style={styles.levelBadge}>
-              <Text style={styles.levelText}>
+          <View className="flex-row justify-between items-center mb-3">
+            <Text className="text-lg font-semibold text-[#333] flex-1">{exercise.name}</Text>
+            <View className="bg-[#f0f0f0] px-2 py-1 rounded-md">
+              <Text className="text-sm">
                 {'⭐'.repeat(exercise.level)}
               </Text>
             </View>
           </View>
 
           {/* Exercise Image/Placeholder */}
-          <View style={styles.imagePlaceholder}>
-            <Text style={styles.imagePlaceholderText}>Exercise Video</Text>
+          <View className="w-full h-[200px] rounded-lg mb-3 bg-[#e3f2fd] justify-center items-center">
+            <Text className="text-base text-[#1976d2] font-medium">Exercise Video</Text>
           </View>
 
           {/* Exercise Description */}
-          <Text style={styles.description}>
+          <Text className="text-sm text-[#666] mb-3 leading-[20px]">
             {exercise.description}
           </Text>
 
           {/* Exercise Duration */}
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Duration:</Text>
-            <Text style={styles.infoValue}>
+          <View className="flex-row justify-between mb-4 pb-3 border-b border-[#eee]">
+            <Text className="text-[13px] text-[#999] font-medium">Duration:</Text>
+            <Text className="text-[13px] text-[#333] font-semibold">
               {exercise.duration_minutes} minutes
             </Text>
           </View>
 
           {/* Primary CTA Button */}
           <TouchableOpacity
-            style={styles.button}
+            className="bg-[#4CAF50] py-3 rounded-lg items-center"
             onPress={() => handleStartExercise(exercise)}
             activeOpacity={0.8}
           >
-            <Text style={styles.buttonText}>Do This Exercise</Text>
+            <Text className="text-white text-base font-semibold">Do This Exercise</Text>
           </TouchableOpacity>
         </View>
       ))}
     </View>
   );
 };
-
-const styles = StyleSheet.create({
-  container: {
-    marginVertical: 16,
-    marginHorizontal: 16,
-  },
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-    flex: 1,
-  },
-  levelBadge: {
-    backgroundColor: '#f0f0f0',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  levelText: {
-    fontSize: 14,
-  },
-  image: {
-    width: '100%',
-    height: 200,
-    borderRadius: 8,
-    marginBottom: 12,
-    backgroundColor: '#f0f0f0',
-  },
-  imagePlaceholder: {
-    width: '100%',
-    height: 200,
-    borderRadius: 8,
-    marginBottom: 12,
-    backgroundColor: '#e3f2fd',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  imagePlaceholderText: {
-    fontSize: 16,
-    color: '#1976d2',
-    fontWeight: '500',
-  },
-  description: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 12,
-    lineHeight: 20,
-  },
-  infoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-  },
-  infoLabel: {
-    fontSize: 13,
-    color: '#999',
-    fontWeight: '500',
-  },
-  infoValue: {
-    fontSize: 13,
-    color: '#333',
-    fontWeight: '600',
-  },
-  button: {
-    backgroundColor: '#4CAF50',
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-  },
-  errorText: {
-    fontSize: 14,
-    color: '#f44336',
-    textAlign: 'center',
-  },
-  emptyText: {
-    fontSize: 14,
-    color: '#999',
-    textAlign: 'center',
-    paddingVertical: 24,
-  },
-});
 
 export default RecommendationCard;
