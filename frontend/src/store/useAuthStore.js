@@ -6,6 +6,22 @@ const useAuthStore = create((set, get) => ({
   // State
   loading: false,
 
+
+  getAuthSession: async() => {
+    const { data: { session }, error } = await supabase.auth.getSession();
+
+    if (error) {
+      console.error('Error fetching session:', error.message);
+      return null;
+    }
+    
+    if (session) {
+      set({ user: session.user });
+    }
+    
+    return session;
+  },
+
   // ─── Login ────────────────────────────────────────────────────────────────
   // Validates inputs, signs the user in via Supabase, then routes to the
   // correct screen depending on whether an onboarding profile already exists.
@@ -122,21 +138,24 @@ const useAuthStore = create((set, get) => ({
   // Call this wherever you need a logout button (e.g. a settings or dashboard screen).
   logout: async (navigation) => {
     try {
-      await supabase.auth.signOut();
-      // Navigate to login
+      // Navigate to login BEFORE signing out to prevent the navigation object
+      // from being destroyed when the session listener unmounts the Sidebar
       if (navigation) {
         try {
-          if (typeof navigation.replace === 'function') {
-            navigation.replace('Login');
-          } else if (typeof navigation.reset === 'function') {
+          if (typeof navigation.reset === 'function') {
             navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+          } else if (typeof navigation.replace === 'function') {
+            navigation.replace('Login');
           } else if (typeof navigation.navigate === 'function') {
             navigation.navigate('Login');
           }
         } catch (navErr) {
-          console.warn('Navigation after logout failed:', navErr);
+          console.warn('Navigation before logout failed:', navErr);
         }
       }
+      
+      // Now destroy the session
+      await supabase.auth.signOut();
     } catch (error) {
       Alert.alert('Logout Failed', error.message);
     }
