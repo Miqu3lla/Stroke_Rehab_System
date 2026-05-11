@@ -1,26 +1,38 @@
-import React from "react";
-import { Text, View } from "react-native";
+import React, { useEffect } from "react";
+import { Text, View, ScrollView } from "react-native";
+import usePatientStore from "../store/usePatientStore";
+import RecommendationCard from "../components/RecommendationCard";
 
 
-const HomeScreen = () => {
+const HomeScreen = ({ navigation }) => {
+  const { fetchRecommendation } = usePatientStore();
+
+  // Fetch recommended exercise when screen loads
+  useEffect(() => {
+    fetchRecommendation();
+  }, []);
+
   return (
-    <View style={{ flex: 1 }}>
-      <View className="gap-4">
+    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 20 }}>
+      <View className="gap-4 p-4">
         <View className="rounded-3xl bg-emerald-50 p-5">
           <Text className="text-base font-semibold text-emerald-900">Today's Overview</Text>
           <Text className="mt-2 text-sm text-emerald-800">
-            Placeholder metrics for assigned sessions, completed reps, and patient notes.
+            Your personalized exercise plan for today's session.
           </Text>
         </View>
+
+        {/* Recommended Exercise Card */}
+        <RecommendationCard navigation={navigation} />
 
         <View className="rounded-3xl bg-slate-50 p-5">
           <Text className="text-base font-semibold text-slate-900">Quick Actions</Text>
           <Text className="mt-2 text-sm text-slate-600">
-            Placeholder space for start session, review form, and clinician insights.
+            Review your progress and session history.
           </Text>
         </View>
       </View>
-    </View>
+    </ScrollView>
   );
 };
 
