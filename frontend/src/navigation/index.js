@@ -15,10 +15,16 @@ const AppNavigator = () => {
 
   useEffect(() => {
     const checkAuth = async () => {
-      const session = await getAuthSession();
-      // Set to true if session exists, false if not. 
-      // (This safely transitions user from 'null' loading state)
-      setUser(!!session); 
+      try {
+        const session = await getAuthSession();
+        // Set to true if session exists, false if not.
+        // (This safely transitions user from 'null' loading state)
+        setUser(!!session);
+      } catch (error) {
+        console.error("[AppNavigator] checkAuth failed:", error);
+        // Ensure user exits the null/loading state so the navigator can render
+        setUser(false);
+      }
     };
     checkAuth();
   }, []);
