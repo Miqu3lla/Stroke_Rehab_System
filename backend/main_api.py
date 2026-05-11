@@ -13,9 +13,10 @@ from core.mediapipe_vision import extract_sequence_from_video
 from core.neural_network import classify_form_sequence
 from core.recommender import recommend_next_plan
 import os
+import hashlib
 import logging
 from core import supabase_db as supabase_db_module
-from core.supabase_db import save_patient_profile, save_recommendation_log
+from core.supabase_db import save_patient_profile, save_recommendation_log, get_patient_by_id
 
 
 logger = logging.getLogger("uvicorn.error")
@@ -35,7 +36,6 @@ class FormRequest(BaseModel):
 
 class RecommendationRequest(BaseModel):
     patient_id: str
-    stroke_type: str
     months_in_recovery: int = Field(..., ge=0)
     latest_form_score: float = Field(..., ge=0.0, le=1.0)
     affected_area: str = Field(..., description="arms | legs | both")
@@ -44,7 +44,6 @@ class RecommendationRequest(BaseModel):
 
 class PatientProfileRequest(BaseModel):
     name: str
-    stroke_type: str
     months_in_recovery: int = Field(..., description="1 Month | 2 months | 3 months")
     affected_part: str = Field(..., description="Arms | Legs | Both")
     affected_side: str = Field(..., description="Left | Right | Both")
@@ -64,7 +63,7 @@ def create_patient_profile(payload: PatientProfileRequest) -> dict:
     record = {
         "name": payload.name,
         "id": payload.id,
-        "stroke_type": payload.stroke_type,
+        "stroke_type": "ischemic",
         "months_in_recovery": payload.months_in_recovery,
         "affected_part": payload.affected_part,
         "affected_side": payload.affected_side,
@@ -133,7 +132,7 @@ async def predict_form_from_video(
 @app.post("/recommendation")
 def get_recommendation(payload: RecommendationRequest) -> dict:
     recommendation = recommend_next_plan(
-        stroke_type=payload.stroke_type,
+        stroke_type="ischemic",
         months_in_recovery=payload.months_in_recovery,
         latest_form_score=payload.latest_form_score,
         affected_area=payload.affected_area,
@@ -142,7 +141,7 @@ def get_recommendation(payload: RecommendationRequest) -> dict:
     database_result = save_recommendation_log(
         {
             "patient_id": payload.patient_id,
-            "stroke_type": payload.stroke_type,
+            "stroke_type": "ischemic",
             "months_in_recovery": payload.months_in_recovery,
             "latest_form_score": payload.latest_form_score,
             "affected_area": payload.affected_area,
@@ -151,3 +150,134 @@ def get_recommendation(payload: RecommendationRequest) -> dict:
         }
     )
     return {"patient_id": payload.patient_id, "recommendation": recommendation, "database": database_result}
+
+
+# GET recommendation endpoint – returns 3 recommended exercises for a patient at different intensity levels
+# Call this from the frontend to populate the dashboard exercise cards
+@app.get("/recommendation/{patient_id}")
+def get_recommended_exercise(patient_id: str) -> dict:
+    """Fetch a patient's profile and generate 3 recommended exercises at different intensities.
+    
+    Returns an array of 3 exercise objects (low, moderate, high intensity) that the user can choose from.
+    """
+    patient = get_patient_by_id(patient_id)
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    
+    exercises = []
+
+    # Deterministic per-user seed to vary exercise selection across users
+    user_hash = int(hashlib.md5(patient_id.encode('utf-8')).hexdigest(), 16)
+
+    # Pools of templates keyed by affected area — each pool contains distinct exercise templates
+    pools = {
+        'arms': [
+            {'name': 'Arm Reach & Open', 'desc': 'Controlled reaching and opening movements to improve shoulder mobility.', 'base_minutes': 20},
+            {'name': 'Upper-Limb Strength', 'desc': 'Resistance-based exercises for arm strength and coordination.', 'base_minutes': 35},
+            {'name': 'Fine Motor Control', 'desc': 'Small movement drills to improve hand and finger dexterity.', 'base_minutes': 25},
+        ],
+        'legs': [
+            {'name': 'Ankle & Knee Mobility', 'desc': 'Gentle mobilizations for ankle and knee control.', 'base_minutes': 20},
+            {'name': 'Gait & Balance', 'desc': 'Functional stepping and balance tasks to improve walking.', 'base_minutes': 40},
+            {'name': 'Endurance Walks', 'desc': 'Structured walking sets to build endurance safely.', 'base_minutes': 50},
+        ],
+        'both': [
+            {'name': 'Full-Body Mobility', 'desc': 'Whole body mobility flows focusing on posture and alignment.', 'base_minutes': 25},
+            {'name': 'Functional Movement', 'desc': 'Compound movements to restore everyday functional patterns.', 'base_minutes': 45},
+            {'name': 'Strength & Endurance', 'desc': 'Higher-intensity circuit for strength and cardiovascular fitness.', 'base_minutes': 60},
+        ],
+    }
+
+    area = (patient.get('affected_area') or 'both').strip().lower()
+    pool = pools.get(area, pools['both'])
+
+    # create three exercises by selecting different templates from the chosen pool
+    for i in range(3):
+        # choose template index deterministically per user
+        template_idx = (user_hash + i) % len(pool)
+        template = pool[template_idx]
+
+        # call recommender to get intensity/focus details personalized to user
+        rec = recommend_next_plan(
+            stroke_type='ischemic',
+            months_in_recovery=patient.get('months_in_recovery', 0),
+            latest_form_score=0.6 + 0.1 * i,  # slightly vary score per option
+            affected_area=patient.get('affected_area', 'both'),
+            affected_side=patient.get('affected_side', 'both'),
+        )
+
+        intensity = rec.get('intensity', 'moderate')
+        level = 1 if intensity == 'low' else 2 if intensity == 'moderate' else 3
+
+        # small duration adjustment from template based on index and rec details
+        duration = template['base_minutes'] + (i * 5) + (level - 1) * 5
+
+        exercise = {
+            'id': f"rec-{patient_id[:8]}-{i}",
+            'name': f"{intensity.title()} - {template['name']}",
+            'description': template.get('desc') + ' ' + rec.get('focus', ''),
+            'level': level,
+            'duration_minutes': duration,
+            'video_url': 'https://via.placeholder.com/320x240?text=Exercise+Video',
+            'intensity': intensity,
+            'focus': rec.get('focus', ''),
+            'recommendation': rec,
+        }
+
+        exercises.append(exercise)
+
+    return {'patient_id': patient_id, 'exercises': exercises}
+
+
+# POST endpoint to log when a patient starts or completes an exercise
+@app.post("/recommendation_logs")
+def log_exercise_event(payload: dict) -> dict:
+    """Log an exercise event (started, completed, etc.) for tracking.
+    
+    Expected payload:
+    {
+        "patient_id": "uuid",
+        "recommendation_id": "rec-xxx",
+        "action": "started" | "completed",
+        "ts": "2024-05-10T15:30:00Z"
+    }
+    """
+    try:
+        # Ensure required fields
+        patient_id = payload.get("patient_id")
+        recommendation_id = payload.get("recommendation_id")
+        action = payload.get("action", "started")
+        ts = payload.get("ts")
+        
+        if not all([patient_id, recommendation_id, action]):
+            raise HTTPException(
+                status_code=400,
+                detail="Missing required fields: patient_id, recommendation_id, action"
+            )
+        
+        # Normalize the log entry
+        log_entry = {
+            "patient_id": patient_id,
+            "recommendation_id": recommendation_id,
+            "action": action,
+            "timestamp": ts or __import__("datetime").datetime.utcnow().isoformat(),
+        }
+        
+        # Save to database
+        database_result = save_recommendation_log(log_entry)
+        
+        if database_result.get("stored"):
+            return {
+                "status": "ok",
+                "message": f"Exercise event '{action}' logged for patient {patient_id}",
+                "data": log_entry,
+            }
+        else:
+            return {
+                "status": "warning",
+                "message": f"Event logged locally but database save may have failed",
+                "data": log_entry,
+                "database_error": database_result,
+            }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to log exercise event: {str(exc)}") from exc

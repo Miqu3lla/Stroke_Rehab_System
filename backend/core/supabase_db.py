@@ -238,6 +238,68 @@ def _post(table_name: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         return {"stored": False, "error": str(exc)}
 
 
+def _postgres_fetch_one(table_name: str, column: str, value: str) -> Optional[Dict[str, Any]]:
+    if psycopg2 is None or not _postgres_configured():
+        return None
+
+    config = _get_postgres_config()
+    query = f"SELECT * FROM public.{table_name} WHERE {column} = %s LIMIT 1"
+
+    try:
+        with psycopg2.connect(
+            host=config["host"],
+            port=config["port"],
+            dbname=config["dbname"],
+            user=config["user"],
+            password=config["password"],
+            cursor_factory=RealDictCursor,
+        ) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, (value,))
+                row = cursor.fetchone()
+                return dict(row) if row is not None else None
+    except Exception:
+        return None
+
+
+def _docker_postgres_fetch_one(table_name: str, column: str, value: str) -> Optional[Dict[str, Any]]:
+    if shutil.which("docker") is None:
+        return None
+
+    container_name = os.getenv("SUPABASE_DOCKER_CONTAINER", "supabase-db")
+    config = _get_postgres_config()
+    query = f"SELECT row_to_json(t) FROM (SELECT * FROM public.{table_name} WHERE {column} = '{value}' LIMIT 1) t;"
+
+    command = [
+        "docker",
+        "exec",
+        "-e",
+        f"PGPASSWORD={config['password']}",
+        container_name,
+        "psql",
+        "-U",
+        config["user"],
+        "-d",
+        config["dbname"],
+        "-tA",
+        "-c",
+        query,
+    ]
+
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        return None
+
+    output = next((line.strip() for line in result.stdout.splitlines() if line.strip()), "")
+    if not output:
+        return None
+
+    try:
+        return json.loads(output)
+    except Exception:
+        return None
+
+
 def parse_months_value(months_label: str) -> int:
     """Extract an integer month value from a label like '2 months'."""
     match = re.search(r"\d+", months_label or "")
@@ -248,12 +310,12 @@ def save_patient_profile(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize a patient payload and persist it to `public.patients`.
 
     Normalization: lower-casing and extracting numeric month value for easy
-    querying in the DB.
+    querying in the DB. Stroke type is always set to ischemic.
     """
     normalized_payload = {
         "id": payload.get("id") or payload.get("user_id"),
         "name": payload.get("name", "").strip(),
-        "stroke_type": payload.get("stroke_type", "").strip().lower(),
+        "stroke_type": "ischemic",
         "months_in_recovery": int(payload.get("months_in_recovery") or 0),
         "affected_area": payload.get("affected_part", "").strip().lower(),
         "affected_side": payload.get("affected_side", "").strip().lower(),
@@ -265,3 +327,29 @@ def save_patient_profile(payload: Dict[str, Any]) -> Dict[str, Any]:
 def save_recommendation_log(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Persist a recommendation payload to `public.recommendation_logs`."""
     return _post("recommendation_logs", payload)
+
+
+def get_patient_by_id(patient_id: str) -> Optional[Dict[str, Any]]:
+    """Fetch a patient record by ID from the patients table.
+    
+    Returns the patient dict or None if not found.
+    Tries direct Postgres, then docker exec, then REST.
+    """
+    postgres_row = _postgres_fetch_one("patients", "id", patient_id)
+    if postgres_row:
+        return postgres_row
+
+    docker_row = _docker_postgres_fetch_one("patients", "id", patient_id)
+    if docker_row:
+        return docker_row
+
+    url = _rest_url("patients") + f"?id=eq.{patient_id}&select=*"
+    req = request.Request(url, headers=_headers(), method="GET")
+
+    try:
+        with request.urlopen(req, timeout=10) as response:
+            body = response.read().decode("utf-8")
+            data = json.loads(body) if body else []
+            return data[0] if data else None
+    except Exception:
+        return None

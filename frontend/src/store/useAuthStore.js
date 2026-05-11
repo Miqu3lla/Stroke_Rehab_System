@@ -124,7 +124,19 @@ const useAuthStore = create((set, get) => ({
     try {
       await supabase.auth.signOut();
       // Navigate to login
-      navigation.replace('Login');
+      if (navigation) {
+        try {
+          if (typeof navigation.replace === 'function') {
+            navigation.replace('Login');
+          } else if (typeof navigation.reset === 'function') {
+            navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+          } else if (typeof navigation.navigate === 'function') {
+            navigation.navigate('Login');
+          }
+        } catch (navErr) {
+          console.warn('Navigation after logout failed:', navErr);
+        }
+      }
     } catch (error) {
       Alert.alert('Logout Failed', error.message);
     }

@@ -9,14 +9,9 @@ _MODEL_CACHE: Dict[str, Any] = {"model": None, "loaded": False, "source": "rule_
 
 
 # Normalize the stroke type so the recommender can map it to numeric features.
+# All strokes are ischemic, so always return 0.
 def _encode_stroke_type(stroke_type: str) -> int:
-    mapping = {
-        "ischemic": 0,
-        "hemorrhagic": 1,
-        "tia": 2,
-        "unknown": 3,
-    }
-    return mapping.get(stroke_type.strip().lower(), 3)
+    return 0
 
 
 def _encode_area(area: str) -> int:
@@ -88,12 +83,9 @@ def _rule_based_intensity(
 def _focus_area(
     stroke_type: str, intensity: str, affected_area: str = "both", affected_side: str = "both"
 ) -> str:
-    stroke = stroke_type.strip().lower()
     area = affected_area.strip().lower()
 
-    if stroke == "hemorrhagic":
-        base = "balance + controlled mobility"
-    elif intensity == "high":
+    if intensity == "high":
         base = "strength + endurance"
     elif intensity == "low":
         base = "mobility + form correction"
@@ -148,9 +140,6 @@ def recommend_next_plan(
 
     if affected_side.strip().lower() in {"left", "right"}:
         details["notes"].append("Include unilateral training and emphasize weaker side")
-
-    if stroke_type.strip().lower() == "hemorrhagic":
-        details["notes"].append("Progress more conservatively; monitor blood pressure")
 
     return {
         "stroke_type": stroke_type,

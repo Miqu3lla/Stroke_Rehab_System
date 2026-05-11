@@ -2,7 +2,7 @@
 CREATE TABLE IF NOT EXISTS patients (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
-  stroke_type TEXT NOT NULL CHECK (stroke_type IN ('ischemic', 'hemorrhagic', 'tia')),
+  stroke_type TEXT NOT NULL CHECK (stroke_type = 'ischemic'),
   months_in_recovery INTEGER NOT NULL,
   affected_area TEXT NOT NULL CHECK (affected_area IN ('arms', 'legs', 'both')),
   affected_side TEXT NOT NULL CHECK (affected_side IN ('left', 'right', 'both')),
