@@ -5,6 +5,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
 } from 'react-native';
+import { ChevronRight, Clock } from 'lucide-react-native';
 import usePatientStore from '../store/usePatientStore';
 
 const RecommendationCard = ({ navigation }) => {
@@ -17,25 +18,25 @@ const RecommendationCard = ({ navigation }) => {
 
   if (recommendationLoading) {
     return (
-      <View className="my-4 mx-4">
-        <ActivityIndicator size="large" color="#4CAF50" />
-        <Text className="mt-3 text-sm text-[#666] text-center">Loading your exercise options...</Text>
+      <View className="my-2">
+        <ActivityIndicator size="small" color="#0c56d0" />
+        <Text className="mt-3 text-sm font-medium text-[#434654] text-center">Loading your exercise options...</Text>
       </View>
     );
   }
 
   if (recommendationError) {
     return (
-      <View className="my-4 mx-4">
-        <Text className="text-sm text-[#f44336] text-center">Unable to load recommendations</Text>
+      <View className="my-2">
+        <Text className="text-sm font-medium text-[#ba1a1a] text-center">Unable to load recommendations</Text>
       </View>
     );
   }
 
   if (!recommendedExercises || recommendedExercises.length === 0) {
     return (
-      <View className="my-4 mx-4">
-        <Text className="text-sm text-[#999] text-center py-6">No exercise recommendations yet</Text>
+      <View className="my-2">
+        <Text className="text-sm font-medium text-[#434654] text-center py-4">No exercise recommendations yet</Text>
       </View>
     );
   }
@@ -45,47 +46,28 @@ const RecommendationCard = ({ navigation }) => {
   };
 
   return (
-    <View className="my-4 mx-4">
-      {recommendedExercises.map((exercise, index) => (
-        <View key={exercise.id} className="bg-white rounded-xl p-4 mb-3 shadow-sm elevation-3">
-          {/* Exercise Header */}
-          <View className="flex-row justify-between items-center mb-3">
-            <Text className="text-lg font-semibold text-[#333] flex-1">{exercise.name}</Text>
-            <View className="bg-[#f0f0f0] px-2 py-1 rounded-md">
-              <Text className="text-sm">
-                {'⭐'.repeat(exercise.level)}
-              </Text>
-            </View>
-          </View>
-
-          {/* Exercise Image/Placeholder */}
-          <View className="w-full h-[200px] rounded-lg mb-3 bg-[#e3f2fd] justify-center items-center">
-            <Text className="text-base text-[#1976d2] font-medium">Exercise Video</Text>
-          </View>
-
-          {/* Exercise Description */}
-          <Text className="text-sm text-[#666] mb-3 leading-[20px]">
-            {exercise.description}
-          </Text>
-
-          {/* Exercise Duration */}
-          <View className="flex-row justify-between mb-4 pb-3 border-b border-[#eee]">
-            <Text className="text-[13px] text-[#999] font-medium">Duration:</Text>
-            <Text className="text-[13px] text-[#333] font-semibold">
-              {exercise.duration_minutes} minutes
-            </Text>
-          </View>
-
-          {/* Primary CTA Button */}
+    <View className="my-2">
+      <Text className="text-lg font-bold text-[#191b23] ml-1 mb-3">Recommended exercises</Text>
+      <View className="flex-col gap-3">
+        {recommendedExercises.map((exercise, index) => (
           <TouchableOpacity
-            className="bg-[#4CAF50] py-3 rounded-lg items-center"
+            key={exercise.id}
+            className="w-full flex-row items-center justify-between p-4 bg-[#ededf8] border-2 border-[#e7e7f2] rounded-xl active:opacity-80 min-h-[60px]"
             onPress={() => handleStartExercise(exercise)}
-            activeOpacity={0.8}
           >
-            <Text className="text-white text-base font-semibold">Do This Exercise</Text>
+            <View className="flex-col gap-1 flex-1 pr-3">
+              <Text className="text-[16px] font-bold text-[#191b23] flex-wrap leading-tight">{exercise.name}</Text>
+              <View className="flex-row items-center gap-1.5 mt-0.5">
+                <Clock size={14} color="#434654" />
+                <Text className="text-[14px] font-medium text-[#434654]">
+                  {exercise.duration_minutes} min
+                </Text>
+              </View>
+            </View>
+            <ChevronRight size={20} color="#0c56d0" />
           </TouchableOpacity>
-        </View>
-      ))}
+        ))}
+      </View>
     </View>
   );
 };
