@@ -1,9 +1,17 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, Modal, Pressable } from 'react-native';
 import { Clock, X, Play } from 'lucide-react-native';
+import usePatientStore from '../../store/usePatientStore';
 
-const ExerciseModal = ({ visible, exercise, onClose }) => {
+const ExerciseModal = ({ visible, exercise, onClose, navigation }) => {
+  const { startExercise } = usePatientStore();
+
   if (!exercise) return null;
+
+  const handleStartExercise = async () => {
+    await startExercise(exercise, navigation);
+    onClose();
+  };
 
   return (
     <Modal
@@ -60,7 +68,7 @@ const ExerciseModal = ({ visible, exercise, onClose }) => {
           {/* Start Button */}
           <TouchableOpacity 
             className="w-full bg-[#0c56d0] min-h-[64px] rounded-full flex-row items-center justify-center active:bg-[#0a46a8]"
-            onPress={onClose} // Just closes for now as requested
+            onPress={handleStartExercise}
           >
             <Text className="text-white text-[20px] font-bold">Start Exercise</Text>
           </TouchableOpacity>

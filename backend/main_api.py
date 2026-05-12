@@ -221,6 +221,8 @@ def get_recommended_exercise(patient_id: str) -> dict:
             'video_url': 'https://via.placeholder.com/320x240?text=Exercise+Video',
             'intensity': intensity,
             'focus': rec.get('focus', ''),
+            'affected_area': area,
+            'affected_side': (patient.get('affected_side') or 'right').strip().lower(),
             'recommendation': rec,
         }
 
@@ -239,6 +241,8 @@ def log_exercise_event(payload: dict) -> dict:
         "patient_id": "uuid",
         "recommendation_id": "rec-xxx",
         "action": "started" | "completed",
+        "duration_seconds": 300,
+        "avg_form_score": 85.5,
         "ts": "2024-05-10T15:30:00Z"
     }
     """
@@ -248,19 +252,41 @@ def log_exercise_event(payload: dict) -> dict:
         recommendation_id = payload.get("recommendation_id")
         action = payload.get("action", "started")
         ts = payload.get("ts")
+        duration_seconds = int(payload.get("duration_seconds") or 0)
+        avg_form_score = float(payload.get("avg_form_score") or 0.0)
         
         if not all([patient_id, recommendation_id, action]):
             raise HTTPException(
                 status_code=400,
                 detail="Missing required fields: patient_id, recommendation_id, action"
             )
+
+        patient = get_patient_by_id(patient_id)
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient not found")
         
-        # Normalize the log entry
-        log_entry = {
+        # Keep raw event details inside JSONB while writing only the columns
+        # that are known to exist in the live recommendation_logs table.
+        event_timestamp = ts or __import__("datetime").datetime.utcnow().isoformat()
+        recommendation_payload = {
             "patient_id": patient_id,
             "recommendation_id": recommendation_id,
             "action": action,
-            "timestamp": ts or __import__("datetime").datetime.utcnow().isoformat(),
+            "duration_seconds": duration_seconds,
+            "avg_form_score": avg_form_score,
+            "timestamp": event_timestamp,
+            "patient_snapshot": {
+                "stroke_type": patient.get("stroke_type") or "ischemic",
+                "months_in_recovery": int(patient.get("months_in_recovery") or 0),
+                "affected_area": (patient.get("affected_area") or "both").strip().lower(),
+                "affected_side": (patient.get("affected_side") or "both").strip().lower(),
+            },
+        }
+
+        log_entry = {
+            "patient_id": patient_id,
+            "latest_form_score": avg_form_score,
+            "recommendation": recommendation_payload,
         }
         
         # Save to database
@@ -270,14 +296,16 @@ def log_exercise_event(payload: dict) -> dict:
             return {
                 "status": "ok",
                 "message": f"Exercise event '{action}' logged for patient {patient_id}",
-                "data": log_entry,
+                "data": recommendation_payload,
             }
         else:
             return {
                 "status": "warning",
                 "message": f"Event logged locally but database save may have failed",
-                "data": log_entry,
+                "data": recommendation_payload,
                 "database_error": database_result,
             }
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to log exercise event: {str(exc)}") from exc

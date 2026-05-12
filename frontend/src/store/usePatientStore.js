@@ -147,9 +147,32 @@ const usePatientStore = create((set, get) => ({
       });
       
       // Navigate to exercise screen
-      navigation.navigate('ExerciseScreen', { exercise });
+      navigation.navigate('Exercise', { exercise });
     } catch (error) {
       console.error('Failed to start exercise:', error?.response?.data || error.message);
+    }
+  },
+
+  // Log completed exercise with safe aggregate metrics.
+  logExerciseCompletion: async (exercise, durationSeconds, avgFormScore = 0) => {
+    if (!exercise) return;
+
+    try {
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      if (authError || !user) {
+        throw new Error('User not authenticated');
+      }
+
+      await instance.post('/recommendation_logs', {
+        patient_id: user.id,
+        recommendation_id: exercise.id,
+        action: 'completed',
+        duration_seconds: Math.max(0, Number(durationSeconds) || 0),
+        avg_form_score: Math.max(0, Number(avgFormScore) || 0),
+        ts: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('Failed to log exercise completion:', error?.response?.data || error.message);
     }
   },
 
