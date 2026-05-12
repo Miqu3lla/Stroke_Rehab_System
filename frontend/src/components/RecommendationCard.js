@@ -77,6 +77,7 @@ const RecommendationCard = ({ navigation }) => {
         visible={modalVisible}
         exercise={selectedExercise}
         onClose={() => setModalVisible(false)}
+        navigation={navigation}
       />
     </View>
   );
