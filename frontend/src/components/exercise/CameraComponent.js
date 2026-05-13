@@ -134,7 +134,6 @@ const CameraComponent = ({ exercise, navigation }) => {
             quality: 0.1,
             base64: true,
             shutterSound: false,
-            skipProcessing: true,
           });
 
           const exerciseHint = [
@@ -282,21 +281,38 @@ const CameraComponent = ({ exercise, navigation }) => {
           {isModelReady ? '🟢 Pose tracking active' : '⏳ Connecting to pose tracking…'}
         </Text>
         {(() => {
-          // Shoulders visible (11, 12) but hips not visible (23, 24) = user too close.
+          const exerciseHint = [
+            exercise?.name || '',
+            exercise?.focus || '',
+            exercise?.affected_area || '',
+          ].join(' ').toLowerCase();
+          
+          const isLegExercise = /leg|knee|lower|squat|gait|step/i.test(exerciseHint);
+
+          // Shoulders visible (11, 12)
           const shouldersVisible =
             (keypoints[11]?.score ?? 0) > 0.5 || (keypoints[12]?.score ?? 0) > 0.5;
+            
+          // Hips visible (23, 24)
           const hipsVisible =
             (keypoints[23]?.score ?? 0) > 0.4 || (keypoints[24]?.score ?? 0) > 0.4;
-          const tooClose = isModelReady && shouldersVisible && !hipsVisible;
+            
+          // Only force the user to show hips if they are doing a leg/lower body exercise.
+          // Otherwise, if they are doing bicep curls, showing just the upper body is perfectly fine!
+          const tooClose = isModelReady && shouldersVisible && !hipsVisible && isLegExercise;
           const noBody = isModelReady && keypoints.length === 0;
 
           if (tooClose) {
-            return <Text style={styles.overlayTip}>Too close — step back until your full body is visible</Text>;
+            return <Text style={styles.overlayTip}>Too close — step back to show your hips and knees</Text>;
           }
           if (noBody) {
-            return <Text style={styles.overlayTip}>Step back — show your full body</Text>;
+            return <Text style={styles.overlayTip}>Step back — show your body</Text>;
           }
-          if (feedbackText && isModelReady && hipsVisible) {
+          
+          // For feedback text, we consider it valid if they are showing the required parts
+          const isValidPosture = isLegExercise ? hipsVisible : shouldersVisible;
+          
+          if (feedbackText && isModelReady && isValidPosture) {
             return (
               <Text style={[
                 styles.feedbackText,
