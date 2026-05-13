@@ -1,7 +1,9 @@
+import base64
+import math
 import tempfile
 import re
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -9,7 +11,10 @@ load_dotenv()
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from core.mediapipe_vision import extract_sequence_from_video
+from core.mediapipe_vision import (
+    estimate_pose_from_image_bytes,
+    extract_sequence_from_video,
+)
 from core.neural_network import classify_form_sequence
 from core.recommender import recommend_next_plan
 import os
@@ -50,9 +55,192 @@ class PatientProfileRequest(BaseModel):
     id: str = Field(..., description="Supabase Auth user UUID")
 
 
+class PoseEstimateRequest(BaseModel):
+    image_base64: str = Field(..., description="Base64-encoded JPEG/PNG frame")
+    exercise_type: str = Field("", description="Exercise hint string (name + focus + area)")
+    affected_side: str = Field("right", description="left | right | both")
+
+
+# MediaPipe BlazePose landmark indices used by realtime form scoring.
+_LEFT_SHOULDER, _LEFT_ELBOW, _LEFT_WRIST, _LEFT_HIP, _LEFT_KNEE, _LEFT_ANKLE = 11, 13, 15, 23, 25, 27
+_RIGHT_SHOULDER, _RIGHT_ELBOW, _RIGHT_WRIST, _RIGHT_HIP, _RIGHT_KNEE, _RIGHT_ANKLE = 12, 14, 16, 24, 26, 28
+
+
+def _angle_at_vertex(a: Dict[str, float], b: Dict[str, float], c: Dict[str, float]) -> Optional[float]:
+    v1x, v1y = a["x"] - b["x"], a["y"] - b["y"]
+    v2x, v2y = c["x"] - b["x"], c["y"] - b["y"]
+    m1 = math.hypot(v1x, v1y)
+    m2 = math.hypot(v2x, v2y)
+    if m1 == 0 or m2 == 0:
+        return None
+    dot = max(-1.0, min(1.0, (v1x * v2x + v1y * v2y) / (m1 * m2)))
+    return round(math.degrees(math.acos(dot)))
+
+
+def _color_and_score(angle: Optional[float], target: float, green: float, yellow: float) -> Dict[str, Any]:
+    if angle is None:
+        return {"color": "#888888", "score": 0}
+    diff = abs(angle - target)
+    if diff <= green:
+        return {"color": "#4CAF50", "score": max(90, round(100 - (diff / green) * 5))}
+    if diff <= yellow:
+        return {"color": "#FFC107", "score": max(50, round(70 - ((diff - green) / (yellow - green)) * 20))}
+    return {"color": "#F44336", "score": max(20, round(50 - (diff - yellow) * 0.5))}
+
+
+def _joint_triple(keypoints: List[Dict[str, float]], i1: int, i2: int, i3: int, min_conf: float = 0.3):
+    if len(keypoints) <= max(i1, i2, i3):
+        return None
+    a, b, c = keypoints[i1], keypoints[i2], keypoints[i3]
+    if min(a.get("score", 0), b.get("score", 0), c.get("score", 0)) < min_conf:
+        return None
+    return a, b, c
+
+
+def _arm_hint(angle: Optional[float]) -> str:
+    if angle is None:
+        return "Show your full arm — elbow must be visible"
+    diff = angle - 90
+    abs_diff = abs(diff)
+    if abs_diff <= 10:
+        return "Great form! Hold it"
+    if abs_diff <= 25:
+        return "Curl a little more" if diff > 0 else "Open your arm slightly"
+    return "Bend your elbow higher" if diff > 0 else "Lower your arm a bit"
+
+
+def _leg_hint(angle: Optional[float]) -> str:
+    if angle is None:
+        return "Show your full leg — knee must be visible"
+    diff = angle - 90
+    abs_diff = abs(diff)
+    if abs_diff <= 15:
+        return "Great form! Hold it"
+    if abs_diff <= 30:
+        return "Bend your knee a bit more" if diff > 0 else "Straighten slightly"
+    return "Bend your knee deeper" if diff > 0 else "Straighten your leg"
+
+
+def _overall_visibility_score(keypoints: List[Dict[str, float]]) -> int:
+    if not keypoints:
+        return 0
+    confidences = [kp.get("score", 0) for kp in keypoints]
+    avg = sum(confidences) / len(confidences)
+    return round(max(0, min(100, avg * 100)))
+
+
 @app.get("/health")
 def health_check() -> dict:
     return {"status": "ok", "service": "stroke-rehab-backend"}
+
+
+@app.post("/pose/estimate")
+def estimate_pose(payload: PoseEstimateRequest) -> dict:
+    """Run MediaPipe Pose on a single mobile camera frame and return keypoints,
+    per-segment colours, an overall form score, and a corrective hint. The
+    mobile client just draws what comes back — no on-device ML required."""
+    try:
+        image_bytes = base64.b64decode(payload.image_base64, validate=False)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid base64 image: {exc}") from exc
+
+    try:
+        result = estimate_pose_from_image_bytes(image_bytes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    keypoints = result["keypoints"]
+    image_width = result["image_width"]
+    image_height = result["image_height"]
+
+    # No body detected — return an empty payload the client can render as "step back".
+    if not keypoints:
+        return {
+            "score": 0,
+            "keypoints": [],
+            "angles": {},
+            "colors": {},
+            "hint": "Step back — show your full body",
+            "imageWidth": image_width,
+            "imageHeight": image_height,
+        }
+
+    hint_lower = (payload.exercise_type or "").lower()
+    is_arm = any(kw in hint_lower for kw in (
+        "upper-limb", "upper limb", "bicep", "arm", "reach", "fine motor",
+    )) and "lower" not in hint_lower
+    is_leg = any(kw in hint_lower for kw in (
+        "lower-limb", "lower limb", "leg", "knee", "ankle", "gait", "squat", "walk", "balance",
+    ))
+
+    side = (payload.affected_side or "right").lower()
+    left_side = side == "left"
+
+    angles: Dict[str, Any] = {}
+    colors: Dict[str, str] = {}
+    overall_score = _overall_visibility_score(keypoints)
+    hint: Optional[str] = None
+
+    if is_arm:
+        sh, el, wr = (_LEFT_SHOULDER, _LEFT_ELBOW, _LEFT_WRIST) if left_side else (_RIGHT_SHOULDER, _RIGHT_ELBOW, _RIGHT_WRIST)
+        triple = _joint_triple(keypoints, sh, el, wr)
+        if triple:
+            angle = _angle_at_vertex(*triple)
+            angles["bicepCurl"] = angle
+            cs = _color_and_score(angle, target=90, green=10, yellow=25)
+            colors["bicepCurl"] = cs["color"]
+            overall_score = round((overall_score + cs["score"]) / 2)
+        else:
+            angles["bicepCurl"] = None
+            colors["bicepCurl"] = "#FFC107"
+        hint = _arm_hint(angles.get("bicepCurl"))
+    elif is_leg:
+        hp, kn, an = (_LEFT_HIP, _LEFT_KNEE, _LEFT_ANKLE) if left_side else (_RIGHT_HIP, _RIGHT_KNEE, _RIGHT_ANKLE)
+        triple = _joint_triple(keypoints, hp, kn, an)
+        if triple:
+            angle = _angle_at_vertex(*triple)
+            angles["kneeFlexion"] = angle
+            cs = _color_and_score(angle, target=90, green=15, yellow=30)
+            colors["kneeFlexion"] = cs["color"]
+            overall_score = round((overall_score + cs["score"]) / 2)
+        else:
+            angles["kneeFlexion"] = None
+            colors["kneeFlexion"] = "#FFC107"
+        hint = _leg_hint(angles.get("kneeFlexion"))
+    else:
+        # Mixed / full-body: report whichever side is most visible.
+        arm_sh, arm_el, arm_wr = (_LEFT_SHOULDER, _LEFT_ELBOW, _LEFT_WRIST) if left_side else (_RIGHT_SHOULDER, _RIGHT_ELBOW, _RIGHT_WRIST)
+        leg_hp, leg_kn, leg_an = (_LEFT_HIP, _LEFT_KNEE, _LEFT_ANKLE) if left_side else (_RIGHT_HIP, _RIGHT_KNEE, _RIGHT_ANKLE)
+        arm_triple = _joint_triple(keypoints, arm_sh, arm_el, arm_wr)
+        leg_triple = _joint_triple(keypoints, leg_hp, leg_kn, leg_an)
+        if arm_triple:
+            arm_angle = _angle_at_vertex(*arm_triple)
+            angles["bicepCurl"] = arm_angle
+            cs = _color_and_score(arm_angle, target=90, green=10, yellow=25)
+            colors["bicepCurl"] = cs["color"]
+            overall_score = round((overall_score + cs["score"]) / 2)
+        if leg_triple:
+            leg_angle = _angle_at_vertex(*leg_triple)
+            angles["kneeFlexion"] = leg_angle
+            cs = _color_and_score(leg_angle, target=90, green=15, yellow=30)
+            colors["kneeFlexion"] = cs["color"]
+            overall_score = round((overall_score + cs["score"]) / 2)
+        if angles.get("bicepCurl") is not None:
+            hint = _arm_hint(angles["bicepCurl"])
+        elif angles.get("kneeFlexion") is not None:
+            hint = _leg_hint(angles["kneeFlexion"])
+        else:
+            hint = "Step back — show your full body"
+
+    return {
+        "score": overall_score,
+        "keypoints": keypoints,
+        "angles": angles,
+        "colors": colors,
+        "hint": hint,
+        "imageWidth": image_width,
+        "imageHeight": image_height,
+    }
 
 
 
