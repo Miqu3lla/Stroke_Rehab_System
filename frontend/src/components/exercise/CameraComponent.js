@@ -14,7 +14,6 @@ const CameraComponent = ({ exercise, navigation }) => {
   const [jointColors, setJointColors] = useState({});
   const [keypoints, setKeypoints] = useState([]);
   const [feedbackText, setFeedbackText] = useState('');
-  const [isPreparing, setIsPreparing] = useState(false);
   const [inferenceSize, setInferenceSize] = useState({ width: 1, height: 1 });
   const frameCountRef = useRef(0);
   const [cameraLayout, setCameraLayout] = useState({ width: 0, height: 0 });
@@ -23,6 +22,7 @@ const CameraComponent = ({ exercise, navigation }) => {
   const scoreRef = useRef(null);
   const finishingRef = useRef(false);
   const cameraRef = useRef(null);
+  const startTimeRef = useRef(null);
 
   const totalSeconds = Math.max(1, (Number(exercise?.duration_minutes) || 1) * 60);
   const { logExerciseCompletion } = usePatientStore();
@@ -71,19 +71,11 @@ const CameraComponent = ({ exercise, navigation }) => {
     navigation.goBack();
   };
 
-  // Pre-warm BlazePose while the user reads the instructions screen so the
-  // model is already loaded by the time they tap Begin Exercise.
-  useEffect(() => {
-    startDetection();
-  }, [startDetection]);
+  // Start the exercise immediately (camera + timer). Load the ML model in the
+  // background so the UI never freezes. Pose detection kicks in automatically
+  // once the model is ready.
 
-  const handleBeginPress = async () => {
-    if (!isModelReady) {
-      // Model still loading — show a waiting screen and let it finish.
-      setIsPreparing(true);
-      await startDetection();
-      setIsPreparing(false);
-    }
+  const handleBeginPress = () => {
     startExercise();
   };
 
@@ -94,16 +86,41 @@ const CameraComponent = ({ exercise, navigation }) => {
     setScoreHistory([]);
     setJointColors({});
     setKeypoints([]);
-    setFeedbackText('');
+    setFeedbackText('Preparing pose detection…');
     frameCountRef.current = 0;
 
-    // Detection was already started by pre-warm or handleBeginPress — do not
-    // call startDetection() again here as it would reset the ready state.
-
+    // Wall-clock timer: records the real start time and calculates elapsed
+    // from Date.now(). Even if TF.js freezes the JS thread for 30 seconds,
+    // the timer will instantly jump to the correct time when the thread
+    // unfreezes, instead of permanently falling behind.
+    startTimeRef.current = Date.now();
     timerRef.current = setInterval(() => {
-      setElapsedSeconds((prev) => prev + 1);
-    }, 1000);
+      const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
+      setElapsedSeconds(elapsed);
+    }, 500); // poll every 500ms so it catches up faster after a freeze
 
+    // Fire off model loading in the background. Once ready, start the
+    // pose detection frame loop. The camera and timer are already running.
+    const loadModelAndStartDetection = async () => {
+      try {
+        const ready = await startDetection();
+        if (!ready) {
+          setFeedbackText('Pose detection unavailable — exercise without skeleton');
+          return;
+        }
+        // Model is ready! Start the frame processing loop.
+        setFeedbackText('Pose detection active — step back to show your body');
+        startFrameLoop();
+      } catch (err) {
+        console.error('Model load error:', err);
+        setFeedbackText('Pose detection failed to load');
+      }
+    };
+
+    loadModelAndStartDetection();
+  };
+
+  const startFrameLoop = () => {
     const processFrame = async () => {
       // If timerRef is null, the exercise was stopped (finishExercise called)
       if (!timerRef.current) return;
@@ -113,12 +130,11 @@ const CameraComponent = ({ exercise, navigation }) => {
 
       if (cameraRef.current) {
         try {
-          // lowered quality from 0.5 to 0.1: Base64 encoding huge images freezes the app!
-          // lower quality processes much faster, freeing up the JS thread for button presses.
           const photo = await cameraRef.current.takePictureAsync({
             quality: 0.1,
             base64: true,
             shutterSound: false,
+            skipProcessing: true,
           });
 
           const exerciseHint = [
@@ -144,8 +160,6 @@ const CameraComponent = ({ exercise, navigation }) => {
               setInferenceSize({ width: result.imageWidth, height: result.imageHeight });
             }
             if (result.hint) setFeedbackText(result.hint);
-            
-            // Removed the 3-frame delay! Skeleton lines appear instantly now.
             setKeypoints(result.keypoints || []);
           }
         } catch (_) {
@@ -161,9 +175,9 @@ const CameraComponent = ({ exercise, navigation }) => {
       setScoreHistory((prev) => [...prev, effectiveScore]);
       setJointColors(colors);
 
-      // Recursive loop: waits for the previous frame to FINISH, then pauses for 150ms 
-      // before taking the next one. This allows the app to register your button presses!
-      scoreRef.current = setTimeout(processFrame, 150);
+      // Wait 800ms between frames so the JS thread can update the clock and
+      // respond to button taps.
+      scoreRef.current = setTimeout(processFrame, 800);
     };
 
     // Start the recursive frame loop
@@ -200,16 +214,7 @@ const CameraComponent = ({ exercise, navigation }) => {
     );
   }
 
-  if (isPreparing) {
-    return (
-      <View style={styles.container}>
-        <ActivityIndicator size="large" color="#0c56d0" />
-        <Text style={[styles.title, { marginTop: 20 }]}>Loading BlazePose…</Text>
-        <Text style={styles.subtitle}>This only takes a few seconds</Text>
-        {!!modelError && <Text style={[styles.overlayError, { marginTop: 12, textAlign: 'center' }]}>⚠️ {modelError}</Text>}
-      </View>
-    );
-  }
+
 
   if (!isExercising) {
     return (
@@ -242,9 +247,7 @@ const CameraComponent = ({ exercise, navigation }) => {
         </View>
 
         <TouchableOpacity style={styles.primaryBtn} onPress={handleBeginPress}>
-          <Text style={styles.primaryBtnText}>
-            {isModelReady ? 'Begin Exercise' : 'Loading model…'}
-          </Text>
+          <Text style={styles.primaryBtnText}>Begin Exercise</Text>
         </TouchableOpacity>
       </View>
     );
