@@ -204,59 +204,57 @@ const CameraComponent = ({ exercise, navigation }) => {
   if (!permission.granted) {
     // Camera permissions are not granted yet.
     return (
-      <View style={styles.container}>
-        <Text style={styles.message}>We need your permission to show the camera</Text>
-        <TouchableOpacity style={styles.primaryBtn} onPress={requestPermission}>
-          <Text style={styles.primaryBtnText}>Grant Permission</Text>
+      <View className="flex-1 justify-center bg-[#0f1116]">
+        <Text className="text-center text-[#e6e9f2] mb-2.5">We need your permission to show the camera</Text>
+        <TouchableOpacity className="self-center mt-4 bg-[#0c56d0] rounded-full py-3.5 px-6" onPress={requestPermission}>
+          <Text className="text-white font-bold text-base">Grant Permission</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
-
-
   if (!isExercising) {
     return (
-      <View style={[styles.container, { padding: 24 }]}>
-        <Text style={styles.title}>{exercise?.name}</Text>
-        <Text style={styles.subtitle}>{exercise?.duration_minutes} min</Text>
+      <View className="flex-1 justify-center bg-[#0f1116] p-6">
+        <Text className="text-white text-2xl font-bold text-center mb-2">{exercise?.name}</Text>
+        <Text className="text-[#c3c9dd] text-center text-base mb-1.5">{exercise?.duration_minutes} min</Text>
 
         {!!exercise?.description && (
-          <Text style={styles.description}>{exercise.description}</Text>
+          <Text className="text-[#c3c9dd] text-center text-[13px] mt-2 mb-1 leading-[18px]">{exercise.description}</Text>
         )}
 
-        <View style={styles.instructionsCard}>
-          <Text style={styles.instructionsTitle}>Before you start</Text>
-          <Text style={styles.instructionItem}>• Stand 1–2 metres from the camera</Text>
-          <Text style={styles.instructionItem}>• Make sure your full upper body is visible</Text>
-          <Text style={styles.instructionItem}>• Follow the colour of the skeleton lines:</Text>
+        <View className="mt-4 bg-white/5 rounded-2xl p-4 w-full">
+          <Text className="text-white font-bold text-[15px] mb-2.5">Before you start</Text>
+          <Text className="text-[#c3c9dd] text-[13px] mb-1.5 leading-[18px]">• Stand 1–2 metres from the camera</Text>
+          <Text className="text-[#c3c9dd] text-[13px] mb-1.5 leading-[18px]">• Make sure your full upper body is visible</Text>
+          <Text className="text-[#c3c9dd] text-[13px] mb-1.5 leading-[18px]">• Follow the colour of the skeleton lines:</Text>
 
-          <View style={styles.legendRow}>
-            <View style={[styles.legendDot, { backgroundColor: '#4CAF50' }]} />
-            <Text style={styles.legendText}>Green — correct form, keep going</Text>
+          <View className="flex-row items-center mt-1.5">
+            <View className="w-3 h-3 rounded-full mr-2 bg-[#4CAF50]" />
+            <Text className="text-[#c3c9dd] text-[13px]">Green — correct form, keep going</Text>
           </View>
-          <View style={styles.legendRow}>
-            <View style={[styles.legendDot, { backgroundColor: '#FFC107' }]} />
-            <Text style={styles.legendText}>Yellow — almost there, small adjustment</Text>
+          <View className="flex-row items-center mt-1.5">
+            <View className="w-3 h-3 rounded-full mr-2 bg-[#FFC107]" />
+            <Text className="text-[#c3c9dd] text-[13px]">Yellow — almost there, small adjustment</Text>
           </View>
-          <View style={styles.legendRow}>
-            <View style={[styles.legendDot, { backgroundColor: '#F44336' }]} />
-            <Text style={styles.legendText}>Red — adjust your position</Text>
+          <View className="flex-row items-center mt-1.5">
+            <View className="w-3 h-3 rounded-full mr-2 bg-[#F44336]" />
+            <Text className="text-[#c3c9dd] text-[13px]">Red — adjust your position</Text>
           </View>
         </View>
 
-        <TouchableOpacity style={styles.primaryBtn} onPress={handleBeginPress}>
-          <Text style={styles.primaryBtnText}>Begin Exercise</Text>
+        <TouchableOpacity className="self-center mt-4 bg-[#0c56d0] rounded-full py-3.5 px-6" onPress={handleBeginPress}>
+          <Text className="text-white font-bold text-base">Begin Exercise</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <View className="flex-1 justify-center bg-[#0f1116]">
       <CameraView
         ref={cameraRef}
-        style={styles.camera}
+        className="flex-1"
         facing="front"
         onLayout={(e) => {
           const { width, height } = e.nativeEvent.layout;
@@ -275,9 +273,9 @@ const CameraComponent = ({ exercise, navigation }) => {
         exerciseType={exercise?.name || ''}
       />
 
-      <View style={styles.overlayTop}>
-        <Text style={styles.overlayText}>{exercise?.name}</Text>
-        <Text style={styles.overlaySubtext}>
+      <View className="absolute top-6 left-4 right-4 bg-black/45 rounded-xl py-2 px-3">
+        <Text className="text-white text-center font-semibold">{exercise?.name}</Text>
+        <Text className="text-[#d2d6e3] text-center text-[11px] mt-0.5">
           {isModelReady ? '🟢 Pose tracking active' : '⏳ Connecting to pose tracking…'}
         </Text>
         {(() => {
@@ -303,10 +301,10 @@ const CameraComponent = ({ exercise, navigation }) => {
           const noBody = isModelReady && keypoints.length === 0;
 
           if (tooClose) {
-            return <Text style={styles.overlayTip}>Too close — step back to show your hips and knees</Text>;
+            return <Text className="text-[#ffe082] text-center text-[11px] mt-1">Too close — step back to show your hips and knees</Text>;
           }
           if (noBody) {
-            return <Text style={styles.overlayTip}>Step back — show your body</Text>;
+            return <Text className="text-[#ffe082] text-center text-[11px] mt-1">Step back — show your body</Text>;
           }
           
           // For feedback text, we consider it valid if they are showing the required parts
@@ -314,212 +312,38 @@ const CameraComponent = ({ exercise, navigation }) => {
           
           if (feedbackText && isModelReady && isValidPosture) {
             return (
-              <Text style={[
-                styles.feedbackText,
-                { color: currentScore >= 85 ? '#4CAF50' : currentScore >= 60 ? '#FFC107' : '#F44336' },
-              ]}>
+              <Text className="text-center text-sm font-bold mt-1.5" style={{ color: currentScore >= 85 ? '#4CAF50' : currentScore >= 60 ? '#FFC107' : '#F44336' }}>
                 {feedbackText}
               </Text>
             );
           }
           return null;
         })()}
-        {!!modelError && <Text style={styles.overlayError}>⚠️ {modelError}</Text>}
+        {!!modelError && <Text className="text-[#ffb8b8] text-center text-[10px] mt-0.5">⚠️ {modelError}</Text>}
       </View>
 
-      <View style={styles.overlayBottom}>
-        <View style={styles.statsRow}>
+      <View className="absolute bottom-4 left-4 right-4 bg-black/45 rounded-2xl p-3.5">
+        <View className="flex-row justify-between mb-3">
           <View>
-            <Text style={styles.metricValue}>{currentScore}%</Text>
-            <Text style={styles.metricLabel}>Form Score</Text>
+            <Text className="text-white text-xl font-bold">{currentScore}%</Text>
+            <Text className="text-[#d2d6e3] text-xs mt-1">Form Score</Text>
           </View>
           <View>
-            <Text style={styles.metricValue}>{formatTime(elapsedSeconds)} / {formatTime(totalSeconds)}</Text>
-            <Text style={styles.metricLabel}>Time</Text>
+            <Text className="text-white text-xl font-bold">{formatTime(elapsedSeconds)} / {formatTime(totalSeconds)}</Text>
+            <Text className="text-[#d2d6e3] text-xs mt-1">Time</Text>
           </View>
         </View>
 
-        <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, { width: `${Math.min(100, (elapsedSeconds / totalSeconds) * 100)}%` }]} />
+        <View className="w-full h-1.5 rounded-full bg-white/25 overflow-hidden mb-3.5">
+          <View className="h-full bg-[#9dd65f]" style={{ width: `${Math.min(100, (elapsedSeconds / totalSeconds) * 100)}%` }} />
         </View>
 
-        <TouchableOpacity style={styles.finishBtn} onPress={finishExercise}>
-          <Text style={styles.finishBtnText}>Finish</Text>
+        <TouchableOpacity className="bg-[#ba1a1a] rounded-full items-center justify-center py-3" onPress={finishExercise}>
+          <Text className="text-white font-bold text-base">Finish</Text>
         </TouchableOpacity>
       </View>
     </View>
   );
 };
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    backgroundColor: '#0f1116',
-  },
-  message: {
-    textAlign: 'center',
-    color: '#e6e9f2',
-    marginBottom: 10,
-  },
-  camera: {
-    flex: 1,
-  },
-  title: {
-    color: '#ffffff',
-    fontSize: 24,
-    fontWeight: '700',
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  subtitle: {
-    color: '#c3c9dd',
-    textAlign: 'center',
-    fontSize: 16,
-    marginBottom: 6,
-  },
-  primaryBtn: {
-    alignSelf: 'center',
-    marginTop: 18,
-    backgroundColor: '#0c56d0',
-    borderRadius: 999,
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-  },
-  primaryBtnText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 16,
-  },
-  overlayTop: {
-    position: 'absolute',
-    top: 24,
-    left: 16,
-    right: 16,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    borderRadius: 12,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-  },
-  overlayText: {
-    color: '#fff',
-    textAlign: 'center',
-    fontWeight: '600',
-  },
-  overlaySubtext: {
-    color: '#d2d6e3',
-    textAlign: 'center',
-    fontSize: 11,
-    marginTop: 2,
-  },
-  overlayTip: {
-    color: '#ffe082',
-    textAlign: 'center',
-    fontSize: 11,
-    marginTop: 3,
-  },
-  overlayError: {
-    color: '#ffb8b8',
-    textAlign: 'center',
-    fontSize: 10,
-    marginTop: 2,
-  },
-  overlayBottom: {
-    position: 'absolute',
-    bottom: 18,
-    left: 16,
-    right: 16,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    borderRadius: 14,
-    padding: 14,
-  },
-  statsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  metricValue: {
-    color: '#fff',
-    fontSize: 20,
-    fontWeight: '700',
-  },
-  metricLabel: {
-    color: '#d2d6e3',
-    fontSize: 12,
-    marginTop: 3,
-  },
-  progressTrack: {
-    width: '100%',
-    height: 6,
-    borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.25)',
-    overflow: 'hidden',
-    marginBottom: 14,
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: '#9dd65f',
-  },
-  finishBtn: {
-    backgroundColor: '#ba1a1a',
-    borderRadius: 999,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-  },
-  finishBtnText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 16,
-  },
-  feedbackText: {
-    textAlign: 'center',
-    fontSize: 14,
-    fontWeight: '700',
-    marginTop: 6,
-  },
-  description: {
-    color: '#c3c9dd',
-    textAlign: 'center',
-    fontSize: 13,
-    marginTop: 8,
-    marginBottom: 4,
-    lineHeight: 18,
-  },
-  instructionsCard: {
-    marginTop: 18,
-    backgroundColor: 'rgba(255,255,255,0.07)',
-    borderRadius: 14,
-    padding: 16,
-    width: '100%',
-  },
-  instructionsTitle: {
-    color: '#ffffff',
-    fontWeight: '700',
-    fontSize: 15,
-    marginBottom: 10,
-  },
-  instructionItem: {
-    color: '#c3c9dd',
-    fontSize: 13,
-    marginBottom: 6,
-    lineHeight: 18,
-  },
-  legendRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 6,
-  },
-  legendDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    marginRight: 8,
-  },
-  legendText: {
-    color: '#c3c9dd',
-    fontSize: 13,
-  },
-});
 
 export default CameraComponent;
