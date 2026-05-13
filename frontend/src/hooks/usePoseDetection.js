@@ -34,11 +34,19 @@ const getLegHint = (angle) => {
 
 const BLAZEPOSE_CONFIG = {
   runtime: 'tfjs',
-  // 'full' rejects background false-positives (furniture, windows, etc.)
-  // that 'lite' detects as phantom joints. Trade-off: ~2x slower inference.
-  modelType: 'full',
+  // 'lite' is ~2x faster than 'full' — critical on mobile devices where the
+  // JS thread is shared with UI updates (clock, buttons, etc.).
+  // The confidence filter in SkeletonOverlay (0.65–0.75) already rejects the
+  // extra false-positives that 'lite' occasionally produces.
+  modelType: 'lite',
   enableSmoothing: true,
 };
+
+// Target size for downscaling camera frames before inference.
+// BlazePose internally resizes to 256×256 anyway, so feeding it a 3000px photo
+// just wastes CPU cycles on the resize step. Pre-shrinking to ~256px here
+// massively reduces the tensor memory and decode time.
+const TARGET_INFERENCE_SIZE = 256;
 
 const toScoreFromPose = (pose) => {
   const keypoints = pose?.keypoints || [];
@@ -66,22 +74,32 @@ const usePoseDetection = () => {
     if (detectorRef.current || isModelReadyRef.current) return true;
 
     try {
+      const t0 = Date.now();
       await tf.ready();
+      console.log(`[PoseDetection] tf.ready() took ${Date.now() - t0}ms — backend: ${tf.getBackend()}`);
 
       // Prefer rn-webgl for mobile performance, fall back silently if unavailable.
       if (tf.getBackend() !== 'rn-webgl') {
         try {
+          const t1 = Date.now();
           await tf.setBackend('rn-webgl');
           await tf.ready();
+          console.log(`[PoseDetection] Switched to rn-webgl in ${Date.now() - t1}ms`);
         } catch (_) {
           // Keep current backend when rn-webgl is unavailable.
+          console.log(`[PoseDetection] rn-webgl unavailable — staying on: ${tf.getBackend()}`);
         }
       }
 
+      console.log(`[PoseDetection] Active backend: ${tf.getBackend()}`);
+
+      const t2 = Date.now();
       detectorRef.current = await poseDetection.createDetector(
         poseDetection.SupportedModels.BlazePose,
         BLAZEPOSE_CONFIG,
       );
+      console.log(`[PoseDetection] BlazePose detector created in ${Date.now() - t2}ms`);
+      console.log(`[PoseDetection] Total init time: ${Date.now() - t0}ms`);
 
       isModelReadyRef.current = true;
       setIsModelReady(true);
@@ -108,27 +126,52 @@ const usePoseDetection = () => {
 
     isEstimatingRef.current = true;
     let imageTensor = null;
+    let resizedTensor = null;
 
     try {
       const imageBytes = Buffer.from(base64Image, 'base64');
       imageTensor = decodeJpeg(new Uint8Array(imageBytes));
 
-      const inferenceWidth  = imageTensor.shape[1];
-      const inferenceHeight = imageTensor.shape[0];
+      const origWidth  = imageTensor.shape[1];
+      const origHeight = imageTensor.shape[0];
 
-      const poses = await detectorRef.current.estimatePoses(imageTensor, {
+      // Downscale to ~256px on the longest side to dramatically reduce
+      // the amount of work the model has to do on each frame.
+      const longestSide = Math.max(origWidth, origHeight);
+      let inferenceWidth = origWidth;
+      let inferenceHeight = origHeight;
+
+      if (longestSide > TARGET_INFERENCE_SIZE) {
+        const ratio = TARGET_INFERENCE_SIZE / longestSide;
+        inferenceWidth  = Math.round(origWidth * ratio);
+        inferenceHeight = Math.round(origHeight * ratio);
+        resizedTensor = tf.image.resizeBilinear(imageTensor, [inferenceHeight, inferenceWidth]);
+        // Cast back to int32 — resizeBilinear outputs float32 but
+        // BlazePose expects uint8/int32 pixel values.
+        const castedTensor = resizedTensor.toInt();
+        resizedTensor.dispose();
+        resizedTensor = castedTensor;
+      }
+
+      const tensorForInference = resizedTensor || imageTensor;
+
+      const poses = await detectorRef.current.estimatePoses(tensorForInference, {
         maxPoses: 1,
-        // iOS: expo-camera already mirrors the front-camera photo to match the
-        // selfie preview, so flipping again would double-flip and swap joints.
-        // Android: expo-camera does NOT mirror the front-camera photo, so we
-        // must flip here to align keypoints with the mirrored preview.
         flipHorizontal: Platform.OS === 'android',
       });
 
       const firstPose = poses?.[0] || null;
       if (!firstPose) return { score: 0, keypoints: [], angles: {}, colors: {} };
 
-      const keypoints = firstPose.keypoints || [];
+      // Scale keypoints back to original image coordinates so the
+      // SkeletonOverlay lines up with the camera preview.
+      const scaleX = origWidth / inferenceWidth;
+      const scaleY = origHeight / inferenceHeight;
+      const keypoints = (firstPose.keypoints || []).map((kp) => ({
+        ...kp,
+        x: kp.x * scaleX,
+        y: kp.y * scaleY,
+      }));
       
       // Calculate angles based on exercise type
       let angles = {};
@@ -226,6 +269,9 @@ const usePoseDetection = () => {
       console.log('Pose estimation error:', err);
       return null;
     } finally {
+      if (resizedTensor) {
+        resizedTensor.dispose();
+      }
       if (imageTensor) {
         imageTensor.dispose();
       }
