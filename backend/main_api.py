@@ -55,8 +55,20 @@ class PatientProfileRequest(BaseModel):
     id: str = Field(..., description="Supabase Auth user UUID")
 
 
+# 1 MB decoded ≈ 1.4 M base64 chars (3 bytes per 4 chars + padding). Mobile
+# frames at quality=0.1 land around 30–80 KB, so this ceiling is generous for
+# legitimate clients while shutting down memory-exhaustion abuse before the
+# request ever touches MediaPipe's serialised inference lock.
+_MAX_IMAGE_BASE64_CHARS = 1_400_000
+_MAX_DECODED_IMAGE_BYTES = 1_000_000
+
+
 class PoseEstimateRequest(BaseModel):
-    image_base64: str = Field(..., description="Base64-encoded JPEG/PNG frame")
+    image_base64: str = Field(
+        ...,
+        description="Base64-encoded JPEG/PNG frame",
+        max_length=_MAX_IMAGE_BASE64_CHARS,
+    )
     exercise_type: str = Field("", description="Exercise hint string (name + focus + area)")
     affected_side: str = Field("right", description="left | right | both")
 
@@ -143,6 +155,16 @@ def estimate_pose(payload: PoseEstimateRequest) -> dict:
         image_bytes = base64.b64decode(payload.image_base64, validate=False)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid base64 image: {exc}") from exc
+
+    # Belt-and-braces check after decode — the schema's max_length already
+    # rejects oversized payloads, but verifying the actual decoded length
+    # catches edge cases (e.g. odd padding) before we hand the bytes to
+    # cv2.imdecode and acquire MediaPipe's serialised inference lock.
+    if len(image_bytes) > _MAX_DECODED_IMAGE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Image too large: {len(image_bytes)} bytes (max {_MAX_DECODED_IMAGE_BYTES})",
+        )
 
     try:
         result = estimate_pose_from_image_bytes(image_bytes)
