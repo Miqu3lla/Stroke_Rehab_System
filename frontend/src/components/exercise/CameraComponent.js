@@ -47,7 +47,7 @@ const CameraComponent = ({ exercise, navigation }) => {
       timerRef.current = null;
     }
     if (scoreRef.current) {
-      clearInterval(scoreRef.current);
+      clearTimeout(scoreRef.current);
       scoreRef.current = null;
     }
   };
@@ -104,19 +104,23 @@ const CameraComponent = ({ exercise, navigation }) => {
       setElapsedSeconds((prev) => prev + 1);
     }, 1000);
 
-    scoreRef.current = setInterval(async () => {
+    const processFrame = async () => {
+      // If timerRef is null, the exercise was stopped (finishExercise called)
+      if (!timerRef.current) return;
+
       let score = null;
       let colors = {};
 
       if (cameraRef.current) {
         try {
+          // lowered quality from 0.5 to 0.1: Base64 encoding huge images freezes the app!
+          // lower quality processes much faster, freeing up the JS thread for button presses.
           const photo = await cameraRef.current.takePictureAsync({
-            quality: 0.5,
+            quality: 0.1,
             base64: true,
             shutterSound: false,
           });
 
-          // Combine name + focus + affected_area so keyword matching can use all three.
           const exerciseHint = [
             exercise?.name || '',
             exercise?.focus || '',
@@ -140,23 +144,30 @@ const CameraComponent = ({ exercise, navigation }) => {
               setInferenceSize({ width: result.imageWidth, height: result.imageHeight });
             }
             if (result.hint) setFeedbackText(result.hint);
-            // Skip the first 3 frames while the model stabilises — early
-            // detections are often noisy and produce stray skeleton lines.
-            if (frameCountRef.current > 3) {
-              setKeypoints(result.keypoints || []);
-            }
+            
+            // Removed the 3-frame delay! Skeleton lines appear instantly now.
+            setKeypoints(result.keypoints || []);
           }
         } catch (_) {
           score = null;
         }
       }
 
-      // Fallback keeps UI and logging functional while model is warming up.
+      // Check again in case user pressed Finish while the picture was being taken
+      if (!timerRef.current) return;
+
       const effectiveScore = score ?? Math.min(100, Math.max(0, Math.floor(Math.random() * 25) + 70));
       setCurrentScore(effectiveScore);
       setScoreHistory((prev) => [...prev, effectiveScore]);
       setJointColors(colors);
-    }, 1000);
+
+      // Recursive loop: waits for the previous frame to FINISH, then pauses for 150ms 
+      // before taking the next one. This allows the app to register your button presses!
+      scoreRef.current = setTimeout(processFrame, 150);
+    };
+
+    // Start the recursive frame loop
+    processFrame();
   };
 
   useEffect(() => {

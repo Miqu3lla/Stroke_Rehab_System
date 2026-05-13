@@ -26,9 +26,10 @@ const SEGMENT_MAP = {
 
 // Cyan baseline matches the physiotherapy reference style; traffic-light colours override active segments.
 const NEUTRAL = 'rgba(0, 229, 255, 0.75)';
-// 0.65 filters background false-positives (window frames, furniture) that
-// BlazePose lite detects with just-above-threshold confidence.
-const MIN_CONFIDENCE = 0.65;
+// 0.4 is the rendering floor — the "full" BlazePose model already rejects
+// background false-positives at the inference level, so a strict threshold
+// here only hides valid joints in typical indoor lighting.
+const MIN_CONFIDENCE = 0.4;
 
 const isArmExercise = (name) =>
   /bicep|arm|reach|upper|curl|flex|shoulder/i.test(name);
@@ -102,16 +103,13 @@ const SkeletonOverlay = ({
         const p1 = getPoint(i1);
         const p2 = getPoint(i2);
         if (!p1 || !p2) return null;
-        // Both endpoints must clear a stricter bar — bones where one endpoint
-        // is a background false-positive otherwise produce lines flying to
-        // the edges of the frame.
         const c1 = keypoints[i1]?.score ?? keypoints[i1]?.confidence ?? 0;
         const c2 = keypoints[i2]?.score ?? keypoints[i2]?.confidence ?? 0;
-        if (Math.min(c1, c2) < 0.75) return null;
-        // Skip bones longer than 35% of view height — real body segments
-        // at proper standing distance are well within this limit.
+        if (Math.min(c1, c2) < 0.5) return null;
+        // Skip bones longer than 55% of view height — filters spurious cross-frame
+        // detections while allowing fully-extended arm bones to render.
         const boneLen = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-        if (boneLen > viewHeight * 0.35) return null;
+        if (boneLen > viewHeight * 0.55) return null;
         const color = getLineColor(i1, i2);
         return (
           <Line
