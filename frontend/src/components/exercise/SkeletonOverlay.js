@@ -2,7 +2,7 @@ import React from 'react';
 import { StyleSheet } from 'react-native';
 import Svg, { Line, Circle } from 'react-native-svg';
 
-// BlazePose connections — pairs of keypoint indices to draw as bones
+// MediaPipe Pose connections — pairs of keypoint indices to draw as bones
 const CONNECTIONS = [
   // Torso
   [11, 12], [11, 23], [12, 24], [23, 24],
@@ -26,7 +26,7 @@ const SEGMENT_MAP = {
 
 // Cyan baseline matches the physiotherapy reference style; traffic-light colours override active segments.
 const NEUTRAL = 'rgba(0, 229, 255, 0.75)';
-// 0.4 is the rendering floor — the "full" BlazePose model already rejects
+// 0.4 is the rendering floor — server-side MediaPipe Pose already rejects
 // background false-positives at the inference level, so a strict threshold
 // here only hides valid joints in typical indoor lighting.
 const MIN_CONFIDENCE = 0.4;

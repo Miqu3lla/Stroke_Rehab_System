@@ -1,11 +1,71 @@
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import cv2
 import mediapipe as mp
+import numpy as np
 
 LANDMARK_COUNT = 33
 KEYPOINT_DIM = LANDMARK_COUNT * 3
+
+# Single reusable Pose instance for realtime single-frame requests from the
+# mobile client. MediaPipe Pose isn't thread-safe, so serialize access with a
+# lock — FastAPI runs sync endpoints in a thread pool and concurrent .process()
+# calls on the same Pose object crash the underlying C++ graph.
+_realtime_pose_lock = threading.Lock()
+_realtime_pose_instance: Optional[Any] = None
+
+
+def _get_realtime_pose():
+    global _realtime_pose_instance
+    if _realtime_pose_instance is None:
+        _realtime_pose_instance = mp.solutions.pose.Pose(
+            static_image_mode=True,
+            model_complexity=1,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5,
+        )
+    return _realtime_pose_instance
+
+
+def estimate_pose_from_image_bytes(image_bytes: bytes) -> Dict[str, Any]:
+    """
+    Decode a single JPEG/PNG and run MediaPipe Pose on it. Returns 33 keypoints
+    in PIXEL coordinates (matching the input image dimensions) so the mobile
+    client can map them directly to its camera view.
+    """
+    np_arr = np.frombuffer(image_bytes, np.uint8)
+    bgr_frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    if bgr_frame is None:
+        raise ValueError("Failed to decode image bytes")
+
+    # Mirror the frame to match the mirrored selfie preview on the phone.
+    # expo-camera's CameraView shows the front-camera feed flipped (so raising
+    # your right hand appears on the screen-left), but takePictureAsync returns
+    # the un-mirrored photo. Without this flip the skeleton draws on the
+    # opposite side of the body from what the user actually sees on screen.
+    bgr_frame = cv2.flip(bgr_frame, 1)
+
+    h, w = bgr_frame.shape[:2]
+    rgb_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
+
+    with _realtime_pose_lock:
+        results = _get_realtime_pose().process(rgb_frame)
+
+    if not results.pose_landmarks:
+        return {"keypoints": [], "image_width": w, "image_height": h}
+
+    keypoints: List[Dict[str, float]] = []
+    for landmark in results.pose_landmarks.landmark:
+        keypoints.append({
+            "x": float(landmark.x) * w,
+            "y": float(landmark.y) * h,
+            "z": float(landmark.z) * w,
+            "score": float(landmark.visibility),
+        })
+
+    return {"keypoints": keypoints, "image_width": w, "image_height": h}
 
 
 def _empty_keypoints() -> List[float]:

@@ -279,7 +279,7 @@ const CameraComponent = ({ exercise, navigation }) => {
       <View style={styles.overlayTop}>
         <Text style={styles.overlayText}>{exercise?.name}</Text>
         <Text style={styles.overlaySubtext}>
-          {isModelReady ? '🟢 BlazePose active' : '⏳ Loading BlazePose...'}
+          {isModelReady ? '🟢 Pose tracking active' : '⏳ Connecting to pose tracking…'}
         </Text>
         {(() => {
           // Shoulders visible (11, 12) but hips not visible (23, 24) = user too close.
