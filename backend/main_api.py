@@ -55,12 +55,13 @@ class PatientProfileRequest(BaseModel):
     id: str = Field(..., description="Supabase Auth user UUID")
 
 
-# 1 MB decoded ≈ 1.4 M base64 chars (3 bytes per 4 chars + padding). Mobile
-# frames at quality=0.1 land around 30–80 KB, so this ceiling is generous for
-# legitimate clients while shutting down memory-exhaustion abuse before the
-# request ever touches MediaPipe's serialised inference lock.
-_MAX_IMAGE_BASE64_CHARS = 1_400_000
-_MAX_DECODED_IMAGE_BYTES = 1_000_000
+# 1 MB decoded ≈ 1.4 M base64 chars (3 bytes per 4 chars + padding). iOS
+# frames at quality=0.1 land around 30–80 KB, but some Android phones send
+# the full sensor resolution which can be several megabytes. Bumped the cap
+# to 10 million characters (≈ 7.5 MB decoded) to accommodate those phones
+# while still rejecting payloads big enough to OOM the inference worker.
+_MAX_IMAGE_BASE64_CHARS = 10_000_000
+_MAX_DECODED_IMAGE_BYTES = 7_500_000
 
 
 class PoseEstimateRequest(BaseModel):
