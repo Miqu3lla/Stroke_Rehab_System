@@ -34,7 +34,9 @@ const ExerciseScreen = ({ route, navigation }) => {
   }
 
   return (
-    <View className="flex-1 bg-[#faf8ff]">
+    // Explicit flex style — guarantees the native CameraView inside
+    // CameraComponent receives a non-zero height from its parent chain.
+    <View style={{ flex: 1, backgroundColor: '#faf8ff' }}>
       <View className="flex-row items-center px-4 py-3 bg-white border-b border-[#e7e7f2]">
         <TouchableOpacity onPress={() => navigation.goBack()} className="flex-row items-center">
           <ChevronLeft size={22} color="#0c56d0" />
