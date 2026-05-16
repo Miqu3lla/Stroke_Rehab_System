@@ -6,7 +6,7 @@ const useAuthStore = create((set, get) => ({
   // State
   loading: false,
 
-
+  //checks if the user is logged in or not
   getAuthSession: async() => {
     const { data: { session }, error } = await supabase.auth.getSession();
 
@@ -25,15 +25,13 @@ const useAuthStore = create((set, get) => ({
     return session;
   },
 
-  // ─── Login ────────────────────────────────────────────────────────────────
-  // Validates inputs, signs the user in via Supabase, then routes to the
-  // correct screen depending on whether an onboarding profile already exists.
+  //handles the user logins with validation checks
   handleLogin: async (email, password, navigation) => {
     if (!email || !password) {
       Alert.alert('Error', 'Please enter both email and password');
       return;
     }
-
+    //email validation check
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       Alert.alert('Error', 'Please enter a valid email address');
@@ -43,6 +41,7 @@ const useAuthStore = create((set, get) => ({
     set({ loading: true });
 
     try {
+      //supabase built in function that signs in the user with the email and password
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
@@ -83,16 +82,13 @@ const useAuthStore = create((set, get) => ({
       set({ loading: false });
     }
   },
-
-  // ─── Sign Up ──────────────────────────────────────────────────────────────
-  // Validates inputs and registers a new user via Supabase Auth.
-  // On success the user is directed back to the Login screen.
+  //handles the user registration and checks the validation of the inputs
   handleSignUp: async (email, password, confirmPassword, navigation) => {
     if (!email || !password || !confirmPassword) {
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
-
+    //email validation check
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       Alert.alert('Error', 'Please enter a valid email address');

@@ -1,10 +1,23 @@
 import React, { useEffect } from "react";
 import { View, ScrollView } from "react-native";
 import usePatientStore from "../store/usePatientStore";
+import useAuthStore from "../store/useAuthStore";
 import RecommendationCard from "../components/RecommendationCard";
 
 const HomeScreen = ({ navigation }) => {
   const { fetchRecommendation } = usePatientStore();
+  const { getAuthSession } = useAuthStore();
+
+  // Guard: redirect to Login if there is no active session
+  useEffect(() => {
+    const checkSession = async () => {
+      const session = await getAuthSession();
+      if (!session) {
+        navigation.replace('Login');
+      }
+    };
+    checkSession();
+  }, []);
 
   // Fetch recommended exercise when screen loads
   useEffect(() => {
