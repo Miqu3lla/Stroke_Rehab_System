@@ -1,10 +1,23 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import { ChevronLeft } from 'lucide-react-native';
 import CameraComponent from '../components/exercise/CameraComponent';
+import useAuthStore from '../store/useAuthStore';
 
 const ExerciseScreen = ({ route, navigation }) => {
+  const { getAuthSession } = useAuthStore();
   const exercise = route?.params?.exercise;
+
+  // Guard: redirect to Login if there is no active session
+  useEffect(() => {
+    const checkSession = async () => {
+      const session = await getAuthSession();
+      if (!session) {
+        navigation.replace('Login');
+      }
+    };
+    checkSession();
+  }, []);
 
   if (!exercise) {
     return (
