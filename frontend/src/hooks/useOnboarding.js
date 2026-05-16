@@ -57,7 +57,7 @@ export function useOnboarding(navigation) {
       //checks to see if the user is authenticated first before submitting the form data into the patients table
       const { data: { user }, error: authError } = await supabase.auth.getUser();
       if (authError || !user) throw new Error('User not authenticated');
-      //sends teh form to the backend
+      //sends the form to the backend
       await instance.post('/patients', {
         id: user.id,
         name: answers.name,
@@ -65,11 +65,12 @@ export function useOnboarding(navigation) {
         affected_part: answers.affected_part,
         affected_side: answers.affected_side,
       });
+      // Only navigate on success
+      navigation.replace('Dashboard');
     } catch (error) {
       console.error('Failed to save patient profile:', error?.response?.data || error.message);
     } finally {
       setIsSubmitting(false);
-      navigation.replace('Dashboard');
     }
   };
 
