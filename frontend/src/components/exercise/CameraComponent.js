@@ -5,7 +5,11 @@ import useCamera from '../../hooks/useCamera';
 import SkeletonOverlay from './SkeletonOverlay';
 import BeforeYouStart from './BeforeYouStart';
 
-const CameraComponent = ({ exercise, navigation }) => {
+// CameraComponent runs a single exercise from the session playlist.
+// onComplete is called when the patient ends this exercise (either by
+// Finish Current, End Early, or timer expiry). The parent is in charge
+// of deciding what to do next (rest state, next exercise, end session).
+const CameraComponent = ({ exercise, onComplete }) => {
   const [permission, requestPermission] = useCameraPermissions();
 
   const {
@@ -26,14 +30,12 @@ const CameraComponent = ({ exercise, navigation }) => {
     finishExercise,
     formatTime,
     handleCameraLayout,
-  } = useCamera(exercise, navigation);
+  } = useCamera(exercise, { onComplete });
 
-  // Camera permissions are still loading.
   if (!permission) {
     return <View />;
   }
 
-  // Camera permissions are not granted yet.
   if (!permission.granted) {
     return (
       <View className="flex-1 justify-center bg-[#0f1116]">
@@ -46,16 +48,7 @@ const CameraComponent = ({ exercise, navigation }) => {
   }
 
   return (
-    // Explicit style — NativeWind className is NOT reliably forwarded to
-    // expo-camera's native CameraView, so we use style props throughout
-    // this tree to guarantee the flex layout resolves correctly.
     <View style={{ flex: 1, backgroundColor: '#0f1116' }}>
-      {/*
-        CameraView is ALWAYS mounted once permissions are granted.
-        This lets the camera hardware warm up during the "Before you start"
-        instructions phase, so there is no black-screen flash when the
-        exercise begins.
-      */}
       <CameraView
         ref={cameraRef}
         style={{ flex: 1 }}
@@ -74,17 +67,16 @@ const CameraComponent = ({ exercise, navigation }) => {
         exerciseType={exercise?.name || ''}
       />
 
-      {/* ── Pre-exercise overlay — covers the camera until user taps Begin ── */}
+      {/* Pre-exercise overlay */}
       {!isExercising && (
         <View style={StyleSheet.absoluteFill}>
           <BeforeYouStart exercise={exercise} onBegin={startExercise} />
         </View>
       )}
 
-      {/* ── Exercise HUD — only visible once the session is active ── */}
+      {/* Active exercise HUD */}
       {isExercising && (
         <>
-          {/* Top HUD: exercise name, tracking status, posture feedback */}
           <View className="absolute top-8 left-4 right-4 bg-black/60 rounded-2xl py-4 px-5 border border-white/10 shadow-lg">
             <Text className="text-white text-center text-xl font-bold tracking-wide">{exercise?.name}</Text>
             <Text className="text-[#d2d6e3] text-center text-[13px] mt-1 font-medium">
@@ -100,7 +92,6 @@ const CameraComponent = ({ exercise, navigation }) => {
             {!!modelError && <Text className="text-[#ffb8b8] text-center text-sm font-bold mt-2">⚠️ {modelError}</Text>}
           </View>
 
-          {/* Bottom HUD: score, timer, progress bar, finish button */}
           <View className="absolute bottom-6 left-4 right-4 bg-black/60 rounded-3xl p-5 border border-white/10 shadow-lg">
             <View className="flex-row justify-between mb-4">
               <View>
@@ -117,9 +108,21 @@ const CameraComponent = ({ exercise, navigation }) => {
               <View className="h-full bg-[#4CAF50] rounded-full" style={{ width: `${Math.min(100, (elapsedSeconds / totalSeconds) * 100)}%` }} />
             </View>
 
-            <TouchableOpacity className="bg-[#ba1a1a] rounded-full items-center justify-center py-4" onPress={finishExercise}>
-              <Text className="text-white font-bold text-lg">Finish Exercise</Text>
-            </TouchableOpacity>
+            {/* Two-action footer: Happy Path (Finish Current) + Fatigue/Quit (End Early). */}
+            <View className="flex-row gap-3">
+              <TouchableOpacity
+                className="flex-1 bg-[#4CAF50] rounded-full items-center justify-center py-4"
+                onPress={() => finishExercise('finish')}
+              >
+                <Text className="text-white font-bold text-lg">Finish Current</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                className="flex-1 bg-[#ba1a1a] rounded-full items-center justify-center py-4"
+                onPress={() => finishExercise('end_early')}
+              >
+                <Text className="text-white font-bold text-lg">End Early</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </>
       )}
@@ -127,7 +130,6 @@ const CameraComponent = ({ exercise, navigation }) => {
   );
 };
 
-// ── Inline sub-component: posture guidance text shown in the top HUD ──
 const PostureFeedback = ({ exercise, keypoints, isModelReady, feedbackText, currentScore }) => {
   const exerciseHint = [
     exercise?.name || '',
@@ -137,16 +139,11 @@ const PostureFeedback = ({ exercise, keypoints, isModelReady, feedbackText, curr
 
   const isLegExercise = /leg|knee|lower|squat|gait|step/i.test(exerciseHint);
 
-  // Shoulders visible (11, 12)
   const shouldersVisible =
     (keypoints[11]?.score ?? 0) > 0.5 || (keypoints[12]?.score ?? 0) > 0.5;
-
-  // Hips visible (23, 24)
   const hipsVisible =
     (keypoints[23]?.score ?? 0) > 0.4 || (keypoints[24]?.score ?? 0) > 0.4;
 
-  // Only force the user to show hips if they are doing a leg/lower body exercise.
-  // Otherwise, if they are doing bicep curls, showing just the upper body is perfectly fine!
   const tooClose = isModelReady && shouldersVisible && !hipsVisible && isLegExercise;
   const noBody = isModelReady && keypoints.length === 0;
 
@@ -157,7 +154,6 @@ const PostureFeedback = ({ exercise, keypoints, isModelReady, feedbackText, curr
     return <Text className="text-[#ffe082] text-center text-lg font-bold mt-3">Step back — show your body</Text>;
   }
 
-  // For feedback text, we consider it valid if they are showing the required parts
   const isValidPosture = isLegExercise ? hipsVisible : shouldersVisible;
 
   if (feedbackText && isModelReady && isValidPosture) {

@@ -16,12 +16,17 @@ from core.mediapipe_vision import (
     extract_sequence_from_video,
 )
 from core.neural_network import classify_form_sequence
-from core.recommender import recommend_next_plan
+from core.recommender import recommend_next_plan, recommend_session_v2
+from core.exercise_catalog import is_lstm_supported
 import os
-import hashlib
 import logging
 from core import supabase_db as supabase_db_module
-from core.supabase_db import save_patient_profile, save_recommendation_log, get_patient_by_id
+from core.supabase_db import (
+    save_patient_profile,
+    save_recommendation_log,
+    save_form_prediction,
+    get_patient_by_id,
+)
 
 
 logger = logging.getLogger("uvicorn.error")
@@ -293,14 +298,60 @@ def create_patient_profile(payload: PatientProfileRequest) -> dict:
     return {"patient_id": saved_patient_id, "patient_profile": record, "database": database_result}
 
 
-# This endpoint accepts already-extracted pose sequences from the app.
+# This endpoint accepts already-extracted pose sequences from the app and
+# runs the StrokeLSTMClassifier. The mobile session orchestrator buffers
+# per-frame keypoints from /pose/estimate and flushes them here when the
+# patient finishes an exercise. The verdict is persisted to
+# `public.form_predictions` so the trajectory recommender (and any future
+# analytics) can read per-session LSTM classifications.
+#
+# For exercise_types the LSTM was never trained on (e.g. shoulder_flexion),
+# we skip the call entirely and return a 'skipped' marker rather than
+# polluting form_predictions with out-of-distribution guesses.
 @app.post("/predict/form")
 def predict_form(payload: FormRequest) -> dict:
-    prediction = classify_form_sequence(payload.exercise_type, payload.sequence)
+    if not is_lstm_supported(payload.exercise_type):
+        return {
+            "patient_id": payload.patient_id,
+            "exercise_type": payload.exercise_type,
+            "prediction": None,
+            "skipped": True,
+            "reason": "exercise_type_not_in_lstm_training_set",
+        }
+
+    # _normalize_keypoints_to_hip_center treats each frame as a dict (uses
+    # frame["keypoints"]), but FormRequest validates incoming frames into
+    # JointFrame Pydantic models. Convert to plain dicts before handing off.
+    sequence_dicts = [
+        {"frame_index": frame.frame_index, "keypoints": frame.keypoints}
+        for frame in payload.sequence
+    ]
+    prediction = classify_form_sequence(payload.exercise_type, sequence_dicts)
+
+    db_result = {"stored": False, "reason": "not_attempted"}
+    try:
+        # Confidence is float in [0,1] — schema check constraint requires it.
+        confidence = float(prediction.get("confidence") or 0.0)
+        confidence = max(0.0, min(1.0, confidence))
+        db_result = save_form_prediction({
+            "patient_id": payload.patient_id,
+            "exercise_type": payload.exercise_type,
+            "label": prediction.get("label") or "insufficient_data",
+            "confidence": confidence,
+            "frame_count": int(prediction.get("frame_count") or 0),
+            "device": prediction.get("device") or "",
+            "model_source": prediction.get("model_source") or "",
+            "prediction": prediction,
+        })
+    except Exception as exc:
+        logger.exception("Failed to persist form_prediction: %s", exc)
+        db_result = {"stored": False, "error": str(exc)}
+
     return {
         "patient_id": payload.patient_id,
         "exercise_type": payload.exercise_type,
         "prediction": prediction,
+        "database": db_result,
     }
 
 
@@ -319,17 +370,41 @@ async def predict_form_from_video(
 
     try:
         sequence_data = extract_sequence_from_video(str(temp_path), sample_every_n=2)
-        prediction = classify_form_sequence(exercise_type, sequence_data["sequence"])
+        if is_lstm_supported(exercise_type):
+            prediction = classify_form_sequence(exercise_type, sequence_data["sequence"])
+        else:
+            prediction = None
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Video processing failed: {exc}") from exc
     finally:
         if temp_path.exists():
             temp_path.unlink(missing_ok=True)
 
+    db_result = {"stored": False, "reason": "skipped"}
+    if prediction is not None:
+        try:
+            confidence = float(prediction.get("confidence") or 0.0)
+            confidence = max(0.0, min(1.0, confidence))
+            db_result = save_form_prediction({
+                "patient_id": patient_id,
+                "exercise_type": exercise_type,
+                "label": prediction.get("label") or "insufficient_data",
+                "confidence": confidence,
+                "frame_count": int(prediction.get("frame_count") or 0),
+                "device": prediction.get("device") or "",
+                "model_source": prediction.get("model_source") or "",
+                "prediction": prediction,
+            })
+        except Exception as exc:
+            logger.exception("Failed to persist form_prediction (video): %s", exc)
+            db_result = {"stored": False, "error": str(exc)}
+
     return {
         "patient_id": patient_id,
         "exercise_type": exercise_type,
         "prediction": prediction,
+        "skipped": prediction is None,
+        "database": db_result,
         "video_meta": {
             "num_frames": sequence_data["num_frames"],
             "fps": sequence_data["fps"],
@@ -363,83 +438,30 @@ def get_recommendation(payload: RecommendationRequest) -> dict:
     return {"patient_id": payload.patient_id, "recommendation": recommendation, "database": database_result}
 
 
-# GET recommendation endpoint – returns 3 recommended exercises for a patient at different intensity levels
-# Call this from the frontend to populate the dashboard exercise cards
+# GET recommendation endpoint — Patient X loop: trajectory-aware selection.
+# Pulls real history from recommendation_logs, classifies the patient's
+# recovery state (progressing / plateauing / deteriorating + signals),
+# then downgrades / maintains / upgrades the prescription accordingly.
+# Exercise IDs returned are the real `public.exercises` UUIDs so logs
+# written later can join cleanly.
 @app.get("/recommendation/{patient_id}")
 def get_recommended_exercise(patient_id: str) -> dict:
-    """Fetch a patient's profile and generate 3 recommended exercises at different intensities.
-    
-    Returns an array of 3 exercise objects (low, moderate, high intensity) that the user can choose from.
-    """
-    patient = get_patient_by_id(patient_id)
-    if not patient:
+    """Return 3 trajectory-adapted recommended exercises for the patient."""
+    result = recommend_session_v2(patient_id, count=3)
+    if result.get("error") == "patient_not_found":
         raise HTTPException(status_code=404, detail="Patient not found")
-    
-    exercises = []
 
-    # Deterministic per-user seed to vary exercise selection across users
-    user_hash = int(hashlib.md5(patient_id.encode('utf-8')).hexdigest(), 16)
-
-    # Pools of templates keyed by affected area — each pool contains distinct exercise templates
-    pools = {
-        'arms': [
-            {'name': 'Arm Reach & Open', 'desc': 'Controlled reaching and opening movements to improve shoulder mobility.', 'base_minutes': 20},
-            {'name': 'Upper-Limb Strength', 'desc': 'Resistance-based exercises for arm strength and coordination.', 'base_minutes': 35},
-            {'name': 'Fine Motor Control', 'desc': 'Small movement drills to improve hand and finger dexterity.', 'base_minutes': 25},
-        ],
-        'legs': [
-            {'name': 'Ankle & Knee Mobility', 'desc': 'Gentle mobilizations for ankle and knee control.', 'base_minutes': 20},
-            {'name': 'Gait & Balance', 'desc': 'Functional stepping and balance tasks to improve walking.', 'base_minutes': 40},
-            {'name': 'Endurance Walks', 'desc': 'Structured walking sets to build endurance safely.', 'base_minutes': 50},
-        ],
-        'both': [
-            {'name': 'Full-Body Mobility', 'desc': 'Whole body mobility flows focusing on posture and alignment.', 'base_minutes': 25},
-            {'name': 'Functional Movement', 'desc': 'Compound movements to restore everyday functional patterns.', 'base_minutes': 45},
-            {'name': 'Strength & Endurance', 'desc': 'Higher-intensity circuit for strength and cardiovascular fitness.', 'base_minutes': 60},
-        ],
+    # Preserve the shape the frontend already consumes ({patient_id, exercises})
+    # while exposing trajectory + action metadata for future "Why this?" UI.
+    return {
+        "patient_id": result["patient_id"],
+        "exercises": result["exercises"],
+        "trajectory": result.get("trajectory"),
+        "action": result.get("action"),
+        "recovery_phase": result.get("recovery_phase"),
+        "side_guidance": result.get("side_guidance"),
+        "model_source": result.get("model_source"),
     }
-
-    area = (patient.get('affected_area') or 'both').strip().lower()
-    pool = pools.get(area, pools['both'])
-
-    # create three exercises by selecting different templates from the chosen pool
-    for i in range(3):
-        # choose template index deterministically per user
-        template_idx = (user_hash + i) % len(pool)
-        template = pool[template_idx]
-
-        # call recommender to get intensity/focus details personalized to user
-        rec = recommend_next_plan(
-            stroke_type='ischemic',
-            months_in_recovery=patient.get('months_in_recovery', 0),
-            latest_form_score=0.6 + 0.1 * i,  # slightly vary score per option
-            affected_area=patient.get('affected_area', 'both'),
-            affected_side=patient.get('affected_side', 'both'),
-        )
-
-        intensity = rec.get('intensity', 'moderate')
-        level = 1 if intensity == 'low' else 2 if intensity == 'moderate' else 3
-
-        # small duration adjustment from template based on index and rec details
-        duration = template['base_minutes'] + (i * 5) + (level - 1) * 5
-
-        exercise = {
-            'id': f"rec-{patient_id[:8]}-{i}",
-            'name': f"{intensity.title()} - {template['name']}",
-            'description': template.get('desc') + ' ' + rec.get('focus', ''),
-            'level': level,
-            'duration_minutes': duration,
-            'video_url': 'https://via.placeholder.com/320x240?text=Exercise+Video',
-            'intensity': intensity,
-            'focus': rec.get('focus', ''),
-            'affected_area': area,
-            'affected_side': (patient.get('affected_side') or 'right').strip().lower(),
-            'recommendation': rec,
-        }
-
-        exercises.append(exercise)
-
-    return {'patient_id': patient_id, 'exercises': exercises}
 
 
 # POST endpoint to log when a patient starts or completes an exercise
@@ -479,12 +501,18 @@ def log_exercise_event(payload: dict) -> dict:
         # Keep raw event details inside JSONB while writing only the columns
         # that are known to exist in the live recommendation_logs table.
         event_timestamp = ts or __import__("datetime").datetime.utcnow().isoformat()
+        # Only completed sessions carry a meaningful form score. Started
+        # events have no score yet, and abandoned events were quit before
+        # the patient earned one — both must leave latest_form_score NULL
+        # so the trajectory recommender can query real scores cleanly.
+        score_for_column = avg_form_score if action == "completed" else None
+
         recommendation_payload = {
             "patient_id": patient_id,
             "recommendation_id": recommendation_id,
             "action": action,
             "duration_seconds": duration_seconds,
-            "avg_form_score": avg_form_score,
+            "avg_form_score": score_for_column,
             "timestamp": event_timestamp,
             "patient_snapshot": {
                 "stroke_type": patient.get("stroke_type") or "ischemic",
@@ -496,7 +524,7 @@ def log_exercise_event(payload: dict) -> dict:
 
         log_entry = {
             "patient_id": patient_id,
-            "latest_form_score": avg_form_score,
+            "latest_form_score": score_for_column,
             "recommendation": recommendation_payload,
         }
         
@@ -520,3 +548,118 @@ def log_exercise_event(payload: dict) -> dict:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to log exercise event: {str(exc)}") from exc
+
+
+@app.post("/sessions")
+def save_session(payload: dict) -> dict:
+    """Batch-save a completed workout session.
+
+    The frontend buffers per-exercise results in Zustand during a session
+    and flushes them here when the patient hits End Workout (or finishes
+    the last exercise). Each result becomes one row in recommendation_logs
+    with the session_id stored inside the JSONB so all rows in a session
+    can be queried together.
+
+    Expected payload:
+    {
+        "patient_id": "uuid",
+        "session_id": "uuid",
+        "started_at": "ISO timestamp",
+        "ended_at": "ISO timestamp",
+        "results": [
+            {
+                "recommendation_id": "exercise-uuid",
+                "exercise_name": "Arm Raise",
+                "session_index": 0,
+                "ended_via": "finish" | "end_early",
+                "avg_form_score": 85.5,
+                "duration_seconds": 180
+            },
+            ...
+        ]
+    }
+    """
+    try:
+        patient_id = payload.get("patient_id")
+        session_id = payload.get("session_id")
+        started_at = payload.get("started_at")
+        ended_at = payload.get("ended_at")
+        results = payload.get("results") or []
+
+        if not patient_id or not session_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Missing required fields: patient_id, session_id",
+            )
+
+        if not isinstance(results, list):
+            raise HTTPException(status_code=400, detail="results must be a list")
+
+        patient = get_patient_by_id(patient_id)
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient not found")
+
+        patient_snapshot = {
+            "stroke_type": patient.get("stroke_type") or "ischemic",
+            "months_in_recovery": int(patient.get("months_in_recovery") or 0),
+            "affected_area": (patient.get("affected_area") or "both").strip().lower(),
+            "affected_side": (patient.get("affected_side") or "both").strip().lower(),
+        }
+
+        stored_rows = []
+        failed_rows = []
+        for result in results:
+            try:
+                avg_form_score = float(result.get("avg_form_score") or 0.0)
+                duration_seconds = int(result.get("duration_seconds") or 0)
+                recommendation_id = result.get("recommendation_id")
+                exercise_name = result.get("exercise_name") or ""
+                session_index = int(result.get("session_index") or 0)
+                ended_via = result.get("ended_via") or "finish"
+
+                if not recommendation_id:
+                    failed_rows.append({"result": result, "error": "missing recommendation_id"})
+                    continue
+
+                recommendation_payload = {
+                    "patient_id": patient_id,
+                    "session_id": session_id,
+                    "recommendation_id": recommendation_id,
+                    "exercise_name": exercise_name,
+                    "session_index": session_index,
+                    "ended_via": ended_via,
+                    "avg_form_score": avg_form_score,
+                    "duration_seconds": duration_seconds,
+                    "started_at": started_at,
+                    "ended_at": ended_at,
+                    "patient_snapshot": patient_snapshot,
+                }
+
+                log_entry = {
+                    "patient_id": patient_id,
+                    # Both 'finish' and 'end_early' earned a real score, so
+                    # both populate the column. Skipped exercises never
+                    # reach this endpoint at all (no row, no NULL noise).
+                    "latest_form_score": avg_form_score,
+                    "recommendation": recommendation_payload,
+                }
+                db_result = save_recommendation_log(log_entry)
+                if db_result.get("stored"):
+                    stored_rows.append({"recommendation_id": recommendation_id, "score": avg_form_score})
+                else:
+                    failed_rows.append({"recommendation_id": recommendation_id, "db_result": db_result})
+            except Exception as exc:
+                failed_rows.append({"result": result, "error": str(exc)})
+
+        return {
+            "status": "ok" if not failed_rows else "partial",
+            "session_id": session_id,
+            "stored_count": len(stored_rows),
+            "failed_count": len(failed_rows),
+            "stored": stored_rows,
+            "failed": failed_rows,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to save session: {str(exc)}") from exc

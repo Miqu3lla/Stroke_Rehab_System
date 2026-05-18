@@ -4,13 +4,21 @@ import { Clock, X, Play } from 'lucide-react-native';
 import usePatientStore from '../../store/usePatientStore';
 
 const ExerciseModal = ({ visible, exercise, onClose, navigation }) => {
-  const { startExercise } = usePatientStore();
+  const { recommendedExercises, beginSession } = usePatientStore();
 
   if (!exercise) return null;
 
-  const handleStartExercise = async () => {
-    await startExercise(exercise, navigation);
+  // Tapping a card starts a workout session with the full recommended
+  // playlist, entering at the tapped exercise's index. Falls back to a
+  // single-exercise playlist if the recommendations list isn't loaded.
+  const handleStartExercise = () => {
+    const playlist = (recommendedExercises && recommendedExercises.length > 0)
+      ? recommendedExercises
+      : [exercise];
+    const startIndex = playlist.findIndex((e) => e.id === exercise.id);
+    beginSession(playlist, startIndex >= 0 ? startIndex : 0);
     onClose();
+    navigation.navigate('Exercise');
   };
 
   return (

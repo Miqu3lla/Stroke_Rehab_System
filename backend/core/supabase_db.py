@@ -329,6 +329,122 @@ def save_recommendation_log(payload: Dict[str, Any]) -> Dict[str, Any]:
     return _post("recommendation_logs", payload)
 
 
+def save_form_prediction(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Persist an LSTM form-classification result to `public.form_predictions`.
+
+    Expected keys: patient_id, exercise_type, label, confidence,
+    frame_count, device, model_source, prediction.
+    Schema check constraints: confidence ∈ [0,1], frame_count >= 0,
+    label ∈ {correct, incorrect, insufficient_data}.
+    """
+    return _post("form_predictions", payload)
+
+
+def fetch_patient_history(patient_id: str, limit: int = 50) -> list:
+    """Return the patient's recent recommendation_logs rows, newest first.
+
+    Powers Phase 1 (the Gathering) of the trajectory recommender. Each row
+    surfaces a flat view of the JSONB so trajectory code doesn't need to
+    re-parse: exercise_id, exercise_name, ended_via, latest_form_score,
+    duration_seconds, created_at.
+
+    Tries docker-exec psql first (works in the local Supabase Docker
+    stack), then direct psycopg2, then REST fallback.
+    """
+    query_sql = (
+        "SELECT "
+        "id, "
+        "patient_id, "
+        "latest_form_score, "
+        "(recommendation->>'recommendation_id') AS exercise_id, "
+        "(recommendation->>'exercise_name') AS exercise_name, "
+        "(recommendation->>'ended_via') AS ended_via, "
+        "COALESCE((recommendation->>'duration_seconds')::int, 0) AS duration_seconds, "
+        "(recommendation->>'session_id') AS session_id, "
+        "created_at "
+        "FROM public.recommendation_logs "
+        f"WHERE patient_id = '{patient_id}' "
+        # Filter > 0 (not just NOT NULL): legacy 'started' rows from
+        # before the per-action gating fix have score = 0 but are not
+        # null. A real 0% session is effectively impossible because the
+        # camera frame loop falls back to a random 70-95 when MediaPipe
+        # returns no result.
+        "AND latest_form_score > 0 "
+        f"ORDER BY created_at DESC LIMIT {int(limit)}"
+    )
+
+    # Docker exec → JSON array via psql -t (one row per line, JSON each).
+    if shutil.which("docker") is not None:
+        container_name = os.getenv("SUPABASE_DOCKER_CONTAINER", "supabase-db")
+        config = _get_postgres_config()
+        wrapped = f"SELECT json_agg(t) FROM ({query_sql}) t;"
+        command = [
+            "docker", "exec", "-e", f"PGPASSWORD={config['password']}",
+            container_name, "psql", "-U", config["user"], "-d", config["dbname"],
+            "-tA", "-c", wrapped,
+        ]
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        if result.returncode == 0:
+            # json_agg can wrap onto multiple lines when the array is
+            # large; join all non-empty lines before parsing.
+            output = " ".join(line.strip() for line in result.stdout.splitlines() if line.strip())
+            if output and output != "null":
+                try:
+                    return json.loads(output) or []
+                except Exception:
+                    pass
+
+    # psycopg2 fallback
+    if psycopg2 is not None and _postgres_configured():
+        try:
+            config = _get_postgres_config()
+            with psycopg2.connect(
+                host=config["host"], port=config["port"], dbname=config["dbname"],
+                user=config["user"], password=config["password"],
+                cursor_factory=RealDictCursor,
+            ) as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(query_sql)
+                    return [dict(row) for row in cursor.fetchall()]
+        except Exception:
+            pass
+
+    # REST fallback (limited: PostgREST can't do raw JSONB column projection)
+    if _configured():
+        url = (
+            _rest_url("recommendation_logs")
+            + f"?patient_id=eq.{patient_id}"
+            "&latest_form_score=gt.0"
+            "&select=id,patient_id,latest_form_score,recommendation,created_at"
+            "&order=created_at.desc"
+            f"&limit={int(limit)}"
+        )
+        req = request.Request(url, headers=_headers(), method="GET")
+        try:
+            with request.urlopen(req, timeout=10) as response:
+                body = response.read().decode("utf-8")
+                rows = json.loads(body) if body else []
+                normalized = []
+                for row in rows:
+                    rec = row.get("recommendation") or {}
+                    normalized.append({
+                        "id": row.get("id"),
+                        "patient_id": row.get("patient_id"),
+                        "latest_form_score": row.get("latest_form_score"),
+                        "exercise_id": rec.get("recommendation_id"),
+                        "exercise_name": rec.get("exercise_name"),
+                        "ended_via": rec.get("ended_via"),
+                        "duration_seconds": int(rec.get("duration_seconds") or 0),
+                        "session_id": rec.get("session_id"),
+                        "created_at": row.get("created_at"),
+                    })
+                return normalized
+        except Exception:
+            pass
+
+    return []
+
+
 def get_patient_by_id(patient_id: str) -> Optional[Dict[str, Any]]:
     """Fetch a patient record by ID from the patients table.
     

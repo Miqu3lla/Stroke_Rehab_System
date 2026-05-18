@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { createStackNavigator } from "@react-navigation/stack";
 import HomeScreen from "../screens/HomeScreen";
 import ExerciseScreen from "../screens/ExerciseScreen";
+import SessionSummaryScreen from "../screens/SessionSummaryScreen";
 import OnboardingScreen from "../screens/OnboardingScreen";
 import LoginScreen from "../screens/LoginScreen";
 import SignupScreen from "../screens/SignupScreen";
@@ -47,6 +48,7 @@ const AppNavigator = () => {
       <Stack.Screen name="Onboarding" component={OnboardingScreen} />
       <Stack.Screen name="Dashboard" component={HomeScreen} />
       <Stack.Screen name="Exercise" component={ExerciseScreen} />
+      <Stack.Screen name="SessionSummary" component={SessionSummaryScreen} />
     </Stack.Navigator>
   );
 };

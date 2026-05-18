@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { instance as api } from '../lib/api';
+import { isLstmSupported } from '../constants/exerciseTypes';
+import { supabase } from '../services/supabase';
 
 // Heavy ML now lives in the backend (MediaPipe Python). This hook is a thin
 // HTTP client: it takes a base64 frame, posts it to /pose/estimate, and returns
@@ -79,6 +81,55 @@ const usePoseDetection = () => {
     }
   }, []);
 
+  // Flatten a per-frame keypoints array (33 objects with x/y/z/score) into
+  // the 99-float JointFrame.keypoints the backend expects. Falls back to 0
+  // for any landmark the backend didn't report this frame.
+  const flattenKeypoints = useCallback((keypoints) => {
+    const flat = new Array(99).fill(0);
+    if (!Array.isArray(keypoints)) return flat;
+    for (let i = 0; i < 33; i += 1) {
+      const kp = keypoints[i];
+      if (!kp) continue;
+      flat[i * 3] = Number(kp.x) || 0;
+      flat[i * 3 + 1] = Number(kp.y) || 0;
+      flat[i * 3 + 2] = Number(kp.z) || 0;
+    }
+    return flat;
+  }, []);
+
+  // Post the buffered per-frame keypoint sequence to /predict/form so the
+  // backend LSTM (StrokeLSTMClassifier) can score the whole exercise.
+  // Fire-and-forget: callers don't await the response — the verdict is
+  // persisted to public.form_predictions for the recommender to read.
+  // Skips the call entirely for exercise_types the LSTM wasn't trained on.
+  const classifyFormSequence = useCallback(async (exerciseType, keypointsSequence) => {
+    if (!isLstmSupported(exerciseType)) {
+      return { ok: false, reason: 'lstm_unsupported_exercise' };
+    }
+    if (!Array.isArray(keypointsSequence) || keypointsSequence.length === 0) {
+      return { ok: false, reason: 'empty_sequence' };
+    }
+    try {
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      if (authError || !user) {
+        return { ok: false, reason: 'not_authenticated' };
+      }
+      const sequence = keypointsSequence.map((kps, frame_index) => ({
+        frame_index,
+        keypoints: flattenKeypoints(kps),
+      }));
+      const response = await api.post(
+        '/predict/form',
+        { patient_id: user.id, exercise_type: exerciseType, sequence },
+        { timeout: 15000 },
+      );
+      return { ok: true, data: response.data };
+    } catch (err) {
+      console.log('Form classification request failed:', err?.message || err);
+      return { ok: false, reason: 'request_failed', detail: err?.response?.data || err?.message };
+    }
+  }, [flattenKeypoints]);
+
   useEffect(() => {
     return () => {
       if (abortRef.current) abortRef.current.abort();
@@ -92,6 +143,7 @@ const usePoseDetection = () => {
     startDetection,
     stopDetection,
     estimateFromBase64,
+    classifyFormSequence,
   };
 };
 
