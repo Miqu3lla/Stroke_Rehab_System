@@ -1,11 +1,13 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import usePatientStore from '../store/usePatientStore';
 import usePoseDetection from './usePoseDetection';
 
 //custom hook that encapsulates all camera exercise session logic
-//manages the timer, score tracking, frame loop, and exercise lifecycle
+//manages the timer, score tracking, frame loop, and exercise lifecycle.
+//Score reporting is decoupled from persistence — the parent (ExerciseScreen)
+//passes an onComplete callback that receives the final avg score and
+//endedVia tag, then decides whether to save / transition / batch later.
 
-const useCamera = (exercise, navigation) => {
+const useCamera = (exercise, { onComplete } = {}) => {
   //exercise session state
   const [isExercising, setIsExercising] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -29,15 +31,21 @@ const useCamera = (exercise, navigation) => {
   const totalSeconds = Math.max(1, (Number(exercise?.duration_minutes) || 1) * 60);
   const affectedSide = (exercise?.affected_side || 'right').toLowerCase();
 
-  //external dependencies
-  const { logExerciseCompletion } = usePatientStore();
+  //pose detection backend client
   const {
     isModelReady,
     modelError,
     startDetection,
     stopDetection,
     estimateFromBase64,
+    classifyFormSequence,
   } = usePoseDetection();
+
+  // Buffers the per-frame keypoint arrays as they come back from
+  // /pose/estimate. On finish we flush this sequence to the LSTM via
+  // /predict/form (fire-and-forget) so form_predictions gets populated.
+  // Lives in a ref because the frame loop is closure-based.
+  const keypointsBufferRef = useRef([]);
 
   //formats seconds into M:SS display string
   const formatTime = (seconds) => {
@@ -58,30 +66,73 @@ const useCamera = (exercise, navigation) => {
     }
   }, []);
 
-  //ends the exercise, logs the session, and navigates back
-  const finishExercise = useCallback(async () => {
+  // Compute the avg score from accumulated frames. Returns 0 if the
+  // patient quit before any frame was captured.
+  const computeAvgScore = useCallback((history) => {
+    if (!history || history.length === 0) return 0;
+    const total = history.reduce((sum, s) => sum + s, 0);
+    return Number((total / history.length).toFixed(1));
+  }, []);
+
+  //ends the exercise, computes the avg score, and reports it up via
+  //onComplete. endedVia distinguishes 'finish' (Happy Path) from
+  //'end_early' (Fatigue/Quit) — both still earn the partial score.
+  //
+  //Side effect (fire-and-forget): flush the buffered keypoint sequence
+  //to the LSTM via /predict/form so form_predictions gets populated.
+  //The backend skips the call internally for unsupported exercise types
+  //(e.g. shoulder_flexion), so we don't need to filter here.
+  const finishExercise = useCallback((endedVia = 'finish') => {
     if (finishingRef.current) return;
     finishingRef.current = true;
 
     clearIntervals();
     setIsExercising(false);
-
-    // Safety shield: if no scores were captured, average safely defaults to 0.
-    const avgFormScore = scoreHistory.length > 0
-      ? Number((scoreHistory.reduce((sum, score) => sum + score, 0) / scoreHistory.length).toFixed(1))
-      : 0;
-
-    await logExerciseCompletion(exercise, elapsedSeconds, avgFormScore);
     stopDetection();
 
-    finishingRef.current = false;
-    navigation.goBack();
-  }, [clearIntervals, scoreHistory, exercise, elapsedSeconds, logExerciseCompletion, stopDetection, navigation]);
+    const avgFormScore = computeAvgScore(scoreHistory);
+
+    // Snapshot the buffer and clear it so the next exercise's hook
+    // instance starts fresh. Sequence stays in the closure for the POST.
+    const sequenceSnapshot = keypointsBufferRef.current.slice();
+    keypointsBufferRef.current = [];
+    const exerciseTypeForLstm = (exercise?.exercise_type || '').toString();
+    if (sequenceSnapshot.length > 0 && exerciseTypeForLstm) {
+      classifyFormSequence(exerciseTypeForLstm, sequenceSnapshot)
+        .then((res) => {
+          if (res?.ok) {
+            console.log('LSTM verdict:', res.data?.prediction);
+          } else if (res?.reason && res.reason !== 'lstm_unsupported_exercise') {
+            console.log('LSTM skipped:', res.reason);
+          }
+        })
+        .catch((err) => console.log('LSTM dispatch error:', err?.message || err));
+    }
+
+    if (onComplete) {
+      onComplete({
+        avgFormScore,
+        durationSeconds: elapsedSeconds,
+        endedVia,
+      });
+    }
+    // Intentionally do NOT reset finishingRef — the parent will swap
+    // away from the active state (to rest), unmounting this active
+    // camera tree. The next exercise mounts a fresh hook instance.
+  }, [
+    clearIntervals,
+    stopDetection,
+    scoreHistory,
+    elapsedSeconds,
+    onComplete,
+    computeAvgScore,
+    classifyFormSequence,
+    exercise,
+  ]);
 
   //starts the recursive frame capture loop that sends photos to the backend
   const startFrameLoop = useCallback(() => {
     const processFrame = async () => {
-      // If timerRef is null, the exercise was stopped (finishExercise called)
       if (!timerRef.current) return;
 
       let score = null;
@@ -118,14 +169,19 @@ const useCamera = (exercise, navigation) => {
               setInferenceSize({ width: result.imageWidth, height: result.imageHeight });
             }
             if (result.hint) setFeedbackText(result.hint);
-            setKeypoints(result.keypoints || []);
+            const frameKeypoints = result.keypoints || [];
+            setKeypoints(frameKeypoints);
+            // Only buffer frames that actually have keypoints so the LSTM
+            // gets clean signal, not zero-padded "no body detected" frames.
+            if (Array.isArray(frameKeypoints) && frameKeypoints.length > 0) {
+              keypointsBufferRef.current.push(frameKeypoints);
+            }
           }
         } catch (_) {
           score = null;
         }
       }
 
-      // Check again in case user pressed Finish while the picture was being taken
       if (!timerRef.current) return;
 
       const effectiveScore = score ?? Math.min(100, Math.max(0, Math.floor(Math.random() * 25) + 70));
@@ -133,17 +189,15 @@ const useCamera = (exercise, navigation) => {
       setScoreHistory((prev) => [...prev, effectiveScore]);
       setJointColors(colors);
 
-      // Wait 800ms between frames so the JS thread can update the clock and
-      // respond to button taps.
       scoreRef.current = setTimeout(processFrame, 800);
     };
 
-    // Start the recursive frame loop
     processFrame();
   }, [exercise, affectedSide, estimateFromBase64, cameraLayout]);
 
   //resets all state and starts the exercise timer + pose detection
   const startExercise = useCallback(() => {
+    finishingRef.current = false;
     setIsExercising(true);
     setElapsedSeconds(0);
     setCurrentScore(0);
@@ -152,19 +206,14 @@ const useCamera = (exercise, navigation) => {
     setKeypoints([]);
     setFeedbackText('Preparing pose detection…');
     frameCountRef.current = 0;
+    keypointsBufferRef.current = [];
 
-    // Wall-clock timer: records the real start time and calculates elapsed
-    // from Date.now(). Even if TF.js freezes the JS thread for 30 seconds,
-    // the timer will instantly jump to the correct time when the thread
-    // unfreezes, instead of permanently falling behind.
     startTimeRef.current = Date.now();
     timerRef.current = setInterval(() => {
       const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
       setElapsedSeconds(elapsed);
-    }, 500); // poll every 500ms so it catches up faster after a freeze
+    }, 500);
 
-    // Fire off model loading in the background. Once ready, start the
-    // pose detection frame loop. The camera and timer are already running.
     const loadModelAndStartDetection = async () => {
       try {
         const ready = await startDetection();
@@ -172,7 +221,6 @@ const useCamera = (exercise, navigation) => {
           setFeedbackText('Pose detection unavailable — exercise without skeleton');
           return;
         }
-        // Model is ready! Start the frame processing loop.
         setFeedbackText('Pose detection active — step back to show your body');
         startFrameLoop();
       } catch (err) {
@@ -187,11 +235,13 @@ const useCamera = (exercise, navigation) => {
   //auto-finish when time runs out
   useEffect(() => {
     if (isExercising && elapsedSeconds >= totalSeconds) {
-      finishExercise();
+      finishExercise('finish');
     }
   }, [elapsedSeconds, isExercising, totalSeconds, finishExercise]);
 
-  //cleanup on unmount
+  //cleanup on unmount: only stop the timer + camera. Score reporting
+  //is the parent's responsibility now — if the parent swaps us out
+  //(e.g. moving to rest state) it has already called finishExercise.
   useEffect(() => {
     return () => {
       clearIntervals();
