@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback, useRef } from 'react';
 import { View, Text, TouchableOpacity, Alert } from 'react-native';
 import { ChevronLeft } from 'lucide-react-native';
 import CameraComponent from '../components/exercise/CameraComponent';
@@ -32,6 +32,12 @@ const ExerciseScreen = ({ navigation }) => {
     checkSession();
   }, []);
 
+  // Allow-leave ref: set true when our own code (Move to Next on last
+  // exercise, End Workout) is the one driving navigation, so the
+  // beforeRemove listener below doesn't fire its confirmation alert
+  // against our own intentional navigation.
+  const allowLeaveRef = useRef(false);
+
   // When useCamera reports the exercise ended (Finish / End Early / timer),
   // push the score into the session store. This flips isResting=true.
   const handleExerciseComplete = useCallback(({ avgFormScore, durationSeconds, endedVia }) => {
@@ -39,10 +45,17 @@ const ExerciseScreen = ({ navigation }) => {
   }, [saveCurrentScore]);
 
   const handleMoveToNext = useCallback(async () => {
+    // moveToNext only navigates when it ends up calling endSession
+    // (last exercise). Setting the flag here is harmless for the
+    // mid-session case since the screen doesn't unmount.
+    allowLeaveRef.current = true;
     await moveToNext(navigation);
+    // Re-arm the guard in case moveToNext didn't end the session.
+    allowLeaveRef.current = false;
   }, [moveToNext, navigation]);
 
   const handleEndWorkout = useCallback(async () => {
+    allowLeaveRef.current = true;
     await endSession(navigation);
   }, [endSession, navigation]);
 
@@ -62,6 +75,36 @@ const ExerciseScreen = ({ navigation }) => {
       ],
     );
   }, [session.sessionId, navigation, handleEndWorkout]);
+
+  // beforeRemove intercepts EVERY navigation away from this screen —
+  // hardware back on Android, swipe-back gesture on iOS, and the
+  // back arrow in the header. Without this, native back actions bypass
+  // handleBackPress and the patient loses their in-progress scores.
+  // Internal endSession() / Finish Workout flows set allowLeaveRef so
+  // their own navigation isn't blocked by the confirmation alert.
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (event) => {
+      if (allowLeaveRef.current) return;
+      if (!session.sessionId) return; // no active session, let it through
+      event.preventDefault();
+      Alert.alert(
+        'End workout?',
+        'Your scores so far will be saved.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'End workout',
+            style: 'destructive',
+            onPress: async () => {
+              allowLeaveRef.current = true;
+              await endSession(navigation);
+            },
+          },
+        ],
+      );
+    });
+    return unsubscribe;
+  }, [navigation, session.sessionId, endSession]);
 
   // No active session — likely deep-linked here without a playlist.
   if (!session.sessionId || !currentExercise) {

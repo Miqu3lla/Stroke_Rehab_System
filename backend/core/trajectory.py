@@ -90,7 +90,15 @@ def _analyze_per_exercise(history: List[Dict[str, Any]]) -> Dict[str, Dict[str, 
         end_early = sum(1 for r in rows if (r.get("ended_via") or "") == "end_early")
         slope = _linear_slope(scores[-5:])  # last 5 of this exercise
 
+        # Don't assign a directional trend until this specific exercise
+        # has enough sessions of its own. Without this guard, a single
+        # session on each of three different exercises would each look
+        # like a "rising" or "falling" bucket and bubble up into a
+        # full-patient classification even though no individual exercise
+        # has enough data to support that.
         if not scores:
+            trend = "unknown"
+        elif len(scores) < MIN_SESSIONS_FOR_TREND:
             trend = "unknown"
         elif slope >= PROGRESSING_SLOPE:
             trend = "rising"
@@ -160,10 +168,27 @@ def _classify_state(per_exercise: Dict[str, Dict[str, Any]], signals: List[str])
     rising = sum(1 for t in trends if t == "rising")
     falling = sum(1 for t in trends if t == "falling")
     flat = sum(1 for t in trends if t == "flat")
+    unknown = sum(1 for t in trends if t == "unknown")
     total = len(trends)
     sample_sessions = sum(v["sessions"] for v in per_exercise.values())
+    # A bucket only "counts" toward a state classification once it has
+    # MIN_SESSIONS_FOR_TREND sessions of its own. Three one-off sessions
+    # across three different exercises must not classify as anything
+    # other than insufficient_data.
+    qualifying_buckets = sum(
+        1 for v in per_exercise.values() if v["sessions"] >= MIN_SESSIONS_FOR_TREND
+    )
 
-    # Hard overrides from signals
+    # If no bucket has enough sessions yet, bail out as insufficient_data
+    # regardless of how many one-off sessions we've accumulated overall.
+    if qualifying_buckets == 0:
+        return {
+            "state": "insufficient_data",
+            "confidence": max(0.1, 0.05 * sample_sessions),
+        }
+
+    # Hard overrides from signals (these signals already use per-bucket
+    # context via _detect_signals, so they're safe to trust here).
     if "rapid_drop" in signals or "fatigue_pattern" in signals:
         state = "deteriorating"
     elif "sustained_high" in signals or "strength_gain" in signals:
@@ -172,14 +197,14 @@ def _classify_state(per_exercise: Dict[str, Dict[str, Any]], signals: List[str])
         state = "deteriorating"
     elif rising > falling and rising >= max(1, total // 2):
         state = "progressing"
-    elif flat == total:
+    elif flat + unknown == total:
         state = "plateauing"
     else:
         state = "plateauing"
 
-    # Confidence scales with how much evidence we have
+    # Confidence scales with how much evidence we have.
     confidence = min(1.0, 0.3 + 0.1 * sample_sessions)
-    if state == "insufficient_data" or sample_sessions < MIN_SESSIONS_FOR_TREND:
+    if sample_sessions < MIN_SESSIONS_FOR_TREND:
         state = "insufficient_data"
         confidence = max(0.1, 0.05 * sample_sessions)
 

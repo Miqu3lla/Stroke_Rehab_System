@@ -11,18 +11,18 @@ const SessionSummaryScreen = ({ route, navigation }) => {
   const saveResult = route?.params?.saveResult;
 
   // Build a result-per-playlist-slot view so the UI can show "Skipped"
-  // for exercises the patient never reached before ending the workout.
-  const resultsById = new Map(
-    (session.results || []).map((r) => [r.recommendation_id, r]),
+  // for exercises the patient never reached. Key the map on
+  // session_index (the slot position), not recommendation_id, because
+  // the playlist can repeat the same exercise across slots — keying on
+  // exercise id would attach the wrong score to the wrong slot.
+  const resultsByIndex = new Map(
+    (session.results || []).map((r) => [r.session_index, r]),
   );
-  const slots = (session.playlist || []).map((exercise, index) => {
-    const result = resultsById.get(exercise.id);
-    return {
-      index,
-      exercise,
-      result, // may be undefined → skipped
-    };
-  });
+  const slots = (session.playlist || []).map((exercise, index) => ({
+    index,
+    exercise,
+    result: resultsByIndex.get(index), // may be undefined → skipped
+  }));
 
   const scoredResults = slots.filter((s) => s.result).map((s) => s.result);
   const completedCount = scoredResults.length;
@@ -71,12 +71,14 @@ const SessionSummaryScreen = ({ route, navigation }) => {
         ))}
       </View>
 
-      {/* Save status (only show if the batch POST failed) */}
+      {/* Save status (only show if the batch POST failed). The banner
+          tells the patient their scores didn't upload — there is no
+          background retry today, so we don't promise one. */}
       {saveResult && !saveResult.ok ? (
         <View className="flex-row items-center bg-[#fff4e5] border border-[#FFC107] rounded-xl p-4 mb-6">
           <AlertTriangle size={20} color="#b86e00" />
           <Text className="text-[#7a4a00] text-sm font-medium ml-2 flex-1">
-            Results couldn't sync. They'll retry on next session.
+            Results couldn't sync to the server. Your scores are still visible here, but tomorrow's recommendation won't reflect this session.
           </Text>
         </View>
       ) : null}

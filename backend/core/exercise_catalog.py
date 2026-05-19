@@ -98,7 +98,9 @@ def _fetch_catalog_rows() -> List[Dict[str, Any]]:
         "FROM public.exercises"
     )
 
-    # Docker exec
+    # Docker exec. load_catalog() runs inline on the recommendation
+    # request path, so a hung daemon/container must not block the API
+    # thread indefinitely — the timeout falls through to psycopg2/REST.
     if shutil.which("docker") is not None:
         container_name = os.getenv("SUPABASE_DOCKER_CONTAINER", "supabase-db")
         config = _get_pg_config()
@@ -108,8 +110,11 @@ def _fetch_catalog_rows() -> List[Dict[str, Any]]:
             container_name, "psql", "-U", config["user"], "-d", config["dbname"],
             "-tA", "-c", wrapped,
         ]
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
-        if result.returncode == 0:
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=5)
+        except subprocess.TimeoutExpired:
+            result = None
+        if result is not None and result.returncode == 0:
             # json_agg may wrap onto multiple lines for large arrays — join
             # everything (stripped) before parsing.
             output = " ".join(line.strip() for line in result.stdout.splitlines() if line.strip())

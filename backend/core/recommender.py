@@ -205,7 +205,11 @@ def recommend_session_v2(
         }
 
     affected_area = (patient.get("affected_area") or "both").strip().lower()
-    affected_side = (patient.get("affected_side") or "right").strip().lower()
+    # Default to 'both' (bilateral) for older or incomplete patient rows
+    # rather than silently assuming 'right' — the recommender exposes
+    # this in side guidance text the patient sees, so a wrong default
+    # would be visibly incorrect.
+    affected_side = (patient.get("affected_side") or "both").strip().lower()
     months_in_recovery = int(patient.get("months_in_recovery") or 0)
 
     # Phase 1: gather

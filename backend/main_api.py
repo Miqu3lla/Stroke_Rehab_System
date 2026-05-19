@@ -26,6 +26,7 @@ from core.supabase_db import (
     save_recommendation_log,
     save_form_prediction,
     get_patient_by_id,
+    recommendation_log_exists,
 )
 
 
@@ -643,6 +644,17 @@ def save_session(payload: dict) -> dict:
                     "latest_form_score": avg_form_score,
                     "recommendation": recommendation_payload,
                 }
+                # Idempotency: if this (patient_id, session_id, session_index)
+                # tuple was already saved, skip the insert so a mobile retry
+                # or double-submit doesn't duplicate trajectory history.
+                if recommendation_log_exists(patient_id, session_id, session_index):
+                    stored_rows.append({
+                        "recommendation_id": recommendation_id,
+                        "score": avg_form_score,
+                        "deduped": True,
+                    })
+                    continue
+
                 db_result = save_recommendation_log(log_entry)
                 if db_result.get("stored"):
                     stored_rows.append({"recommendation_id": recommendation_id, "score": avg_form_score})
