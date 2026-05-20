@@ -77,6 +77,12 @@ const usePatientStore = create((set, get) => ({
   // the rest state. endedVia distinguishes 'finish' (timer expired or
   // patient tapped Finish Current) from 'end_early' (Fatigue/Quit).
   // Both earn the partial avg score they accumulated.
+  //
+  // Idempotent per session_index: if a result for this slot already
+  // exists in session.results (e.g. timer auto-finish racing with the
+  // user pressing the Finish button), the existing row is replaced in
+  // place instead of being appended. This stops duplicate rows from
+  // reaching /sessions and skewing the trajectory history.
   saveCurrentScore: ({ avgFormScore, durationSeconds, endedVia = 'finish' }) => {
     const { session } = get();
     if (!session.sessionId) return;
@@ -92,11 +98,18 @@ const usePatientStore = create((set, get) => ({
       duration_seconds: Math.max(0, Number(durationSeconds) || 0),
     };
 
+    const existingIndex = session.results.findIndex(
+      (r) => r.session_index === session.currentIndex,
+    );
+    const nextResults = existingIndex >= 0
+      ? session.results.map((r, i) => (i === existingIndex ? result : r))
+      : [...session.results, result];
+
     set({
       session: {
         ...session,
         isResting: true,
-        results: [...session.results, result],
+        results: nextResults,
       },
     });
   },

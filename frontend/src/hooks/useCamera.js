@@ -184,9 +184,13 @@ const useCamera = (exercise, { onComplete } = {}) => {
 
       if (!timerRef.current) return;
 
-      const effectiveScore = score ?? Math.min(100, Math.max(0, Math.floor(Math.random() * 25) + 70));
-      setCurrentScore(effectiveScore);
-      setScoreHistory((prev) => [...prev, effectiveScore]);
+      // Only commit the frame to scoreHistory if MediaPipe actually
+      // returned a score. Synthesising a fake number for missing frames
+      // poisoned the per-exercise trend the trajectory analyzer reads.
+      if (score !== null && score !== undefined) {
+        setCurrentScore(score);
+        setScoreHistory((prev) => [...prev, score]);
+      }
       setJointColors(colors);
 
       scoreRef.current = setTimeout(processFrame, 800);
