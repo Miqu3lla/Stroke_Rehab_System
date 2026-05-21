@@ -6,10 +6,9 @@ import RestState from '../components/exercise/RestState';
 import useAuthStore from '../store/useAuthStore';
 import usePatientStore from '../store/usePatientStore';
 
-// ExerciseScreen hosts the session state machine:
-//   Active (camera + HUD)  ←→  Rest (feedback + Next/End Workout)
-// It owns the transitions but delegates score capture to useCamera and
-// score persistence to the session actions in usePatientStore.
+// This screen manages the workout session, switching between two views:
+// 1. Active: Doing the exercise with the camera on.
+// 2. Rest: Seeing your score and resting before the next exercise.
 const ExerciseScreen = ({ navigation }) => {
   const { getAuthSession } = useAuthStore();
   const { session, saveCurrentScore, moveToNext, endSession } = usePatientStore();
@@ -21,7 +20,7 @@ const ExerciseScreen = ({ navigation }) => {
   const upNextExercise = isLastExercise ? null : playlist[currentIndex + 1];
   const justFinishedResult = session.results[session.results.length - 1];
 
-  // Guard: redirect to Login if no auth session
+  // Check if the user is logged in. If not, send them back to the Login screen.
   useEffect(() => {
     const checkSession = async () => {
       const authed = await getAuthSession();
@@ -32,25 +31,22 @@ const ExerciseScreen = ({ navigation }) => {
     checkSession();
   }, []);
 
-  // Allow-leave ref: set true when our own code (Move to Next on last
-  // exercise, End Workout) is the one driving navigation, so the
-  // beforeRemove listener below doesn't fire its confirmation alert
-  // against our own intentional navigation.
+  // Keeps track of whether we're allowed to leave this screen without asking for confirmation.
+  // Set to true only when the user finishes a workout or taps the intended "End Workout" button.
   const allowLeaveRef = useRef(false);
 
-  // When useCamera reports the exercise ended (Finish / End Early / timer),
-  // push the score into the session store. This flips isResting=true.
+  // Saves the exercise score when the user finishes it (or the timer runs out),
+  // and switches the view to the Rest screen.
   const handleExerciseComplete = useCallback(({ avgFormScore, durationSeconds, endedVia }) => {
     saveCurrentScore({ avgFormScore, durationSeconds, endedVia });
   }, [saveCurrentScore]);
 
   const handleMoveToNext = useCallback(async () => {
-    // moveToNext only navigates when it ends up calling endSession
-    // (last exercise). Setting the flag here is harmless for the
-    // mid-session case since the screen doesn't unmount.
+    // Allow navigating away safely, then proceed to the next exercise.
+    // (If this was the last exercise, it will end the session and leave this screen).
     allowLeaveRef.current = true;
     await moveToNext(navigation);
-    // Re-arm the guard in case moveToNext didn't end the session.
+    // Reset the leave protection so the user doesn't accidentally exit mid-workout.
     allowLeaveRef.current = false;
   }, [moveToNext, navigation]);
 
@@ -59,8 +55,8 @@ const ExerciseScreen = ({ navigation }) => {
     await endSession(navigation);
   }, [endSession, navigation]);
 
-  // Hardware back / nav back during active state — confirm exit since
-  // the patient would lose this exercise's score otherwise.
+  // Shows a warning when the user tries to go back during a workout.
+  // We want to make sure they don't accidentally lose their progress!
   const handleBackPress = useCallback(() => {
     if (!session.sessionId) {
       navigation.goBack();
@@ -76,12 +72,8 @@ const ExerciseScreen = ({ navigation }) => {
     );
   }, [session.sessionId, navigation, handleEndWorkout]);
 
-  // beforeRemove intercepts EVERY navigation away from this screen —
-  // hardware back on Android, swipe-back gesture on iOS, and the
-  // back arrow in the header. Without this, native back actions bypass
-  // handleBackPress and the patient loses their in-progress scores.
-  // Internal endSession() / Finish Workout flows set allowLeaveRef so
-  // their own navigation isn't blocked by the confirmation alert.
+  // Catches all attempts to leave this screen (like physical back buttons or swipe gestures).
+  // Shows a confirmation dialog to prevent accidental exits unless it's an intended finish.
   useEffect(() => {
     const unsubscribe = navigation.addListener('beforeRemove', (event) => {
       if (allowLeaveRef.current) return;
@@ -106,7 +98,7 @@ const ExerciseScreen = ({ navigation }) => {
     return unsubscribe;
   }, [navigation, session.sessionId, endSession]);
 
-  // No active session — likely deep-linked here without a playlist.
+  // If there's no workout session found, show an error and a button to go back.
   if (!session.sessionId || !currentExercise) {
     return (
       <View className="flex-1 items-center justify-center bg-[#faf8ff] px-6">
@@ -143,9 +135,8 @@ const ExerciseScreen = ({ navigation }) => {
           onEndWorkout={handleEndWorkout}
         />
       ) : (
-        // Key on the exercise id so switching to the next exercise
-        // forces a fresh useCamera instance (clean scoreHistory, fresh
-        // timer, fresh BeforeYouStart overlay).
+        // The "key" makes sure that when a new exercise starts, the camera view resets 
+        // completely (timer resets, previous scores are cleared, etc.).
         <CameraComponent
           key={currentExercise.id}
           exercise={currentExercise}

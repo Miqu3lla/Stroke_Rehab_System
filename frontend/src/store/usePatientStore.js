@@ -24,6 +24,11 @@ const usePatientStore = create((set, get) => ({
   recommendationLoading: false,
   recommendationError: null,
 
+  // ── History state ───────────────────────────────────────────────────
+  history: [],
+  historyLoading: false,
+  historyError: null,
+
   // ── Session state ───────────────────────────────────────────────────
   // Session lives in the store so the ExerciseScreen, useCamera hook,
   // and SessionSummary screen all read from the same source. The state
@@ -51,6 +56,23 @@ const usePatientStore = create((set, get) => ({
 
   updateRecommendations: (exercises) => {
     set({ recommendedExercises: exercises || [] });
+  },
+
+  fetchHistory: async () => {
+    set({ historyLoading: true, historyError: null });
+    try {
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      if (authError || !user) {
+        throw new Error('User not authenticated');
+      }
+      const response = await instance.get(`/history/${user.id}`);
+      set({ history: response.data.history || [] });
+    } catch (error) {
+      console.error('Failed to fetch history:', error?.response?.data || error.message);
+      set({ historyError: error.message });
+    } finally {
+      set({ historyLoading: false });
+    }
   },
 
   // ── Session actions ─────────────────────────────────────────────────

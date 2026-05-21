@@ -3,26 +3,26 @@ import { instance as api } from '../lib/api';
 import { isLstmSupported } from '../constants/exerciseTypes';
 import { supabase } from '../services/supabase';
 
-// Heavy ML now lives in the backend (MediaPipe Python). This hook is a thin
-// HTTP client: it takes a base64 frame, posts it to /pose/estimate, and returns
-// keypoints + colours + hint exactly as the on-device version used to. The
-// public API is unchanged so CameraComponent doesn't need to know the work
-// moved off the phone.
+/**
+ * Hook to handle pose detection by communicating with the backend.
+ * Instead of running heavy Machine Learning models on the phone,
+ * it sends camera images to the backend and gets the pose results back.
+ */
 
 const usePoseDetection = () => {
+  // UI states for loading and error handling
   const [isDetecting, setIsDetecting] = useState(false);
   const [isModelReady, setIsModelReady] = useState(false);
   const [modelError, setModelError] = useState(null);
 
-  // Mirrors of state for use inside the frame-loop closure.
+  // References used to keep track of background processes without triggering a re-render
   const isDetectingRef = useRef(false);
   const isEstimatingRef = useRef(false);
-  // Aborts the in-flight request when the user finishes the exercise early.
+  // Used to cancel any ongoing backend requests if the user stops early
   const abortRef = useRef(null);
 
+  // Checks if the backend server is reachable before starting to send camera frames
   const startDetection = useCallback(async () => {
-    // Probe the backend so we surface a clear error instead of silently
-    // failing on the first frame. The /health endpoint already exists.
     try {
       await api.get('/health', { timeout: 5000 });
       isDetectingRef.current = true;
@@ -40,6 +40,7 @@ const usePoseDetection = () => {
     }
   }, []);
 
+  // Stops the detection process and cancels any ongoing server requests
   const stopDetection = useCallback(() => {
     isDetectingRef.current = false;
     setIsDetecting(false);
@@ -49,9 +50,8 @@ const usePoseDetection = () => {
     }
   }, []);
 
-  // viewWidth/viewHeight are accepted for API compatibility but no longer used —
-  // the backend returns the photo's own dimensions and the SkeletonOverlay
-  // applies the cover-mode transform from those.
+  // Sends a single camera frame to the backend to get the user's current pose.
+  // It returns the body joints (keypoints), visual colors, and text hints.
   const estimateFromBase64 = useCallback(async (base64Image, exerciseType = '', affectedSide = 'right') => {
     if (!isDetectingRef.current || !base64Image) return null;
     if (isEstimatingRef.current) return null;
@@ -81,9 +81,8 @@ const usePoseDetection = () => {
     }
   }, []);
 
-  // Flatten a per-frame keypoints array (33 objects with x/y/z/score) into
-  // the 99-float JointFrame.keypoints the backend expects. Falls back to 0
-  // for any landmark the backend didn't report this frame.
+  // Converts the 33 body points (x, y, z) into a simple flat list of 99 numbers.
+  // The backend Machine Learning model needs the data in this specific format.
   const flattenKeypoints = useCallback((keypoints) => {
     const flat = new Array(99).fill(0);
     if (!Array.isArray(keypoints)) return flat;
@@ -97,11 +96,8 @@ const usePoseDetection = () => {
     return flat;
   }, []);
 
-  // Post the buffered per-frame keypoint sequence to /predict/form so the
-  // backend LSTM (StrokeLSTMClassifier) can score the whole exercise.
-  // Fire-and-forget: callers don't await the response — the verdict is
-  // persisted to public.form_predictions for the recommender to read.
-  // Skips the call entirely for exercise_types the LSTM wasn't trained on.
+  // Sends the entire sequence of body movements from an exercise to the backend.
+  // The backend will score how well the user performed the exercise.
   const classifyFormSequence = useCallback(async (exerciseType, keypointsSequence) => {
     if (!isLstmSupported(exerciseType)) {
       return { ok: false, reason: 'lstm_unsupported_exercise' };

@@ -6,8 +6,8 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { ChevronRight, Clock } from 'lucide-react-native';
-import usePatientStore from '../store/usePatientStore';
-import ExerciseModal from './ui/ExerciseModal';
+import usePatientStore from '../../store/usePatientStore';
+import ExerciseModal from '../ui/ExerciseModal';
 
 const RecommendationCard = ({ navigation }) => {
   const {
