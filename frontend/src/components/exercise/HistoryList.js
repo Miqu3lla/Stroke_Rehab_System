@@ -2,15 +2,20 @@ import React from 'react';
 import { View, Text, ActivityIndicator } from 'react-native';
 import { Calendar } from 'lucide-react-native';
 import usePatientStore from '../../store/usePatientStore';
+import Skeleton from '../ui/Skeleton';
 
 const HistoryList = () => {
   const { history, historyLoading, historyError } = usePatientStore();
 
   if (historyLoading) {
     return (
-      <View className="my-2 mb-6">
-        <ActivityIndicator size="small" color="#0c56d0" />
-        <Text className="mt-3 text-sm font-medium text-[#434654] text-center">Loading past exercises...</Text>
+      <View className="my-2 mb-8">
+        <Text className="text-lg font-bold text-[#191b23] ml-1 mb-3">Past exercises</Text>
+        <View className="flex-col gap-3">
+          <Skeleton height={80} borderRadius={16} className="w-full" />
+          <Skeleton height={80} borderRadius={16} className="w-full" />
+          <Skeleton height={80} borderRadius={16} className="w-full" />
+        </View>
       </View>
     );
   }
