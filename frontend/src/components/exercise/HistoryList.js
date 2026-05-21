@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, ActivityIndicator } from 'react-native';
-import { Calendar, CheckCircle2 } from 'lucide-react-native';
+import { Calendar } from 'lucide-react-native';
 import usePatientStore from '../../store/usePatientStore';
 
 const HistoryList = () => {
@@ -58,25 +58,26 @@ const HistoryList = () => {
           return (
             <View
               key={item.id || index}
-              className="w-full flex-row items-center justify-between p-4 bg-white border-2 rounded-xl min-h-[60px]"
-              style={{ borderColor: tone }}
+              className="w-full flex-row items-center justify-between p-4 bg-white border border-[#e7e7f2] rounded-2xl shadow-sm"
             >
-              <View className="flex-row items-center flex-1 pr-3">
-                <CheckCircle2 size={22} color={tone} />
-                <View className="ml-3 flex-1">
-                  <Text className="text-[16px] font-bold text-[#191b23] flex-wrap leading-tight">{item.exercise_name}</Text>
-                  <View className="flex-row items-center gap-1.5 mt-0.5">
-                    <Calendar size={14} color="#8a8d9b" />
-                    <Text className="text-[14px] font-medium text-[#8a8d9b]">
-                      {formatDate(item.created_at)}
-                    </Text>
-                  </View>
-                  {diffElement}
+              <View className="flex-1 pr-3">
+                <Text className="text-[16px] font-bold text-[#191b23] flex-wrap leading-tight mb-1">{item.exercise_name}</Text>
+                <View className="flex-row items-center gap-1.5 mb-1">
+                  <Calendar size={14} color="#8a8d9b" />
+                  <Text className="text-[14px] font-medium text-[#8a8d9b]">
+                    {formatDate(item.created_at)}
+                  </Text>
                 </View>
+                {diffElement}
               </View>
-              <Text className="text-2xl font-black" style={{ color: tone }}>
-                {score}%
-              </Text>
+              <View className="items-end pl-2 border-l border-[#e7e7f2]">
+                <Text className="text-2xl font-black" style={{ color: tone }}>
+                  {score}%
+                </Text>
+                <Text className="text-[10px] font-bold text-[#8a8d9b] mt-0.5 uppercase tracking-wider">
+                  Score
+                </Text>
+              </View>
             </View>
           );
         })}
