@@ -1,7 +1,10 @@
+import logging
+
 from fastapi import APIRouter, HTTPException
 
 from core.supabase_db import save_recommendation_log, get_patient_by_id, recommendation_log_exists
 
+logger = logging.getLogger("uvicorn.error")
 router = APIRouter()
 
 
@@ -50,7 +53,15 @@ def save_session(payload: dict) -> dict:
                 duration_seconds = int(result.get("duration_seconds") or 0)
                 recommendation_id = result.get("recommendation_id")
                 exercise_name = result.get("exercise_name") or ""
-                session_index = int(result.get("session_index") or 0)
+                # Safely parse session_index — default to None when missing or
+                # invalid so we don't accidentally collide with index 0 during dedupe.
+                try:
+                    _raw_idx = result.get("session_index")
+                    session_index = int(_raw_idx) if _raw_idx is not None else None
+                    if session_index is not None and session_index < 0:
+                        session_index = None
+                except (ValueError, TypeError):
+                    session_index = None
                 ended_via = result.get("ended_via") or "finish"
 
                 if not recommendation_id:
@@ -78,8 +89,9 @@ def save_session(payload: dict) -> dict:
                 }
 
                 # Idempotency: skip duplicates so a mobile retry doesn't
-                # double-write trajectory history.
-                if recommendation_log_exists(patient_id, session_id, session_index):
+                # double-write trajectory history. Only dedupe when session_index
+                # is a valid non-negative integer — skip if it could not be parsed.
+                if session_index is not None and recommendation_log_exists(patient_id, session_id, session_index):
                     stored_rows.append({
                         "recommendation_id": recommendation_id,
                         "score": avg_form_score,
@@ -93,7 +105,8 @@ def save_session(payload: dict) -> dict:
                 else:
                     failed_rows.append({"recommendation_id": recommendation_id, "db_result": db_result})
             except Exception as exc:
-                failed_rows.append({"result": result, "error": str(exc)})
+                logger.exception("Failed to process session result %s: %s", result.get("recommendation_id"), exc)
+                failed_rows.append({"result": result, "error": "Failed to save exercise result"})
 
         return {
             "status": "ok" if not failed_rows else "partial",
@@ -106,4 +119,5 @@ def save_session(payload: dict) -> dict:
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to save session: {str(exc)}") from exc
+        logger.exception("Unexpected error while saving session: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error while saving session") from exc

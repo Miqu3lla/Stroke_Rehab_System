@@ -116,4 +116,5 @@ def log_exercise_event(payload: dict) -> dict:
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to log exercise event: {str(exc)}") from exc
+        logger.exception("Unexpected error while logging exercise event: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error while logging exercise event") from exc

@@ -79,8 +79,14 @@ async def predict_form_from_video(
             prediction = classify_form_sequence(exercise_type, sequence_data["sequence"])
         else:
             prediction = None
-    except Exception as exc:
+    except (ValueError, FileNotFoundError) as exc:
+        # Known client/validation errors: bad video format, unreadable file, etc.
         raise HTTPException(status_code=400, detail=f"Video processing failed: {exc}") from exc
+    except Exception as exc:
+        # Unexpected server-side failure — log full traceback internally and
+        # return a generic 500 so the client isn't misled by a 400.
+        logger.exception("Unexpected error during video form prediction: %s", exc)
+        raise HTTPException(status_code=500, detail="Video processing failed due to an internal server error.") from exc
     finally:
         if temp_path.exists():
             temp_path.unlink(missing_ok=True)
