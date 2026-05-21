@@ -65,10 +65,27 @@ const usePatientStore = create((set, get) => ({
       if (authError || !user) {
         throw new Error('User not authenticated');
       }
-      const response = await instance.get(`/history/${user.id}`);
-      set({ history: response.data.history || [] });
+      
+      const { data, error } = await supabase
+        .from('recommendation_logs')
+        .select('id, latest_form_score, recommendation, created_at')
+        .eq('patient_id', user.id)
+        .gt('latest_form_score', 0)
+        .order('created_at', { ascending: false })
+        .limit(3);
+
+      if (error) throw error;
+
+      const history = data.map(row => ({
+        id: row.id,
+        latest_form_score: row.latest_form_score,
+        exercise_name: row.recommendation?.exercise_name || 'Exercise',
+        created_at: row.created_at,
+      }));
+
+      set({ history });
     } catch (error) {
-      console.error('Failed to fetch history:', error?.response?.data || error.message);
+      console.error('Failed to fetch history from supabase:', error.message);
       set({ historyError: error.message });
     } finally {
       set({ historyLoading: false });
