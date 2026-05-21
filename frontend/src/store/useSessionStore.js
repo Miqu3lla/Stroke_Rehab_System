@@ -16,6 +16,7 @@ const emptySession = () => ({
   isResting: false,
   startedAt: null,
   results: [],
+  isEndingSession: false,
 });
 
 const useSessionStore = create((set, get) => ({
@@ -112,34 +113,40 @@ const useSessionStore = create((set, get) => ({
   // navigate to the summary screen. The session is preserved in store
   // so SessionSummary can read it; the next beginSession resets it.
   endSession: async (navigation) => {
-    const { session } = get();
-    if (!session.sessionId) return;
+    const { session, isEndingSession } = get();
+    if (!session.sessionId || isEndingSession) return;
 
-    const endedAt = new Date().toISOString();
-    let saveResult = { ok: false };
+    set({ isEndingSession: true });
+
     try {
-      const { data: { user }, error: authError } = await supabase.auth.getUser();
-      if (authError || !user) {
-        throw new Error('User not authenticated');
+      const endedAt = new Date().toISOString();
+      let saveResult = { ok: false };
+      try {
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError || !user) {
+          throw new Error('User not authenticated');
+        }
+        const response = await instance.post('/sessions', {
+          patient_id: user.id,
+          session_id: session.sessionId,
+          started_at: session.startedAt,
+          ended_at: endedAt,
+          results: session.results,
+        });
+        saveResult = { ok: true, data: response.data };
+      } catch (error) {
+        const detail = error?.response?.data || error.message;
+        console.error('Failed to save session:', detail);
+        saveResult = { ok: false, detail };
       }
-      const response = await instance.post('/sessions', {
-        patient_id: user.id,
-        session_id: session.sessionId,
-        started_at: session.startedAt,
-        ended_at: endedAt,
-        results: session.results,
-      });
-      saveResult = { ok: true, data: response.data };
-    } catch (error) {
-      const detail = error?.response?.data || error.message;
-      console.error('Failed to save session:', detail);
-      saveResult = { ok: false, detail };
-    }
 
-    // Keep session in store so the Summary screen can render results.
-    // It will be cleared on the next beginSession() or by clearSession().
-    if (navigation) {
-      navigation.replace('SessionSummary', { saveResult });
+      // Keep session in store so the Summary screen can render results.
+      // It will be cleared on the next beginSession() or by clearSession().
+      if (navigation) {
+        navigation.replace('SessionSummary', { saveResult });
+      }
+    } finally {
+      set({ isEndingSession: false });
     }
   },
 

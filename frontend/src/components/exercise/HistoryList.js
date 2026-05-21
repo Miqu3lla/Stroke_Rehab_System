@@ -46,7 +46,9 @@ const HistoryList = () => {
           const score = Math.round(Number(item.latest_form_score) || 0);
           const tone = score >= 85 ? '#4CAF50' : score >= 60 ? '#FFC107' : '#FF5252';
           
-          const prevItem = history.slice(index + 1).find(h => h.exercise_id === item.exercise_id);
+          const prevItem = item.exercise_id
+            ? history.slice(index + 1).find(h => h.exercise_id === item.exercise_id)
+            : null;
           let diffElement = null;
           if (prevItem) {
             const prevScoreRounded = Math.round(Number(prevItem.latest_form_score) || 0);

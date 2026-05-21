@@ -108,7 +108,7 @@ const SessionSummaryScreen = ({ route, navigation }) => {
 
       <View className="gap-3 mb-6">
         {slots.map((slot) => (
-          <ResultRow key={slot.exercise.id} slot={slot} previousScore={previousScores[slot.exercise.id]} />
+          <ResultRow key={slot.index} slot={slot} previousScore={previousScores[slot.exercise.id]} />
         ))}
       </View>
 
