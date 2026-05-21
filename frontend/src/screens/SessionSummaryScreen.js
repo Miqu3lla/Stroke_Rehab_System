@@ -2,12 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
 import { CheckCircle2, XCircle, AlertTriangle } from 'lucide-react-native';
 import usePatientStore from '../store/usePatientStore';
+import useSessionStore from '../store/useSessionStore';
 import { supabase } from '../services/supabase';
 
 // This screen shows the user's score after they finish their workout.
 // It displays which exercises were completed and which ones were skipped.
 const SessionSummaryScreen = ({ route, navigation }) => {
-  const { session, clearSession, fetchRecommendation } = usePatientStore();
+  const { session, clearSession } = useSessionStore();
+  const { fetchRecommendation } = usePatientStore();
   const saveResult = route?.params?.saveResult;
 
   // Match each exercise in the playlist with its final score.

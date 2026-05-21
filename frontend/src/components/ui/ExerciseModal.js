@@ -2,9 +2,11 @@ import React from 'react';
 import { View, Text, TouchableOpacity, Modal, Pressable } from 'react-native';
 import { Clock, X, Play } from 'lucide-react-native';
 import usePatientStore from '../../store/usePatientStore';
+import useSessionStore from '../../store/useSessionStore';
 
 const ExerciseModal = ({ visible, exercise, onClose, navigation }) => {
-  const { recommendedExercises, beginSession } = usePatientStore();
+  const { recommendedExercises } = usePatientStore();
+  const { beginSession } = useSessionStore();
 
   if (!exercise) return null;
 

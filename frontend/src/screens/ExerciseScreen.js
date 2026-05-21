@@ -4,14 +4,14 @@ import { ChevronLeft } from 'lucide-react-native';
 import CameraComponent from '../components/exercise/CameraComponent';
 import RestState from '../components/exercise/RestState';
 import useAuthStore from '../store/useAuthStore';
-import usePatientStore from '../store/usePatientStore';
+import useSessionStore from '../store/useSessionStore';
 
 // This screen manages the workout session, switching between two views:
 // 1. Active: Doing the exercise with the camera on.
 // 2. Rest: Seeing your score and resting before the next exercise.
 const ExerciseScreen = ({ navigation }) => {
   const { getAuthSession } = useAuthStore();
-  const { session, saveCurrentScore, moveToNext, endSession } = usePatientStore();
+  const { session, saveCurrentScore, moveToNext, endSession } = useSessionStore();
 
   const playlist = session.playlist || [];
   const currentIndex = session.currentIndex || 0;

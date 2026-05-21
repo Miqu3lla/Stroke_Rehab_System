@@ -41,6 +41,20 @@ const HistoryList = () => {
           const score = Math.round(Number(item.latest_form_score) || 0);
           const tone = score >= 85 ? '#4CAF50' : score >= 60 ? '#FFC107' : '#FF5252';
           
+          const prevItem = history.slice(index + 1).find(h => h.exercise_id === item.exercise_id);
+          let diffElement = null;
+          if (prevItem) {
+            const prevScoreRounded = Math.round(Number(prevItem.latest_form_score) || 0);
+            const diff = score - prevScoreRounded;
+            if (diff > 0) {
+              diffElement = <Text className="text-[#4CAF50] text-xs font-bold mt-0.5">+{diff}% better on average</Text>;
+            } else if (diff < 0) {
+              diffElement = <Text className="text-[#FF5252] text-xs font-bold mt-0.5">{Math.abs(diff)}% less on average</Text>;
+            } else {
+              diffElement = <Text className="text-[#8a8d9b] text-xs font-bold mt-0.5">Same as before</Text>;
+            }
+          }
+          
           return (
             <View
               key={item.id || index}
@@ -57,6 +71,7 @@ const HistoryList = () => {
                       {formatDate(item.created_at)}
                     </Text>
                   </View>
+                  {diffElement}
                 </View>
               </View>
               <Text className="text-2xl font-black" style={{ color: tone }}>
