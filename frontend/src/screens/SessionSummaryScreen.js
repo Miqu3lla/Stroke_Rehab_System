@@ -1,12 +1,15 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
 import { CheckCircle2, XCircle, AlertTriangle } from 'lucide-react-native';
 import usePatientStore from '../store/usePatientStore';
+import useSessionStore from '../store/useSessionStore';
+import { supabase } from '../services/supabase';
 
 // This screen shows the user's score after they finish their workout.
 // It displays which exercises were completed and which ones were skipped.
 const SessionSummaryScreen = ({ route, navigation }) => {
-  const { session, clearSession, fetchRecommendation } = usePatientStore();
+  const { session, clearSession } = useSessionStore();
+  const { fetchRecommendation } = usePatientStore();
   const saveResult = route?.params?.saveResult;
 
   // Match each exercise in the playlist with its final score.
@@ -36,12 +39,54 @@ const SessionSummaryScreen = ({ route, navigation }) => {
     navigation.replace('Dashboard');
   };
 
+  const [previousScores, setPreviousScores] = useState({});
+
   // If there's no active workout session, send the user back to the dashboard
   useEffect(() => {
     if (!session.sessionId && (!session.playlist || session.playlist.length === 0)) {
       navigation.replace('Dashboard');
     }
   }, []);
+
+  // Fetch previous scores for comparison
+  useEffect(() => {
+    const fetchPreviousScores = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+
+        const { data, error } = await supabase
+          .from('recommendation_logs')
+          .select('latest_form_score, recommendation, created_at')
+          .eq('patient_id', user.id)
+          .gt('latest_form_score', 0)
+          .order('created_at', { ascending: false });
+
+        if (error) throw error;
+
+        const prev = {};
+        for (const row of data) {
+          const rec = row.recommendation;
+          if (!rec) continue;
+          
+          // Skip the session we literally just completed
+          if (rec.session_id === session.sessionId) continue;
+          
+          const exId = rec.recommendation_id;
+          if (exId && prev[exId] === undefined) {
+             prev[exId] = row.latest_form_score;
+          }
+        }
+        setPreviousScores(prev);
+      } catch (err) {
+        console.error("Failed to fetch previous scores:", err);
+      }
+    };
+
+    if (session.sessionId) {
+      fetchPreviousScores();
+    }
+  }, [session.sessionId]);
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: '#faf8ff' }} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
@@ -61,10 +106,9 @@ const SessionSummaryScreen = ({ route, navigation }) => {
         </View>
       </View>
 
-      {/* Per-exercise results list */}
       <View className="gap-3 mb-6">
         {slots.map((slot) => (
-          <ResultRow key={slot.exercise.id} slot={slot} />
+          <ResultRow key={slot.index} slot={slot} previousScore={previousScores[slot.exercise.id]} />
         ))}
       </View>
 
@@ -88,7 +132,7 @@ const SessionSummaryScreen = ({ route, navigation }) => {
   );
 };
 
-const ResultRow = ({ slot }) => {
+const ResultRow = ({ slot, previousScore }) => {
   const { exercise, result, index } = slot;
 
   if (!result) {
@@ -108,6 +152,19 @@ const ResultRow = ({ slot }) => {
   const score = Math.round(Number(result.avg_form_score) || 0);
   const tone = score >= 85 ? '#4CAF50' : score >= 60 ? '#FFC107' : '#FF5252';
   const isEarly = result.ended_via === 'end_early';
+  
+  let diffElement = null;
+  if (previousScore !== undefined) {
+    const prevScoreRounded = Math.round(previousScore);
+    const diff = score - prevScoreRounded;
+    if (diff > 0) {
+      diffElement = <Text className="text-[#4CAF50] text-xs font-bold mt-0.5">+{diff}% better on average</Text>;
+    } else if (diff < 0) {
+      diffElement = <Text className="text-[#FF5252] text-xs font-bold mt-0.5">{Math.abs(diff)}% less on average</Text>;
+    } else {
+      diffElement = <Text className="text-[#8a8d9b] text-xs font-bold mt-0.5">Same as before</Text>;
+    }
+  }
 
   return (
     <View className="flex-row items-center bg-white border-2 rounded-xl p-4" style={{ borderColor: tone }}>
@@ -118,7 +175,7 @@ const ResultRow = ({ slot }) => {
         </Text>
         {isEarly ? (
           <Text className="text-[#8a8d9b] text-xs font-medium mt-0.5">Ended early</Text>
-        ) : null}
+        ) : diffElement}
       </View>
       <Text className="text-[#191b23] text-2xl font-black" style={{ color: tone }}>
         {score}%

@@ -8,6 +8,7 @@ import {
 import { ChevronRight, Clock } from 'lucide-react-native';
 import usePatientStore from '../../store/usePatientStore';
 import ExerciseModal from '../ui/ExerciseModal';
+import Skeleton from '../ui/Skeleton';
 
 const RecommendationCard = ({ navigation }) => {
   const {
@@ -22,8 +23,12 @@ const RecommendationCard = ({ navigation }) => {
   if (recommendationLoading) {
     return (
       <View className="my-2">
-        <ActivityIndicator size="small" color="#0c56d0" />
-        <Text className="mt-3 text-sm font-medium text-[#434654] text-center">Loading your exercise options...</Text>
+        <Text className="text-lg font-bold text-[#191b23] ml-1 mb-3">Recommended exercises</Text>
+        <View className="flex-col gap-3">
+          <Skeleton height={60} borderRadius={12} className="w-full" />
+          <Skeleton height={60} borderRadius={12} className="w-full" />
+          <Skeleton height={60} borderRadius={12} className="w-full" />
+        </View>
       </View>
     );
   }
