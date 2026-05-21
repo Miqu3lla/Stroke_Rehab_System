@@ -3,18 +3,15 @@ import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
 import { CheckCircle2, XCircle, AlertTriangle } from 'lucide-react-native';
 import usePatientStore from '../store/usePatientStore';
 
-// SessionSummaryScreen renders the per-exercise results after a workout
-// ends. The session lives in the store until the next beginSession()
-// (or clearSession()) so we can read both completed and skipped slots.
+// This screen shows the user's score after they finish their workout.
+// It displays which exercises were completed and which ones were skipped.
 const SessionSummaryScreen = ({ route, navigation }) => {
   const { session, clearSession, fetchRecommendation } = usePatientStore();
   const saveResult = route?.params?.saveResult;
 
-  // Build a result-per-playlist-slot view so the UI can show "Skipped"
-  // for exercises the patient never reached. Key the map on
-  // session_index (the slot position), not recommendation_id, because
-  // the playlist can repeat the same exercise across slots — keying on
-  // exercise id would attach the wrong score to the wrong slot.
+  // Match each exercise in the playlist with its final score.
+  // We use the position in the list (index) to make sure we don't mix up
+  // scores if the same exercise appears twice in the workout.
   const resultsByIndex = new Map(
     (session.results || []).map((r) => [r.session_index, r]),
   );
@@ -33,13 +30,13 @@ const SessionSummaryScreen = ({ route, navigation }) => {
 
   const handleDone = () => {
     clearSession();
-    // Refresh recommendations on return so the dashboard reflects any
-    // adaptive changes the recommender may produce from this session.
+    // Fetch new exercise recommendations based on how well the user just did,
+    // so the dashboard is up-to-date when they go back.
     fetchRecommendation();
     navigation.replace('Dashboard');
   };
 
-  // Safety: if user landed here without a session in store, bounce back.
+  // If there's no active workout session, send the user back to the dashboard
   useEffect(() => {
     if (!session.sessionId && (!session.playlist || session.playlist.length === 0)) {
       navigation.replace('Dashboard');
@@ -71,9 +68,7 @@ const SessionSummaryScreen = ({ route, navigation }) => {
         ))}
       </View>
 
-      {/* Save status (only show if the batch POST failed). The banner
-          tells the patient their scores didn't upload — there is no
-          background retry today, so we don't promise one. */}
+      {/* Warning message shown if the scores couldn't be saved to the server */}
       {saveResult && !saveResult.ok ? (
         <View className="flex-row items-center bg-[#fff4e5] border border-[#FFC107] rounded-xl p-4 mb-6">
           <AlertTriangle size={20} color="#b86e00" />

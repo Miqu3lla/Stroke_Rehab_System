@@ -2,7 +2,7 @@ import React, { useEffect } from "react";
 import { View, ScrollView } from "react-native";
 import usePatientStore from "../store/usePatientStore";
 import useAuthStore from "../store/useAuthStore";
-import RecommendationCard from "../components/RecommendationCard";
+import RecommendationCard from "../components/exercise/RecommendationCard";
 
 const HomeScreen = ({ navigation }) => {
   const { fetchRecommendation } = usePatientStore();
