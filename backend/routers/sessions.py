@@ -1,0 +1,109 @@
+from fastapi import APIRouter, HTTPException
+
+from core.supabase_db import save_recommendation_log, get_patient_by_id, recommendation_log_exists
+
+router = APIRouter()
+
+
+@router.post("/sessions")
+def save_session(payload: dict) -> dict:
+    """Batch-save a completed workout session.
+
+    The frontend buffers per-exercise results in Zustand during a session
+    and flushes them here when the patient hits End Workout (or finishes
+    the last exercise). Each result becomes one row in recommendation_logs
+    with the session_id stored inside the JSONB so all rows in a session
+    can be queried together.
+    """
+    try:
+        patient_id = payload.get("patient_id")
+        session_id = payload.get("session_id")
+        started_at = payload.get("started_at")
+        ended_at = payload.get("ended_at")
+        results = payload.get("results") or []
+
+        if not patient_id or not session_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Missing required fields: patient_id, session_id",
+            )
+
+        if not isinstance(results, list):
+            raise HTTPException(status_code=400, detail="results must be a list")
+
+        patient = get_patient_by_id(patient_id)
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient not found")
+
+        patient_snapshot = {
+            "stroke_type": patient.get("stroke_type") or "ischemic",
+            "months_in_recovery": int(patient.get("months_in_recovery") or 0),
+            "affected_area": (patient.get("affected_area") or "both").strip().lower(),
+            "affected_side": (patient.get("affected_side") or "both").strip().lower(),
+        }
+
+        stored_rows = []
+        failed_rows = []
+        for result in results:
+            try:
+                avg_form_score = float(result.get("avg_form_score") or 0.0)
+                duration_seconds = int(result.get("duration_seconds") or 0)
+                recommendation_id = result.get("recommendation_id")
+                exercise_name = result.get("exercise_name") or ""
+                session_index = int(result.get("session_index") or 0)
+                ended_via = result.get("ended_via") or "finish"
+
+                if not recommendation_id:
+                    failed_rows.append({"result": result, "error": "missing recommendation_id"})
+                    continue
+
+                recommendation_payload = {
+                    "patient_id": patient_id,
+                    "session_id": session_id,
+                    "recommendation_id": recommendation_id,
+                    "exercise_name": exercise_name,
+                    "session_index": session_index,
+                    "ended_via": ended_via,
+                    "avg_form_score": avg_form_score,
+                    "duration_seconds": duration_seconds,
+                    "started_at": started_at,
+                    "ended_at": ended_at,
+                    "patient_snapshot": patient_snapshot,
+                }
+
+                log_entry = {
+                    "patient_id": patient_id,
+                    "latest_form_score": avg_form_score,
+                    "recommendation": recommendation_payload,
+                }
+
+                # Idempotency: skip duplicates so a mobile retry doesn't
+                # double-write trajectory history.
+                if recommendation_log_exists(patient_id, session_id, session_index):
+                    stored_rows.append({
+                        "recommendation_id": recommendation_id,
+                        "score": avg_form_score,
+                        "deduped": True,
+                    })
+                    continue
+
+                db_result = save_recommendation_log(log_entry)
+                if db_result.get("stored"):
+                    stored_rows.append({"recommendation_id": recommendation_id, "score": avg_form_score})
+                else:
+                    failed_rows.append({"recommendation_id": recommendation_id, "db_result": db_result})
+            except Exception as exc:
+                failed_rows.append({"result": result, "error": str(exc)})
+
+        return {
+            "status": "ok" if not failed_rows else "partial",
+            "session_id": session_id,
+            "stored_count": len(stored_rows),
+            "failed_count": len(failed_rows),
+            "stored": stored_rows,
+            "failed": failed_rows,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to save session: {str(exc)}") from exc
