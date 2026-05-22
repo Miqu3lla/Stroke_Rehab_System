@@ -25,7 +25,10 @@ def color_and_score(angle: Optional[float], target: float, green: float, yellow:
         return {"color": "#4CAF50", "score": max(90, round(100 - (diff / green) * 5))}
     if diff <= yellow:
         return {"color": "#FFC107", "score": max(50, round(70 - ((diff - green) / (yellow - green)) * 20))}
-    return {"color": "#F44336", "score": max(20, round(50 - (diff - yellow) * 0.5))}
+    # Red zone: no floor and a steeper penalty so an idle pose (arm fully
+    # down, leg fully straight = diff ≥ 60-90) scores near 0 instead of
+    # staying at the old 20-point floor.
+    return {"color": "#F44336", "score": max(0, round(50 - (diff - yellow) * 1.0))}
 
 
 def joint_triple(keypoints: List[Dict[str, float]], i1: int, i2: int, i3: int, min_conf: float = 0.3):
@@ -39,32 +42,55 @@ def joint_triple(keypoints: List[Dict[str, float]], i1: int, i2: int, i3: int, m
 
 def arm_hint(angle: Optional[float]) -> str:
     if angle is None:
-        return "Show your full arm — elbow must be visible"
+        return "Step back — your shoulder, elbow, and hand need to be visible"
     diff = angle - 90
     abs_diff = abs(diff)
     if abs_diff <= 10:
-        return "Great form! Hold it"
+        return "Great form! Hold this position"
     if abs_diff <= 25:
-        return "Curl a little more" if diff > 0 else "Open your arm slightly"
-    return "Bend your elbow higher" if diff > 0 else "Lower your arm a bit"
+        return "Almost there — bend your elbow a little more" if diff > 0 \
+            else "Almost there — straighten your arm a little"
+    return "Lift your hand up toward your shoulder" if diff > 0 \
+        else "Lower your hand away from your shoulder"
 
 
 def leg_hint(angle: Optional[float]) -> str:
     if angle is None:
-        return "Show your full leg — knee must be visible"
+        return "Step back — your hip, knee, and ankle need to be visible"
     diff = angle - 90
     abs_diff = abs(diff)
     if abs_diff <= 15:
-        return "Great form! Hold it"
+        return "Great form! Hold this position"
     if abs_diff <= 30:
-        return "Bend your knee a bit more" if diff > 0 else "Straighten slightly"
-    return "Bend your knee deeper" if diff > 0 else "Straighten your leg"
+        return "Almost there — bend your knee a little more" if diff > 0 \
+            else "Almost there — straighten your leg a little"
+    return "Bend your knee further — try sitting lower" if diff > 0 \
+        else "Stand tall and straighten your leg fully"
 
 
 def overall_visibility_score(keypoints: List[Dict[str, float]]) -> int:
     if not keypoints:
         return 0
     confidences = [kp.get("score", 0) for kp in keypoints]
+    avg = sum(confidences) / len(confidences)
+    return round(max(0, min(100, avg * 100)))
+
+
+# Landmark subsets used by the body-area-aware visibility gate. Asking a
+# patient doing shoulder flexion to "show your whole body" is wrong when
+# their legs are under a chair — for arm exercises only the upper body
+# needs to be in frame, and vice versa for legs.
+_ARM_GATE_LANDMARKS = (0, 11, 12, 13, 14, 15, 16)            # nose + shoulders + elbows + wrists
+_LEG_GATE_LANDMARKS = (11, 12, 23, 24, 25, 26, 27, 28)       # shoulders (trunk anchor) + hips + knees + ankles
+
+
+def partial_visibility_score(keypoints: List[Dict[str, float]], indices) -> int:
+    """Average MediaPipe confidence over a subset of landmark indices."""
+    if not keypoints:
+        return 0
+    confidences = [keypoints[i].get("score", 0) for i in indices if i < len(keypoints)]
+    if not confidences:
+        return 0
     avg = sum(confidences) / len(confidences)
     return round(max(0, min(100, avg * 100)))
 
@@ -84,39 +110,60 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
 
     angles: Dict[str, Any] = {}
     colors: Dict[str, str] = {}
-    overall = overall_visibility_score(keypoints)
     hint: Optional[str] = None
+
+    # Visibility gate is body-area aware. Arm-only exercises pass when the
+    # upper body is in frame even if the patient is sitting and the legs
+    # are hidden; leg/cross-body exercises require the full body. Also
+    # note that visibility used to be AVERAGED into the form score, which
+    # inflated an idle-but-visible patient to ~55%. Now it's just a
+    # precondition — pass it and the score is pure form quality.
+    if is_arm and not is_leg:
+        gate_indices = _ARM_GATE_LANDMARKS
+        gate_hint = "Show your upper body — shoulders, elbows, and hands need to be in the camera"
+    elif is_leg and not is_arm:
+        gate_indices = _LEG_GATE_LANDMARKS
+        gate_hint = "Step back so your hips, knees, and feet are visible"
+    else:
+        gate_indices = tuple(range(33))
+        gate_hint = "Move back so your whole body is in the camera"
+
+    if partial_visibility_score(keypoints, gate_indices) < 50:
+        return {
+            "score": 0,
+            "angles": {},
+            "colors": {},
+            "hint": gate_hint,
+        }
+
+    overall = 0
 
     if is_arm:
         sh, el, wr = (_LEFT_SHOULDER, _LEFT_ELBOW, _LEFT_WRIST) if left_side else (_RIGHT_SHOULDER, _RIGHT_ELBOW, _RIGHT_WRIST)
         triple = joint_triple(keypoints, sh, el, wr)
-        component_scores = [overall_visibility_score(keypoints)]
         if triple:
             angle = angle_at_vertex(*triple)
             angles["bicepCurl"] = angle
             cs = color_and_score(angle, target=90, green=10, yellow=25)
             colors["bicepCurl"] = cs["color"]
-            component_scores.append(cs["score"])
+            overall = cs["score"]
         else:
             angles["bicepCurl"] = None
             colors["bicepCurl"] = "#FFC107"
-        overall = round(sum(component_scores) / len(component_scores))
         hint = arm_hint(angles.get("bicepCurl"))
 
     elif is_leg:
         hp, kn, an = (_LEFT_HIP, _LEFT_KNEE, _LEFT_ANKLE) if left_side else (_RIGHT_HIP, _RIGHT_KNEE, _RIGHT_ANKLE)
         triple = joint_triple(keypoints, hp, kn, an)
-        component_scores = [overall_visibility_score(keypoints)]
         if triple:
             angle = angle_at_vertex(*triple)
             angles["kneeFlexion"] = angle
             cs = color_and_score(angle, target=90, green=15, yellow=30)
             colors["kneeFlexion"] = cs["color"]
-            component_scores.append(cs["score"])
+            overall = cs["score"]
         else:
             angles["kneeFlexion"] = None
             colors["kneeFlexion"] = "#FFC107"
-        overall = round(sum(component_scores) / len(component_scores))
         hint = leg_hint(angles.get("kneeFlexion"))
 
     else:
@@ -124,9 +171,6 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
         leg_hp, leg_kn, leg_an = (_LEFT_HIP, _LEFT_KNEE, _LEFT_ANKLE) if left_side else (_RIGHT_HIP, _RIGHT_KNEE, _RIGHT_ANKLE)
         arm_triple = joint_triple(keypoints, arm_sh, arm_el, arm_wr)
         leg_triple = joint_triple(keypoints, leg_hp, leg_kn, leg_an)
-        # Collect all component scores first so the final average is a true mean
-        # and not order-dependent from repeated round((overall + cs) / 2) chaining.
-        component_scores = [overall_visibility_score(keypoints)]
         arm_score = None
         leg_score = None
         if arm_triple:
@@ -135,15 +179,15 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
             cs = color_and_score(arm_angle, target=90, green=10, yellow=25)
             colors["bicepCurl"] = cs["color"]
             arm_score = cs["score"]
-            component_scores.append(arm_score)
         if leg_triple:
             leg_angle = angle_at_vertex(*leg_triple)
             angles["kneeFlexion"] = leg_angle
             cs = color_and_score(leg_angle, target=90, green=15, yellow=30)
             colors["kneeFlexion"] = cs["color"]
             leg_score = cs["score"]
-            component_scores.append(leg_score)
-        overall = round(sum(component_scores) / len(component_scores))
+        # Combine arm + leg form scores only (no visibility average).
+        component_scores = [s for s in (arm_score, leg_score) if s is not None]
+        overall = round(sum(component_scores) / len(component_scores)) if component_scores else 0
         # Pick the hint from the worst-scoring component so a poor limb
         # isn't hidden behind a better one.
         if arm_score is not None and leg_score is not None:

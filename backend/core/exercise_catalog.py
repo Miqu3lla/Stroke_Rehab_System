@@ -180,16 +180,26 @@ def load_catalog() -> List[Dict[str, Any]]:
 
 
 def filter_by_area(catalog: List[Dict[str, Any]], affected_area: str) -> List[Dict[str, Any]]:
-    """Return exercises whose body_area matches the patient's affected area.
+    """Return exercises STRICTLY matching the patient's affected area.
 
-    affected_area ∈ {arms, legs, both}. A patient with affected_area='both'
-    sees exercises tagged for arms, legs, or both. A patient with
-    affected_area='arms' sees arms-only (and any 'both' rows if they exist).
+    - 'arms' → only body_area='arms' rows (no legs, no cross-body)
+    - 'legs' → only body_area='legs' rows (no arms, no cross-body)
+    - 'both' → every exercise in the catalog
     """
     area = (affected_area or "both").strip().lower()
     if area == "both":
         return list(catalog)
-    return [e for e in catalog if e["body_area"] in {area, "both"}]
+    return [e for e in catalog if e.get("body_area") == area]
+
+
+def _rank_for_action(pool: List[Dict[str, Any]], action: str) -> List[Dict[str, Any]]:
+    """Order a pool by difficulty according to the trajectory action verb."""
+    if action == "downgrade":
+        return sorted(pool, key=lambda e: e["difficulty_level"])
+    if action == "upgrade":
+        return sorted(pool, key=lambda e: -e["difficulty_level"])
+    # maintain: prefer middle difficulty first, then taper outward
+    return sorted(pool, key=lambda e: abs(e["difficulty_level"] - 2))
 
 
 def pick_exercises_for_action(
@@ -198,33 +208,70 @@ def pick_exercises_for_action(
     action: str,
     count: int = 3,
 ) -> List[Dict[str, Any]]:
-    """Select `count` exercises ranked by the trajectory action verb.
+    """Select `count` exercises for the patient's daily session.
 
-    - downgrade: prefer lower difficulty_level (easier).
-    - upgrade: prefer higher difficulty_level (harder).
-    - maintain: balanced — return mid-difficulty first.
+    Body-area rules (enforced strictly):
+      - affected_area='arms' → ONLY arm exercises, never a leg
+      - affected_area='legs' → ONLY leg exercises, never an arm
+      - affected_area='both' → INTERLEAVE arm + leg so the patient
+        always gets a guaranteed mix (slot 0 = arm, slot 1 = leg, …).
+        If one body area has no exercises in the catalog, fall back to
+        whichever pool has data.
 
-    Falls back to repeating the available exercises if the filtered pool
-    is smaller than `count` (which is common with the current 3-exercise
-    catalog — the patient sees the same exercises but with adjusted
-    duration / intensity tags).
+    Difficulty rules (within each body-area pool):
+      - downgrade → easier first (lower difficulty_level)
+      - upgrade → harder first
+      - maintain → mid-difficulty first
+
+    If the area pool has fewer unique exercises than `count`, picks are
+    repeated from the same pool — the body-area constraint is never
+    violated to fill slots.
     """
-    pool = filter_by_area(catalog, affected_area)
+    area = (affected_area or "both").strip().lower()
+
+    # ── Both affected: interleave arm/leg picks ─────────────────────────
+    if area == "both":
+        arm_pool = _rank_for_action(filter_by_area(catalog, "arms"), action)
+        leg_pool = _rank_for_action(filter_by_area(catalog, "legs"), action)
+        if not arm_pool and not leg_pool:
+            return []
+
+        picked: List[Dict[str, Any]] = []
+        # Cycle through both pools so even a 3-slot session lands as
+        # arm/leg/arm (or leg/arm/leg if leg pool is bigger).
+        cursor_arm, cursor_leg = 0, 0
+        emit_arm_first = len(arm_pool) >= len(leg_pool)
+        while len(picked) < count and (arm_pool or leg_pool):
+            if emit_arm_first and arm_pool:
+                picked.append(arm_pool[cursor_arm % len(arm_pool)])
+                cursor_arm += 1
+                if len(picked) >= count:
+                    break
+                if leg_pool:
+                    picked.append(leg_pool[cursor_leg % len(leg_pool)])
+                    cursor_leg += 1
+            elif leg_pool:
+                picked.append(leg_pool[cursor_leg % len(leg_pool)])
+                cursor_leg += 1
+                if len(picked) >= count:
+                    break
+                if arm_pool:
+                    picked.append(arm_pool[cursor_arm % len(arm_pool)])
+                    cursor_arm += 1
+            else:
+                # only one pool has data — pad from that one
+                only = arm_pool or leg_pool
+                picked.append(only[(cursor_arm + cursor_leg) % len(only)])
+                cursor_arm += 1
+        return picked[:count]
+
+    # ── Single body-area patient: STRICT filter, repeat to fill ─────────
+    pool = _rank_for_action(filter_by_area(catalog, area), action)
     if not pool:
         return []
-
-    if action == "downgrade":
-        ranked = sorted(pool, key=lambda e: e["difficulty_level"])
-    elif action == "upgrade":
-        ranked = sorted(pool, key=lambda e: -e["difficulty_level"])
-    else:
-        # maintain: prefer middle, fall back to whatever's available
-        ranked = sorted(pool, key=lambda e: abs(e["difficulty_level"] - 2))
-
-    # Pad by repeating the ranked pool when the catalog is small.
-    picked: List[Dict[str, Any]] = []
-    while len(picked) < count and ranked:
-        for ex in ranked:
+    picked = []
+    while len(picked) < count:
+        for ex in pool:
             picked.append(ex)
             if len(picked) >= count:
                 break
