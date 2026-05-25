@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { createStackNavigator } from "@react-navigation/stack";
 import HomeScreen from "../screens/HomeScreen";
+import SessionScreen from "../screens/SessionScreen";
 import ExerciseScreen from "../screens/ExerciseScreen";
 import SessionSummaryScreen from "../screens/SessionSummaryScreen";
 import OnboardingScreen from "../screens/OnboardingScreen";
@@ -40,13 +41,14 @@ const AppNavigator = () => {
       initialRouteName={user ? "Dashboard" : "Login"}
       screenOptions={{
         headerShown: false,
-        cardStyle: { backgroundColor: '#faf8ff' }, // VitalMotion design system background
+        cardStyle: { backgroundColor: '#ffffff' },
       }}
     >
       <Stack.Screen name="Login" component={LoginScreen} />
       <Stack.Screen name="Signup" component={SignupScreen} />
       <Stack.Screen name="Onboarding" component={OnboardingScreen} />
       <Stack.Screen name="Dashboard" component={HomeScreen} />
+      <Stack.Screen name="Sessions" component={SessionScreen} />
       <Stack.Screen name="Exercise" component={ExerciseScreen} />
       <Stack.Screen name="SessionSummary" component={SessionSummaryScreen} />
     </Stack.Navigator>

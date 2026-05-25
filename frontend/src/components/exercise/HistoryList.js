@@ -29,7 +29,16 @@ const HistoryList = () => {
   }
 
   if (!history || history.length === 0) {
-    return null; // Don't show the section if no history exists yet
+    return (
+      <View className="my-2 mb-8">
+        <Text className="text-lg font-bold text-[#191b23] ml-1 mb-3">Recent Activity</Text>
+        <View className="p-5">
+          <Text className="text-[14px] font-medium text-[#8a8d9b] text-center">
+            No current exercises done yet. Start now!
+          </Text>
+        </View>
+      </View>
+    );
   }
 
   const formatDate = (dateString) => {
@@ -40,7 +49,7 @@ const HistoryList = () => {
 
   return (
     <View className="my-2 mb-8">
-      <Text className="text-lg font-bold text-[#191b23] ml-1 mb-3">Past exercises</Text>
+      <Text className="text-lg font-bold text-[#191b23] ml-1 mb-3">Recent Activity</Text>
       <View className="flex-col gap-3">
         {history.slice(0, 3).map((item, index) => {
           const score = Math.round(Number(item.latest_form_score) || 0);

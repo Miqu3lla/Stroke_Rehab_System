@@ -26,11 +26,11 @@ const Navbar = ({ title, currentRoute, children }) => {
 
   // Hide the navbar entirely when not logged in, or when on the Onboarding, Login, or Signup screens
   if (!session || currentRoute === "Onboarding" || currentRoute === "Login" || currentRoute === "Signup") {
-    return <View className="flex-1 bg-[#FAFAFA]">{children}</View>;
+    return <View className="flex-1 bg-white">{children}</View>;
   }
 
   return (
-    <View className="flex-1 bg-slate-100">
+    <View className="flex-1 bg-white">
       {/* Horizontal Navbar */}
       <View 
         className="flex-row items-center bg-white px-4 shadow-sm border-b border-slate-200"

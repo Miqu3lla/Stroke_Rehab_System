@@ -9,9 +9,7 @@ import useAuthStore from "../../store/useAuthStore";
 const sidebarItems = [
   { label: "Dashboard", route: "Dashboard", icon: Home },
   { label: "Sessions", route: "Sessions", icon: Sparkles },
-  { label: "Patients", route: "Patients", icon: UserRound },
   { label: "Exercise", route: "Exercise", icon: Activity },
-  { label: "Settings", route: "Settings", icon: Settings },
 ];
 
 const Sidebar = ({ isOpen, onClose, currentRoute }) => {
