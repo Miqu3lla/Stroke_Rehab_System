@@ -242,8 +242,11 @@ def recommend_session_v2(
 
     exercises: List[Dict[str, Any]] = []
     for index, ex in enumerate(picked):
-        base_minutes = ex.get("base_duration_minutes") or 20
-        duration_minutes = max(5, int(round(base_minutes * duration_multiplier)))
+        base_minutes = ex.get("base_duration_minutes") or 2
+        # Floor at 1min so trajectory downgrades on a short base duration
+        # (e.g. 2min * 0.8 = 1.6 → 2min) aren't clamped up to a longer
+        # session than the catalog prescribes.
+        duration_minutes = max(1, int(round(base_minutes * duration_multiplier)))
 
         # Per-exercise reasoning: pull this exercise's trajectory stats
         # if it appears in the patient's history.

@@ -32,33 +32,33 @@ except ImportError:  # pragma: no cover
 
 # Difficulty + duration overlays keyed by exercise_type. The exercise_type
 # column has a UNIQUE constraint so it's the safe join key. Any catalog
-# row whose exercise_type isn't listed here gets defaults (level=2, 20min).
+# row whose exercise_type isn't listed here gets defaults (level=2, 2min).
 DIFFICULTY_OVERLAY: Dict[str, Dict[str, Any]] = {
     "shoulder_flexion": {
         "difficulty_level": 1,
-        "base_duration_minutes": 15,
+        "base_duration_minutes": 2,
         "focus": "shoulder mobility & form correction",
     },
     "arm_raise": {
         "difficulty_level": 2,
-        "base_duration_minutes": 20,
+        "base_duration_minutes": 2,
         "focus": "upper-limb strength & coordination",
     },
     "knee_extension": {
         "difficulty_level": 1,
-        "base_duration_minutes": 15,
+        "base_duration_minutes": 2,
         "focus": "lower-limb strength & quad activation",
     },
     "sit_to_stand": {
         "difficulty_level": 2,
-        "base_duration_minutes": 20,
+        "base_duration_minutes": 2,
         "focus": "lower-limb strength, balance & gait",
     },
 }
 
 DEFAULT_OVERLAY = {
     "difficulty_level": 2,
-    "base_duration_minutes": 20,
+    "base_duration_minutes": 2,
     "focus": "functional movement",
 }
 
@@ -208,28 +208,29 @@ def pick_exercises_for_action(
     action: str,
     count: int = 3,
 ) -> List[Dict[str, Any]]:
-    """Select `count` exercises for the patient's daily session.
+    """Select up to `count` exercises for the patient's daily session.
 
     Body-area rules (enforced strictly):
       - affected_area='arms' → ONLY arm exercises, never a leg
       - affected_area='legs' → ONLY leg exercises, never an arm
-      - affected_area='both' → INTERLEAVE arm + leg so the patient
-        always gets a guaranteed mix (slot 0 = arm, slot 1 = leg, …).
-        If one body area has no exercises in the catalog, fall back to
-        whichever pool has data.
+      - affected_area='both' → INTERLEAVE arm + leg (slot 0 = arm,
+        slot 1 = leg, …) so the patient gets a guaranteed mix.
+        If one pool runs out, the remaining slots are filled from the
+        other pool — still without duplication.
 
     Difficulty rules (within each body-area pool):
       - downgrade → easier first (lower difficulty_level)
       - upgrade → harder first
       - maintain → mid-difficulty first
 
-    If the area pool has fewer unique exercises than `count`, picks are
-    repeated from the same pool — the body-area constraint is never
-    violated to fill slots.
+    Duplicate rule (applies to ALL branches): an exercise is never
+    repeated within the returned list. If the available unique pool is
+    smaller than `count`, returns fewer items — the frontend renders
+    however many are available.
     """
     area = (affected_area or "both").strip().lower()
 
-    # ── Both affected: interleave arm/leg picks ─────────────────────────
+    # ── Both affected: interleave arm/leg picks, no duplicates ──────────
     if area == "both":
         arm_pool = _rank_for_action(filter_by_area(catalog, "arms"), action)
         leg_pool = _rank_for_action(filter_by_area(catalog, "legs"), action)
@@ -237,42 +238,33 @@ def pick_exercises_for_action(
             return []
 
         picked: List[Dict[str, Any]] = []
-        # Cycle through both pools so even a 3-slot session lands as
-        # arm/leg/arm (or leg/arm/leg if leg pool is bigger).
-        cursor_arm, cursor_leg = 0, 0
+        i_arm, i_leg = 0, 0
         emit_arm_first = len(arm_pool) >= len(leg_pool)
-        while len(picked) < count and (arm_pool or leg_pool):
-            if emit_arm_first and arm_pool:
-                picked.append(arm_pool[cursor_arm % len(arm_pool)])
-                cursor_arm += 1
-                if len(picked) >= count:
-                    break
-                if leg_pool:
-                    picked.append(leg_pool[cursor_leg % len(leg_pool)])
-                    cursor_leg += 1
-            elif leg_pool:
-                picked.append(leg_pool[cursor_leg % len(leg_pool)])
-                cursor_leg += 1
-                if len(picked) >= count:
-                    break
-                if arm_pool:
-                    picked.append(arm_pool[cursor_arm % len(arm_pool)])
-                    cursor_arm += 1
+        # Walk both pools without wrapping — each exercise is taken at
+        # most once. When one pool is exhausted, drain the other.
+        while len(picked) < count and (i_arm < len(arm_pool) or i_leg < len(leg_pool)):
+            if emit_arm_first:
+                if i_arm < len(arm_pool):
+                    picked.append(arm_pool[i_arm])
+                    i_arm += 1
+                    if len(picked) >= count:
+                        break
+                if i_leg < len(leg_pool):
+                    picked.append(leg_pool[i_leg])
+                    i_leg += 1
             else:
-                # only one pool has data — pad from that one
-                only = arm_pool or leg_pool
-                picked.append(only[(cursor_arm + cursor_leg) % len(only)])
-                cursor_arm += 1
+                if i_leg < len(leg_pool):
+                    picked.append(leg_pool[i_leg])
+                    i_leg += 1
+                    if len(picked) >= count:
+                        break
+                if i_arm < len(arm_pool):
+                    picked.append(arm_pool[i_arm])
+                    i_arm += 1
         return picked[:count]
 
-    # ── Single body-area patient: STRICT filter, repeat to fill ─────────
-    pool = _rank_for_action(filter_by_area(catalog, area), action)
-    if not pool:
-        return []
-    picked = []
-    while len(picked) < count:
-        for ex in pool:
-            picked.append(ex)
-            if len(picked) >= count:
-                break
-    return picked[:count]
+    # ── Single body-area patient: STRICT filter, unique only ────────────
+    # Only return unique exercises — no duplicates even if catalog is small.
+    # The frontend will show however many are available (up to count).
+    ranked = _rank_for_action(filter_by_area(catalog, area), action)
+    return ranked[:count]
