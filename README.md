@@ -31,30 +31,71 @@ Stroke_Rehab_System/
 ├── backend/
 │   ├── Dockerfile
 │   ├── requirements.txt
-│   ├── main_api.py
+│   ├── main_api.py                 # thin FastAPI entry, mounts routers
+│   ├── cloudflared/
+│   │   └── cloudflared.exe
 │   ├── models/
 │   │   ├── lstm_weights.pth
 │   │   └── rf_recommender.pkl
-│   ├── core/
-│   │   ├── mediapipe_vision.py
-│   │   ├── neural_network.py
-│   │   ├── recommender.py
-│   │   └── supabase_db.py
+│   ├── core/                       # domain logic (pure functions, no FastAPI)
+│   │   ├── exercise_catalog.py     # catalog + difficulty overlays + body-area filter
+│   │   ├── mediapipe_vision.py     # MediaPipe pose extraction
+│   │   ├── neural_network.py       # LSTM form classifier
+│   │   ├── recommender.py          # trajectory-adapted session picker
+│   │   ├── supabase_db.py          # Supabase / Postgres access (docker -> psycopg2 -> REST)
+│   │   └── trajectory.py           # Patient X loop: progressing / plateauing / deteriorating
+│   ├── routers/                    # FastAPI route handlers (thin, validation only)
+│   │   ├── patients.py             # POST /patients
+│   │   ├── pose.py                 # POST /pose/estimate
+│   │   ├── predictions.py          # POST /predict/form, /predict/form-from-video
+│   │   ├── recommendations.py      # GET  /recommendation/{patient_id}
+│   │   └── sessions.py             # POST /sessions
+│   ├── schemas/                    # Pydantic request/response models
+│   │   ├── patient.py
+│   │   ├── pose.py
+│   │   └── prediction.py
+│   ├── services/                   # cross-cutting helpers used by routers
+│   │   └── pose_service.py         # angle + form-score + patient-friendly hints
 │   └── scripts/
 │       ├── dataset_splitter.py
 │       └── train_model.py
 └── frontend/
     ├── Dockerfile
-    ├── src/
-    │   ├── components/
-    │   ├── hooks/
-    │   ├── navigation/
-    │   ├── screens/
-    │   ├── services/
-    │   └── store/
     ├── App.js
+    ├── index.js
     ├── app.json
-    └── package.json
+    ├── package.json
+    ├── babel.config.js
+    ├── metro.config.js
+    ├── tailwind.config.js
+    ├── global.css
+    └── src/
+        ├── components/
+        │   ├── Auth/               # LoginCard, SignupCard
+        │   ├── exercise/           # CameraComponent, SkeletonOverlay, BeforeYouStart,
+        │   │                       # RestState, RecommendationCard, HistoryList
+        │   ├── onboarding/         # OnboardingNav, QuestionCard
+        │   └── ui/                 # ExerciseModal, Skeleton, navbar, sidebar
+        ├── constants/
+        │   └── exerciseTypes.js    # LSTM-supported set, display names
+        ├── hooks/
+        │   ├── useCamera.js        # frame capture + keypoint buffering
+        │   ├── useOnboarding.js
+        │   └── usePoseDetection.js # POST /pose/estimate + LSTM classify on finish
+        ├── lib/
+        │   └── api.js              # axios client for the backend
+        ├── navigation/
+        │   └── index.js            # React Navigation stack (protected routes)
+        ├── screens/                # Login, Signup, Onboarding, Home,
+        │                           # Exercise, SessionSummary
+        ├── services/
+        │   └── supabase.js
+        ├── store/                  # Zustand stores
+        │   ├── useAuthStore.js
+        │   ├── usePatientStore.js  # recommendations + history
+        │   └── useSessionStore.js  # active session state machine
+        └── utils/
+            └── sequenceFormatter.js
 ```
 
 ## Prerequisites
@@ -139,12 +180,13 @@ While Expo is running:
 
 ## API Endpoints
 
-- `GET /health` — Service health check.
-- `POST /pose/estimate` — Run MediaPipe on a base64-encoded frame and return 33 landmarks.
+- `GET  /health` — Service health check.
+- `POST /patients` — Save patient onboarding profile.
+- `POST /pose/estimate` — Run MediaPipe on a base64-encoded frame and return 33 landmarks + form score.
 - `POST /predict/form` — Classify a pre-extracted pose sequence (LSTM).
 - `POST /predict/form-from-video` — Upload a video, extract poses, classify form.
-- `POST /recommendation` — Get an adaptive exercise plan.
-- `POST /patients` — Save patient onboarding profile.
+- `GET  /recommendation/{patient_id}` — Trajectory-adapted exercise plan (Patient X loop).
+- `POST /sessions` — Batch-persist a finished session's per-exercise results.
 
 Public versions live under `https://api.necookie.dev/*`. Interactive docs at `https://api.necookie.dev/docs`.
 

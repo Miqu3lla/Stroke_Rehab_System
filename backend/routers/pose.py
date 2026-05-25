@@ -3,7 +3,7 @@ import base64
 from fastapi import APIRouter, HTTPException
 
 from core.mediapipe_vision import estimate_pose_from_image_bytes
-from schemas.pose import PoseEstimateRequest, _MAX_DECODED_IMAGE_BYTES
+from schemas.pose import PoseEstimateRequest, MAX_DECODED_IMAGE_BYTES
 from services.pose_service import score_pose
 
 router = APIRouter()
@@ -18,10 +18,10 @@ def estimate_pose(payload: PoseEstimateRequest) -> dict:
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid base64 image: {exc}") from exc
 
-    if len(image_bytes) > _MAX_DECODED_IMAGE_BYTES:
+    if len(image_bytes) > MAX_DECODED_IMAGE_BYTES:
         raise HTTPException(
             status_code=413,
-            detail=f"Image too large: {len(image_bytes)} bytes (max {_MAX_DECODED_IMAGE_BYTES})",
+            detail=f"Image too large: {len(image_bytes)} bytes (max {MAX_DECODED_IMAGE_BYTES})",
         )
 
     try:

@@ -146,10 +146,20 @@ const useCamera = (exercise, { onComplete } = {}) => {
             shutterSound: false,
           });
 
+          // Hint string the backend classifier uses to pick arm vs leg vs
+          // both branches. body_area is the authoritative tag from the
+          // catalog ("arms"/"legs"); exercise_type carries the body part
+          // in its name (e.g. "shoulder_flexion", "knee_extension") so a
+          // future exercise whose name doesn't contain an arm/leg keyword
+          // still classifies correctly. The recommender returns body_area,
+          // NOT affected_area — using the wrong field here was silently
+          // falling through to the "both" branch and showing leg hints
+          // during shoulder flexion.
           const exerciseHint = [
+            exercise?.exercise_type || '',
             exercise?.name || '',
+            exercise?.body_area || '',
             exercise?.focus || '',
-            exercise?.affected_area || '',
           ].join(' ').toLowerCase();
 
           const result = await estimateFromBase64(
