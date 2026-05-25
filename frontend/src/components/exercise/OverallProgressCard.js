@@ -9,30 +9,6 @@ import Skeleton from '../ui/Skeleton';
 const ScoreColor = (score) =>
   score >= 85 ? '#4CAF50' : score >= 60 ? '#FFC107' : '#FF5252';
 
-const ExerciseRow = ({ name, average, sessions }) => {
-  const color = ScoreColor(average);
-  return (
-    <View className="mb-3">
-      <View className="flex-row justify-between items-center mb-1">
-        <Text className="text-[13px] font-semibold text-[#191b23] flex-1 pr-2" numberOfLines={1}>
-          {name}
-        </Text>
-        <Text className="text-[13px] font-bold" style={{ color }}>
-          {average}%
-        </Text>
-      </View>
-      <View className="h-2 rounded-full bg-[#f0f0f5] overflow-hidden">
-        <View
-          className="h-full rounded-full"
-          style={{ width: `${average}%`, backgroundColor: color }}
-        />
-      </View>
-      <Text className="text-[11px] text-[#8a8d9b] mt-0.5">
-        {sessions} {sessions === 1 ? 'session' : 'sessions'}
-      </Text>
-    </View>
-  );
-};
 
 const TrendBadge = ({ trend }) => {
   if (trend > 0) {
@@ -61,7 +37,7 @@ const TrendBadge = ({ trend }) => {
 
 const OverallProgressCard = () => {
   const { history, historyLoading } = usePatientStore();
-  const { overallAverage, exerciseAverages, trend, hasData } = useOverallProgress(history);
+  const { overallAverage, trend, hasData } = useOverallProgress(history);
   const navigation = useNavigation();
 
   if (historyLoading) {
@@ -100,19 +76,10 @@ const OverallProgressCard = () => {
 
   return (
     <View className="my-2 mb-8">
-      <View className="flex-row items-center justify-between ml-1 mb-3">
-        <Text className="text-lg font-bold text-[#191b23]">Overall Progress</Text>
-        <TouchableOpacity
-          onPress={() => navigation.navigate('Sessions')}
-          className="flex-row items-center gap-1 bg-[#f0f0f5] px-3 py-1.5 rounded-full"
-        >
-          <Activity size={12} color="#191b23" />
-          <Text className="text-[12px] font-bold text-[#191b23]">Do it again</Text>
-        </TouchableOpacity>
-      </View>
+      <Text className="text-lg font-bold text-[#191b23] ml-1 mb-3">Overall Progress</Text>
       <View className="bg-white border border-[#e7e7f2] rounded-2xl shadow-sm p-4">
 
-        {/* Header row: big score + trend badge */}
+        {/* Average score + trend badge */}
         <View className="flex-row items-center justify-between mb-4">
           <View>
             <Text className="text-[13px] font-medium text-[#8a8d9b] mb-0.5">Average score</Text>
@@ -123,16 +90,15 @@ const OverallProgressCard = () => {
           <TrendBadge trend={trend} />
         </View>
 
-        {/* Divider */}
-        <View className="h-px bg-[#e7e7f2] mb-4" />
+        <View className="h-px bg-[#e7e7f2] mb-3" />
 
-        {/* Per-exercise breakdown */}
-        <Text className="text-[13px] font-semibold text-[#8a8d9b] mb-3 uppercase tracking-wider">
-          By exercise
-        </Text>
-        {exerciseAverages.map((ex) => (
-          <ExerciseRow key={ex.name} name={ex.name} average={ex.average} sessions={ex.sessions} />
-        ))}
+        <TouchableOpacity
+          onPress={() => navigation.navigate('Sessions')}
+          className="flex-row items-center justify-center gap-1.5 bg-[#f0f0f5] py-2.5 rounded-xl"
+        >
+          <Activity size={13} color="#191b23" />
+          <Text className="text-[13px] font-bold text-[#191b23]">Do it again</Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
