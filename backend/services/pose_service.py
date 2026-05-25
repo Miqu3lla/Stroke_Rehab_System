@@ -40,7 +40,9 @@ def joint_triple(keypoints: List[Dict[str, float]], i1: int, i2: int, i3: int, m
     return a, b, c
 
 
-def arm_hint(angle: Optional[float]) -> str:
+def arm_raise_hint(angle: Optional[float]) -> str:
+    """Hints for arm_raise — measured by ELBOW angle (shoulder-elbow-wrist).
+    Target 90° = forearm parallel to floor (bicep-curl shape)."""
     if angle is None:
         return "Step back — your shoulder, elbow, and hand need to be visible"
     diff = angle - 90
@@ -50,8 +52,29 @@ def arm_hint(angle: Optional[float]) -> str:
     if abs_diff <= 25:
         return "Almost there — bend your elbow a little more" if diff > 0 \
             else "Almost there — straighten your arm a little"
-    return "Lift your hand up toward your shoulder" if diff > 0 \
-        else "Lower your hand away from your shoulder"
+    return "Bend your elbow to bring your hand up toward your shoulder" if diff > 0 \
+        else "Lower your hand back down"
+
+
+def shoulder_flexion_hint(angle: Optional[float]) -> str:
+    """Hints for shoulder_flexion — measured by SHOULDER angle (hip-shoulder-elbow).
+    Target 90° = arm raised forward to shoulder height with elbow kept straight."""
+    if angle is None:
+        return "Step back — your hip, shoulder, and elbow need to be visible"
+    diff = angle - 90
+    abs_diff = abs(diff)
+    if abs_diff <= 15:
+        return "Great form! Hold your arm at shoulder height"
+    if abs_diff <= 30:
+        return "Almost there — lower your arm a little" if diff > 0 \
+            else "Almost there — raise your arm a little higher"
+    return "Lower your arm — keep it level with your shoulder" if diff > 0 \
+        else "Raise your arm forward and up to shoulder height"
+
+
+# Backwards-compat alias used by the cross-body ("both") branch where we
+# don't know the specific exercise — defaults to arm-raise interpretation.
+arm_hint = arm_raise_hint
 
 
 def leg_hint(angle: Optional[float]) -> str:
@@ -104,6 +127,11 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
     is_leg = any(kw in hint_lower for kw in (
         "lower-limb", "lower limb", "leg", "knee", "ankle", "gait", "squat", "walk", "balance",
     ))
+    # Distinguish shoulder_flexion from arm_raise — same body area, but the
+    # joint being measured (and the cues a stroke patient should follow)
+    # are different. Shoulder flexion = raising the whole arm at the
+    # shoulder; arm raise = bending the elbow toward the shoulder.
+    is_shoulder_flexion = "shoulder_flexion" in hint_lower or "shoulder flexion" in hint_lower
 
     side = (affected_side or "right").lower()
     left_side = side == "left"
@@ -139,18 +167,38 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
     overall = 0
 
     if is_arm:
-        sh, el, wr = (_LEFT_SHOULDER, _LEFT_ELBOW, _LEFT_WRIST) if left_side else (_RIGHT_SHOULDER, _RIGHT_ELBOW, _RIGHT_WRIST)
-        triple = joint_triple(keypoints, sh, el, wr)
-        if triple:
-            angle = angle_at_vertex(*triple)
-            angles["bicepCurl"] = angle
-            cs = color_and_score(angle, target=90, green=10, yellow=25)
-            colors["bicepCurl"] = cs["color"]
-            overall = cs["score"]
+        if is_shoulder_flexion:
+            # Shoulder joint angle: hip -> shoulder -> elbow. Target 90°
+            # = arm raised forward to shoulder height (elbow stays straight).
+            hp, sh, el = (_LEFT_HIP, _LEFT_SHOULDER, _LEFT_ELBOW) if left_side \
+                else (_RIGHT_HIP, _RIGHT_SHOULDER, _RIGHT_ELBOW)
+            triple = joint_triple(keypoints, hp, sh, el)
+            if triple:
+                angle = angle_at_vertex(*triple)
+                angles["bicepCurl"] = angle  # frontend overlay key, reused
+                cs = color_and_score(angle, target=90, green=15, yellow=30)
+                colors["bicepCurl"] = cs["color"]
+                overall = cs["score"]
+            else:
+                angles["bicepCurl"] = None
+                colors["bicepCurl"] = "#FFC107"
+            hint = shoulder_flexion_hint(angles.get("bicepCurl"))
         else:
-            angles["bicepCurl"] = None
-            colors["bicepCurl"] = "#FFC107"
-        hint = arm_hint(angles.get("bicepCurl"))
+            # Arm raise: elbow angle (shoulder -> elbow -> wrist). Target 90°
+            # = forearm parallel to the floor (bicep-curl shape).
+            sh, el, wr = (_LEFT_SHOULDER, _LEFT_ELBOW, _LEFT_WRIST) if left_side \
+                else (_RIGHT_SHOULDER, _RIGHT_ELBOW, _RIGHT_WRIST)
+            triple = joint_triple(keypoints, sh, el, wr)
+            if triple:
+                angle = angle_at_vertex(*triple)
+                angles["bicepCurl"] = angle
+                cs = color_and_score(angle, target=90, green=10, yellow=25)
+                colors["bicepCurl"] = cs["color"]
+                overall = cs["score"]
+            else:
+                angles["bicepCurl"] = None
+                colors["bicepCurl"] = "#FFC107"
+            hint = arm_raise_hint(angles.get("bicepCurl"))
 
     elif is_leg:
         hp, kn, an = (_LEFT_HIP, _LEFT_KNEE, _LEFT_ANKLE) if left_side else (_RIGHT_HIP, _RIGHT_KNEE, _RIGHT_ANKLE)

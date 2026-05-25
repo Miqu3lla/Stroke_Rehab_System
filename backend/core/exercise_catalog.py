@@ -32,33 +32,33 @@ except ImportError:  # pragma: no cover
 
 # Difficulty + duration overlays keyed by exercise_type. The exercise_type
 # column has a UNIQUE constraint so it's the safe join key. Any catalog
-# row whose exercise_type isn't listed here gets defaults (level=2, 20min).
+# row whose exercise_type isn't listed here gets defaults (level=2, 2min).
 DIFFICULTY_OVERLAY: Dict[str, Dict[str, Any]] = {
     "shoulder_flexion": {
         "difficulty_level": 1,
-        "base_duration_minutes": 15,
+        "base_duration_minutes": 2,
         "focus": "shoulder mobility & form correction",
     },
     "arm_raise": {
         "difficulty_level": 2,
-        "base_duration_minutes": 20,
+        "base_duration_minutes": 2,
         "focus": "upper-limb strength & coordination",
     },
     "knee_extension": {
         "difficulty_level": 1,
-        "base_duration_minutes": 15,
+        "base_duration_minutes": 2,
         "focus": "lower-limb strength & quad activation",
     },
     "sit_to_stand": {
         "difficulty_level": 2,
-        "base_duration_minutes": 20,
+        "base_duration_minutes": 2,
         "focus": "lower-limb strength, balance & gait",
     },
 }
 
 DEFAULT_OVERLAY = {
     "difficulty_level": 2,
-    "base_duration_minutes": 20,
+    "base_duration_minutes": 2,
     "focus": "functional movement",
 }
 
@@ -223,9 +223,10 @@ def pick_exercises_for_action(
       - upgrade → harder first
       - maintain → mid-difficulty first
 
-    If the area pool has fewer unique exercises than `count`, picks are
-    repeated from the same pool — the body-area constraint is never
-    violated to fill slots.
+    If the area pool has fewer unique exercises than `count`, returns
+    only the unique exercises available — the frontend will show however
+    many there are. The body-area constraint is never violated to fill
+    slots, and duplicates are never inserted.
     """
     area = (affected_area or "both").strip().lower()
 
@@ -265,14 +266,8 @@ def pick_exercises_for_action(
                 cursor_arm += 1
         return picked[:count]
 
-    # ── Single body-area patient: STRICT filter, repeat to fill ─────────
-    pool = _rank_for_action(filter_by_area(catalog, area), action)
-    if not pool:
-        return []
-    picked = []
-    while len(picked) < count:
-        for ex in pool:
-            picked.append(ex)
-            if len(picked) >= count:
-                break
-    return picked[:count]
+    # ── Single body-area patient: STRICT filter, unique only ────────────
+    # Only return unique exercises — no duplicates even if catalog is small.
+    # The frontend will show however many are available (up to count).
+    ranked = _rank_for_action(filter_by_area(catalog, area), action)
+    return ranked[:count]
