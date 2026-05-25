@@ -3,6 +3,7 @@ import { View, ScrollView } from "react-native";
 import usePatientStore from "../store/usePatientStore";
 import useAuthStore from "../store/useAuthStore";
 import HistoryList from "../components/exercise/HistoryList";
+import OverallProgressCard from "../components/exercise/OverallProgressCard";
 
 const HomeScreen = ({ navigation }) => {
   const { fetchHistory } = usePatientStore();
@@ -28,6 +29,7 @@ const HomeScreen = ({ navigation }) => {
     <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 20 }}>
       <View className="p-4 mt-4">
         <HistoryList />
+        <OverallProgressCard />
       </View>
     </ScrollView>
   );
