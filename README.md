@@ -22,303 +22,211 @@ Stroke patients often lose supervised feedback after clinic sessions. This proje
 ```text
 Stroke_Rehab_System/
 ├── README.md
-├── .gitignore
-├── .dockerignore
 ├── docker-compose.yaml
 ├── docs/
-│   ├── Concept_Paper.docx
-│   └── Title_Defense.pptx
 ├── datasets/
 │   ├── archive/
 │   ├── Ready_Dataset/
-│   │   ├── train/
-│   │   ├── val/
-│   │   └── test/
 │   └── processed_data/
 ├── backend/
 │   ├── Dockerfile
 │   ├── requirements.txt
-│   ├── main_api.py
+│   ├── main_api.py                 # thin FastAPI entry, mounts routers
+│   ├── cloudflared/
+│   │   └── cloudflared.exe
 │   ├── models/
 │   │   ├── lstm_weights.pth
 │   │   └── rf_recommender.pkl
-│   ├── core/
-│   │   ├── mediapipe_vision.py
-│   │   ├── neural_network.py
-│   │   └── recommender.py
+│   ├── core/                       # domain logic (pure functions, no FastAPI)
+│   │   ├── exercise_catalog.py     # catalog + difficulty overlays + body-area filter
+│   │   ├── mediapipe_vision.py     # MediaPipe pose extraction
+│   │   ├── neural_network.py       # LSTM form classifier
+│   │   ├── recommender.py          # trajectory-adapted session picker
+│   │   ├── supabase_db.py          # Supabase / Postgres access (docker -> psycopg2 -> REST)
+│   │   └── trajectory.py           # Patient X loop: progressing / plateauing / deteriorating
+│   ├── routers/                    # FastAPI route handlers (thin, validation only)
+│   │   ├── patients.py             # POST /patients
+│   │   ├── pose.py                 # POST /pose/estimate
+│   │   ├── predictions.py          # POST /predict/form, /predict/form-from-video
+│   │   ├── recommendations.py      # GET  /recommendation/{patient_id}
+│   │   └── sessions.py             # POST /sessions
+│   ├── schemas/                    # Pydantic request/response models
+│   │   ├── patient.py
+│   │   ├── pose.py
+│   │   └── prediction.py
+│   ├── services/                   # cross-cutting helpers used by routers
+│   │   └── pose_service.py         # angle + form-score + patient-friendly hints
 │   └── scripts/
 │       ├── dataset_splitter.py
 │       └── train_model.py
 └── frontend/
     ├── Dockerfile
-    ├── assets/
-    ├── src/
-    │   ├── api/
-    │   ├── components/
-    │   │   ├── common/
-    │   │   └── exercise/
-    │   ├── constants/
-    │   ├── hooks/
-    │   ├── navigation/
-    │   ├── screens/
-    │   ├── services/
-    │   ├── store/
-    │   └── utils/
     ├── App.js
-    ├── app.json
     ├── index.js
+    ├── app.json
+    ├── package.json
+    ├── babel.config.js
+    ├── metro.config.js
     ├── tailwind.config.js
-    └── package.json
+    ├── global.css
+    └── src/
+        ├── components/
+        │   ├── Auth/               # LoginCard, SignupCard
+        │   ├── exercise/           # CameraComponent, SkeletonOverlay, BeforeYouStart,
+        │   │                       # RestState, RecommendationCard, HistoryList
+        │   ├── onboarding/         # OnboardingNav, QuestionCard
+        │   └── ui/                 # ExerciseModal, Skeleton, navbar, sidebar
+        ├── constants/
+        │   └── exerciseTypes.js    # LSTM-supported set, display names
+        ├── hooks/
+        │   ├── useCamera.js        # frame capture + keypoint buffering
+        │   ├── useOnboarding.js
+        │   └── usePoseDetection.js # POST /pose/estimate + LSTM classify on finish
+        ├── lib/
+        │   └── api.js              # axios client for the backend
+        ├── navigation/
+        │   └── index.js            # React Navigation stack (protected routes)
+        ├── screens/                # Login, Signup, Onboarding, Home,
+        │                           # Exercise, SessionSummary
+        ├── services/
+        │   └── supabase.js
+        ├── store/                  # Zustand stores
+        │   ├── useAuthStore.js
+        │   ├── usePatientStore.js  # recommendations + history
+        │   └── useSessionStore.js  # active session state machine
+        └── utils/
+            └── sequenceFormatter.js
 ```
 
-## Frontend Setup (Expo)
+## Prerequisites
 
-1. Open terminal at project root.
-2. Run:
+- Python 3.10+ with `pip`
+- Node.js 18+ with `npm`
+- Android Studio with an AVD created (e.g. `Medium_Phone_API_35`)
+- `cloudflared` (bundled at `backend/cloudflared/cloudflared.exe`)
+- Cloudflare tunnel token (set as `CLOUDFLARED_TOKEN`)
 
-```bash
+## One-Time Install
+
+**Backend:**
+
+```powershell
+cd backend
+pip install -r requirements.txt
+```
+
+**Frontend:**
+
+```powershell
 cd frontend
 npm install
-npx expo start
 ```
 
-## Android Emulator Setup & Testing
+## Running the System
 
-### Prerequisites
+You need three terminals running at the same time: the API, the tunnel, and the emulator + Expo dev server.
 
-- Android Studio installed with Android SDK
-- Emulator already created (AVD: `Medium_Phone_API_35`)
-- Backend API running with Cloudflare tunnel active
-
-### Step 1: Start Backend API (Terminal 1)
+### Terminal 1 — Main API
 
 ```powershell
 cd backend
-python -m uvicorn main_api:app --reload --host 0.0.0.0 --port 8001
+python -m uvicorn main_api:app --host 0.0.0.0 --port 8001
 ```
 
-Wait for: `Application startup complete`
+Wait for `Application startup complete`. The API is now reachable at `http://localhost:8001`.
 
-### Step 2: Start Cloudflare Tunnel (Terminal 2)
+### Terminal 2 — Cloudflare Tunnel
 
 ```powershell
 cd backend
-$env:CLOUDFLARED_TOKEN = "YOUR_TOKEN_HERE"
 .\cloudflared\cloudflared.exe tunnel run --token $env:CLOUDFLARED_TOKEN
 ```
 
-Verify tunnel works:
+This exposes the local API at `https://api.necookie.dev`. Verify in another terminal:
+
 ```powershell
 curl https://api.necookie.dev/health
 ```
 
-Expected: `{"status":"ok","service":"stroke-rehab-backend"}`
+Expected response: `{"status":"ok","service":"stroke-rehab-backend"}`
 
-### Step 3: Launch Android Emulator (Terminal 3)
+### Terminal 3 — Android Emulator + Expo
+
+Boot the emulator:
 
 ```powershell
 $env:ANDROID_SDK_ROOT = "$env:LOCALAPPDATA\Android\Sdk"
 & "$env:ANDROID_SDK_ROOT\emulator\emulator.exe" -avd Medium_Phone_API_35 -netdelay none -netspeed full
 ```
 
-Wait 30-45 seconds for the emulator window to appear and boot.
-
-### Step 4: Start Expo Dev Server (Terminal 4)
+Once the emulator window finishes booting (~30–45 seconds), start Expo:
 
 ```powershell
 cd frontend
-npx expo start --android --tunnel
+npx expo start --android
 ```
 
-When prompted about installing `@expo/ngrok`, press `Y`. The app will:
-1. Bundle all modules (35-40 seconds)
-2. Automatically launch on the emulator
-3. Display a QR code
+The TheraMotion app will bundle and launch on the emulator automatically.
 
-The emulator should now show your **TheraMotion** app!
+## Expo Dev Server Shortcuts
 
+While Expo is running:
 
-Notes:
-- Replace `YOUR_CLOUDFLARED_TOKEN_HERE` with your real Cloudflare token when using tunnels.
- - From the Android emulator use `http://10.0.2.2:8001` to reach the backend running on your host.
- - For a real phone, use your PC's LAN IP (for example `http://192.168.1.42:8001`) or the cloudflared tunnel URL.
- - Ensure Windows Firewall allows inbound connections to port `8001` if using a real device over LAN.
- - From the Android emulator use `http://10.0.2.2:8001` to reach the backend running on your host.
- - For a real phone, use your PC's LAN IP (for example `http://192.168.1.42:8001`) or the cloudflared tunnel URL.
- - Ensure Windows Firewall allows inbound connections to port `8001` if using a real device over LAN.
+- `r` — Reload app
+- `a` — Relaunch on Android
+- `j` — Open debugger
+- `m` — Toggle dev menu
+- `Ctrl+C` — Stop server
 
+## API Endpoints
 
-### Testing the App
+- `GET  /health` — Service health check.
+- `POST /patients` — Save patient onboarding profile.
+- `POST /pose/estimate` — Run MediaPipe on a base64-encoded frame and return 33 landmarks + form score.
+- `POST /predict/form` — Classify a pre-extracted pose sequence (LSTM).
+- `POST /predict/form-from-video` — Upload a video, extract poses, classify form.
+- `GET  /recommendation/{patient_id}` — Trajectory-adapted exercise plan (Patient X loop).
+- `POST /sessions` — Batch-persist a finished session's per-exercise results.
 
-**Quick Tests:**
+Public versions live under `https://api.necookie.dev/*`. Interactive docs at `https://api.necookie.dev/docs`.
 
-1. **Health Check** — Check if backend is reachable:
-   ```powershell
-   curl https://api.necookie.dev/health
-   ```
-
-2. **Recommendation Endpoint** — Test exercise recommendations:
-   ```powershell
-   curl -X POST https://api.necookie.dev/recommendation `
-     -H "Content-Type: application/json" `
-     -d '{
-       "patient_id": "P001",
-       "stroke_type": "ischemic",
-       "months_in_recovery": 3,
-       "latest_form_score": 0.75,
-       "affected_area": "legs",
-       "affected_side": "left"
-     }'
-   ```
-
-3. **Interactive Testing** — Navigate through the app on the emulator and verify:
-   - Screens load without errors
-   - No API connection issues
-   - Recommendations display correctly
-
-**Expo Terminal Commands:**
-
-- **r** — Reload app (after code changes)
-- **a** — Relaunch emulator
-- **w** — Open web version
-- **j** — Open debugger
-- **m** — Toggle menu
-- **Ctrl+C** — Stop dev server
-
-### Troubleshooting
+## Troubleshooting
 
 | Issue | Solution |
 |-------|----------|
-| App shows "Text strings must be rendered within a <Text> component" | Raw text is outside `<Text>` wrapper. Press `r` to reload. |
-| Backend unreachable | Ensure tunnel is running and `https://api.necookie.dev/health` returns 200. |
-| Emulator slow or freezing | Close other apps. Check GPU acceleration is enabled in emulator settings. |
-| "Cannot connect to adb daemon" | Restart adb: `$env:ANDROID_SDK_ROOT\platform-tools\adb kill-server` |
+| `https://api.necookie.dev/health` fails | Confirm Terminal 1 (API) and Terminal 2 (tunnel) are both running. |
+| Emulator can't reach `localhost` | Use `http://10.0.2.2:8001` from inside the emulator, or hit the tunnel URL. |
+| "Cannot connect to adb daemon" | `& "$env:ANDROID_SDK_ROOT\platform-tools\adb.exe" kill-server` then retry. |
+| Image too large (HTTP 413) | Frame exceeds 7.5 MB decoded — lower camera quality or resolution. |
+| App freezes on bundle | Close other Android emulators and ensure GPU acceleration is on. |
 
-## Docker Setup
+## Docker (Optional)
 
-The project now includes Docker files for both services and a root compose file.
-
-### Build and run
+For a containerized run instead of local Python/Node:
 
 ```bash
 docker compose up --build
 ```
 
-### Services and ports
+- Backend → `http://localhost:8001`
+- Frontend (Expo) → `http://localhost:8081`
 
-1. Backend API: `http://localhost:8001`
-2. Frontend Expo: `http://localhost:8081`
+The backend image uses the CUDA 12.8 PyTorch wheel and requests `gpus: all`. Docker Desktop must have GPU support enabled.
 
-### Notes
+## Training (Optional)
 
-1. Backend host port uses `8001`.
-2. The backend container still listens internally on `8000`.
-3. The root `.dockerignore` keeps build contexts small and avoids copying local caches, node_modules, and dataset archives into image builds.
-4. Backend Docker uses the CUDA 12.8 PyTorch wheel (`torch==2.11.0+cu128`) and requests GPU access with `gpus: all`.
-5. To use the RTX 5060 Ti inside Docker, Docker Desktop must have GPU support enabled and the NVIDIA container runtime must be available on the host.
-
-## Quick Start (API + Tunnel)
-
-**Fastest way to get the backend running with public access:**
-
-1. Set tunnel token (one-time):
+To retrain the LSTM weights from the prepared dataset:
 
 ```powershell
-$env:CLOUDFLARED_TOKEN = "YOUR_TUNNEL_TOKEN_HERE"
-```
-
-2. From VS Code: **Terminal → Run Task → Run API & Tunnel**
-   
-   Done! Backend runs on `http://localhost:8001` and `https://api.necookie.dev`
-
-**Alternative: Two-terminal setup**
-
-````powershell
-# Terminal 1
-cd backend
-python -m uvicorn main_api:app --host 0.0.0.0 --port 8001
-
-# Terminal 2
-cd backend
-.\cloudflared\cloudflared.exe tunnel run --token eyJhIjoiNjY4Zjc4YzVhOTU4MWM1MDUxYmQ2MGE0OTg1ZDYxNjYiLCJzIjoiWlRKa1pHVTJaR1l0T0RBNE1DMDBNVFF3TFRreU1UVXRabUV3TUdZME16QXpZV1V6IiwidCI6ImZkM2NlNTE1LTU5MjktNDdiZC1hYTY5LTA1MjczOWY4ZmY1MiJ9
-
-**Test it:**
-```powershell
-curl http://localhost:8001/health
-curl https://api.necookie.dev/health
-````
-
----
-
-## Backend Setup (FastAPI + CV-ML)
-
-This project backend uses the current active Python interpreter.
-
-### 1. Install backend dependencies
-
-1. Open terminal at project root.
-2. Run:
-
-```bash
-cd backend
-pip install -r requirements.txt
-```
-
-### Running the Application
-
-To start the development server, run the following command inside the `frontend` directory:
-
-```bash
 cd backend/scripts
 python train_model.py --data-dir ../../datasets/processed_data --out ../models/lstm_weights.pth --epochs 10
 ```
 
-Output artifact:
-
-1. backend/models/lstm_weights.pth
-
-### 4. Run the backend API locally
-
-```bash
-cd backend
-python -m uvicorn main_api:app --reload --host 0.0.0.0 --port 8001
-```
-
-Backend health endpoint:
-
-```text
-GET http://127.0.0.1:8001/health
-```
-
-**Verify public URL:**
-
-```bash
-curl https://api.necookie.dev/health
-```
-
-Expected response: `{"status":"ok","service":"stroke-rehab-backend"}`
-
-**Public endpoints:**
-
-- Health: https://api.necookie.dev/health
-- Swagger docs: https://api.necookie.dev/docs
-- Redoc: https://api.necookie.dev/redoc
-- Prediction: https://api.necookie.dev/predict/form (POST)
-- Recommendation: https://api.necookie.dev/recommendation (POST)
-
-### 5. Available backend endpoints
-
-1. **GET /health** — Service health check.
-2. **POST /predict/form** — Classify pre-extracted pose sequence.
-   - Request body: `patient_id`, `exercise_type`, `sequence` (list of frames with 33×3 keypoints).
-3. **POST /predict/form-from-video** — Upload video, extract poses, classify form.
-   - Form data: `patient_id`, `exercise_type`, `video` file.
-4. **POST /recommendation** — Get adaptive exercise recommendations.
-   - Request body: `patient_id`, `stroke_type` (ischemic/hemorrhagic/tia), `months_in_recovery`, `latest_form_score` (0.0–1.0), `affected_area` (arms/legs/both), `affected_side` (left/right/both).
-   - Response includes `intensity`, `focus`, `details` (sessions_per_week, notes), `confidence`, `model_source`.
+Output artifact: `backend/models/lstm_weights.pth`
 
 ## Notes
 
-1. The model files in backend/models are placeholders until you train and save real weights.
-2. The recommender loads backend/models/rf_recommender.pkl when available, then falls back to rule-based recommendation.
-3. Dataset folders are scaffolded and ready for your train/val/test assets.
+1. The recommender loads `backend/models/rf_recommender.pkl` when available, then falls back to rule-based recommendations.
+2. Dataset folders are scaffolded under `datasets/Ready_Dataset/{train,val,test}`.
+3. The model files in `backend/models/` are placeholders until you train and save real weights.
+4. This project is developed and run on **NVIDIA Blackwell architecture (RTX 5060 Ti, 16GB)** with PyTorch 2.11.0+cu128 (CUDA 12.8).

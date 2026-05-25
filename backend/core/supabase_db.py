@@ -20,7 +20,21 @@ import re
 import shutil
 import subprocess
 from typing import Any, Dict, Optional
-from urllib import error, request
+from urllib import error, parse, request
+
+# UUID format used by patient_id and other primary keys — validated at
+# every external entry point so we never splice unsanitised text into a
+# SQL string or URL filter.
+_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+# Strict identifier pattern for any SQL piece we have to interpolate
+# (table names, column names) because psycopg2 / psql can't bind those
+# as parameters.
+_SAFE_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _is_valid_uuid(value: Any) -> bool:
+    return isinstance(value, str) and bool(_UUID_RE.match(value))
 
 try:
     import psycopg2
@@ -238,6 +252,78 @@ def _post(table_name: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         return {"stored": False, "error": str(exc)}
 
 
+def _postgres_fetch_one(table_name: str, column: str, value: str) -> Optional[Dict[str, Any]]:
+    if psycopg2 is None or not _postgres_configured():
+        return None
+
+    # table_name / column are interpolated into the SQL string (psycopg2
+    # can't bind identifiers, only values). Gate both with a strict
+    # identifier regex so callers can't pass crafted column names.
+    if not _SAFE_IDENT_RE.match(table_name) or not _SAFE_IDENT_RE.match(column):
+        return None
+
+    config = _get_postgres_config()
+    query = f"SELECT * FROM public.{table_name} WHERE {column} = %s LIMIT 1"
+
+    try:
+        with psycopg2.connect(
+            host=config["host"],
+            port=config["port"],
+            dbname=config["dbname"],
+            user=config["user"],
+            password=config["password"],
+            cursor_factory=RealDictCursor,
+        ) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, (value,))
+                row = cursor.fetchone()
+                return dict(row) if row is not None else None
+    except Exception:
+        return None
+
+
+def _docker_postgres_fetch_one(table_name: str, column: str, value: str) -> Optional[Dict[str, Any]]:
+    if shutil.which("docker") is None:
+        return None
+
+    # psql via subprocess can't bind parameters, so we gate every piece
+    # spliced into the SQL. Table and column names must match a strict
+    # identifier regex; the value (always a UUID in callers today) must
+    # match _UUID_RE. Reject anything else outright.
+    if not _SAFE_IDENT_RE.match(table_name) or not _SAFE_IDENT_RE.match(column):
+        return None
+    if not _is_valid_uuid(value):
+        return None
+
+    container_name = os.getenv("SUPABASE_DOCKER_CONTAINER", "supabase-db")
+    config = _get_postgres_config()
+    query = f"SELECT row_to_json(t) FROM (SELECT * FROM public.{table_name} WHERE {column} = '{value}' LIMIT 1) t;"
+
+    command = [
+        "docker", "exec",
+        "-e", f"PGPASSWORD={config['password']}",
+        container_name,
+        "psql", "-U", config["user"], "-d", config["dbname"],
+        "-tA", "-c", query,
+    ]
+
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=8)
+    except subprocess.TimeoutExpired:
+        return None
+    if result.returncode != 0:
+        return None
+
+    output = next((line.strip() for line in result.stdout.splitlines() if line.strip()), "")
+    if not output:
+        return None
+
+    try:
+        return json.loads(output)
+    except Exception:
+        return None
+
+
 def parse_months_value(months_label: str) -> int:
     """Extract an integer month value from a label like '2 months'."""
     match = re.search(r"\d+", months_label or "")
@@ -248,12 +334,12 @@ def save_patient_profile(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize a patient payload and persist it to `public.patients`.
 
     Normalization: lower-casing and extracting numeric month value for easy
-    querying in the DB.
+    querying in the DB. Stroke type is always set to ischemic.
     """
     normalized_payload = {
         "id": payload.get("id") or payload.get("user_id"),
         "name": payload.get("name", "").strip(),
-        "stroke_type": payload.get("stroke_type", "").strip().lower(),
+        "stroke_type": "ischemic",
         "months_in_recovery": int(payload.get("months_in_recovery") or 0),
         "affected_area": payload.get("affected_part", "").strip().lower(),
         "affected_side": payload.get("affected_side", "").strip().lower(),
@@ -265,3 +351,232 @@ def save_patient_profile(payload: Dict[str, Any]) -> Dict[str, Any]:
 def save_recommendation_log(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Persist a recommendation payload to `public.recommendation_logs`."""
     return _post("recommendation_logs", payload)
+
+
+def recommendation_log_exists(patient_id: str, session_id: str, session_index: int) -> bool:
+    """Return True if a recommendation_logs row already exists for this
+    (patient_id, session_id, session_index) tuple — the natural key of a
+    per-exercise result inside a session.
+
+    Used by /sessions to short-circuit duplicate insertions when a mobile
+    client retries the batch POST. session_id and session_index live inside
+    the JSONB column today, so the existence check inspects those keys
+    rather than dedicated columns. Promote to columns + unique index in a
+    later migration if scale demands it.
+    """
+    if not _is_valid_uuid(patient_id) or not session_id:
+        return False
+
+    # docker exec path
+    if shutil.which("docker") is not None:
+        container_name = os.getenv("SUPABASE_DOCKER_CONTAINER", "supabase-db")
+        config = _get_postgres_config()
+        # session_id is also a UUID, session_index is an int — both are
+        # validated via psql escaping below.
+        sql = (
+            "SELECT 1 FROM public.recommendation_logs "
+            f"WHERE patient_id = '{patient_id}' "
+            f"AND (recommendation->>'session_id') = '{session_id}' "
+            f"AND COALESCE((recommendation->>'session_index')::int, -1) = {int(session_index)} "
+            "LIMIT 1"
+        )
+        if not (_is_valid_uuid(session_id)):
+            return False
+        command = [
+            "docker", "exec", "-e", f"PGPASSWORD={config['password']}",
+            container_name, "psql", "-U", config["user"], "-d", config["dbname"],
+            "-tA", "-c", sql,
+        ]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=5)
+            if result.returncode == 0 and result.stdout.strip():
+                return True
+        except subprocess.TimeoutExpired:
+            return False
+
+    # psycopg2 (parameterised)
+    if psycopg2 is not None and _postgres_configured():
+        try:
+            config = _get_postgres_config()
+            sql = (
+                "SELECT 1 FROM public.recommendation_logs "
+                "WHERE patient_id = %s "
+                "AND (recommendation->>'session_id') = %s "
+                "AND COALESCE((recommendation->>'session_index')::int, -1) = %s "
+                "LIMIT 1"
+            )
+            with psycopg2.connect(
+                host=config["host"], port=config["port"], dbname=config["dbname"],
+                user=config["user"], password=config["password"],
+            ) as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(sql, (patient_id, session_id, int(session_index)))
+                    return cursor.fetchone() is not None
+        except Exception:
+            pass
+
+    return False
+
+
+def save_form_prediction(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Persist an LSTM form-classification result to `public.form_predictions`.
+
+    Expected keys: patient_id, exercise_type, label, confidence,
+    frame_count, device, model_source, prediction.
+    Schema check constraints: confidence ∈ [0,1], frame_count >= 0,
+    label ∈ {correct, incorrect, insufficient_data}.
+    """
+    return _post("form_predictions", payload)
+
+
+def fetch_patient_history(patient_id: str, limit: int = 50) -> list:
+    """Return the patient's recent recommendation_logs rows, newest first.
+
+    Powers Phase 1 (the Gathering) of the trajectory recommender. Each row
+    surfaces a flat view of the JSONB so trajectory code doesn't need to
+    re-parse: exercise_id, exercise_name, ended_via, latest_form_score,
+    duration_seconds, created_at.
+
+    Tries docker-exec psql first (works in the local Supabase Docker
+    stack), then direct psycopg2, then REST fallback.
+    """
+    # Hard gate: patient_id must be a real UUID. Stops SQL/URL injection
+    # at the door regardless of which backend (psql via docker exec,
+    # psycopg2, or REST) we end up using below.
+    if not _is_valid_uuid(patient_id):
+        return []
+
+    safe_limit = max(1, min(int(limit or 50), 500))
+
+    # The SELECT clause is fully static; only patient_id and LIMIT vary.
+    # psql via subprocess can't bind parameters, but the UUID gate above
+    # already guarantees patient_id contains only [0-9a-fA-F-].
+    select_clause = (
+        "SELECT "
+        "id, "
+        "patient_id, "
+        "latest_form_score, "
+        "(recommendation->>'recommendation_id') AS exercise_id, "
+        "(recommendation->>'exercise_name') AS exercise_name, "
+        "(recommendation->>'ended_via') AS ended_via, "
+        "COALESCE((recommendation->>'duration_seconds')::int, 0) AS duration_seconds, "
+        "(recommendation->>'session_id') AS session_id, "
+        "created_at "
+        "FROM public.recommendation_logs "
+        # Filter > 0 (not just NOT NULL) so legacy pre-gating-fix rows
+        # (score=0 but NOT NULL) are excluded from trajectory analysis.
+        "WHERE patient_id = '{pid}' AND latest_form_score > 0 "
+        "ORDER BY created_at DESC LIMIT {lim}"
+    )
+    docker_query_sql = select_clause.format(pid=patient_id, lim=safe_limit)
+
+    # Docker exec → JSON array via psql -t (one row per line, JSON each).
+    if shutil.which("docker") is not None:
+        container_name = os.getenv("SUPABASE_DOCKER_CONTAINER", "supabase-db")
+        config = _get_postgres_config()
+        wrapped = f"SELECT json_agg(t) FROM ({docker_query_sql}) t;"
+        command = [
+            "docker", "exec", "-e", f"PGPASSWORD={config['password']}",
+            container_name, "psql", "-U", config["user"], "-d", config["dbname"],
+            "-tA", "-c", wrapped,
+        ]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=8)
+        except subprocess.TimeoutExpired:
+            result = None
+        if result is not None and result.returncode == 0:
+            output = " ".join(line.strip() for line in result.stdout.splitlines() if line.strip())
+            if output and output != "null":
+                try:
+                    return json.loads(output) or []
+                except Exception:
+                    pass
+
+    # psycopg2 fallback — parameterised, so no injection surface here.
+    if psycopg2 is not None and _postgres_configured():
+        try:
+            config = _get_postgres_config()
+            parameterised_sql = (
+                "SELECT "
+                "id, patient_id, latest_form_score, "
+                "(recommendation->>'recommendation_id') AS exercise_id, "
+                "(recommendation->>'exercise_name') AS exercise_name, "
+                "(recommendation->>'ended_via') AS ended_via, "
+                "COALESCE((recommendation->>'duration_seconds')::int, 0) AS duration_seconds, "
+                "(recommendation->>'session_id') AS session_id, "
+                "created_at "
+                "FROM public.recommendation_logs "
+                "WHERE patient_id = %s AND latest_form_score > 0 "
+                "ORDER BY created_at DESC LIMIT %s"
+            )
+            with psycopg2.connect(
+                host=config["host"], port=config["port"], dbname=config["dbname"],
+                user=config["user"], password=config["password"],
+                cursor_factory=RealDictCursor,
+            ) as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(parameterised_sql, (patient_id, safe_limit))
+                    return [dict(row) for row in cursor.fetchall()]
+        except Exception:
+            pass
+
+    # REST fallback (limited: PostgREST can't do raw JSONB column projection)
+    if _configured():
+        url = (
+            _rest_url("recommendation_logs")
+            + f"?patient_id=eq.{parse.quote(patient_id, safe='')}"
+            "&latest_form_score=gt.0"
+            "&select=id,patient_id,latest_form_score,recommendation,created_at"
+            "&order=created_at.desc"
+            f"&limit={safe_limit}"
+        )
+        req = request.Request(url, headers=_headers(), method="GET")
+        try:
+            with request.urlopen(req, timeout=10) as response:
+                body = response.read().decode("utf-8")
+                rows = json.loads(body) if body else []
+                normalized = []
+                for row in rows:
+                    rec = row.get("recommendation") or {}
+                    normalized.append({
+                        "id": row.get("id"),
+                        "patient_id": row.get("patient_id"),
+                        "latest_form_score": row.get("latest_form_score"),
+                        "exercise_id": rec.get("recommendation_id"),
+                        "exercise_name": rec.get("exercise_name"),
+                        "ended_via": rec.get("ended_via"),
+                        "duration_seconds": int(rec.get("duration_seconds") or 0),
+                        "session_id": rec.get("session_id"),
+                        "created_at": row.get("created_at"),
+                    })
+                return normalized
+        except Exception:
+            pass
+
+    return []
+
+
+def get_patient_by_id(patient_id: str) -> Optional[Dict[str, Any]]:
+    """Fetch a patient record by ID from the patients table.
+    
+    Returns the patient dict or None if not found.
+    Tries direct Postgres, then docker exec, then REST.
+    """
+    postgres_row = _postgres_fetch_one("patients", "id", patient_id)
+    if postgres_row:
+        return postgres_row
+
+    docker_row = _docker_postgres_fetch_one("patients", "id", patient_id)
+    if docker_row:
+        return docker_row
+
+    url = _rest_url("patients") + f"?id=eq.{patient_id}&select=*"
+    req = request.Request(url, headers=_headers(), method="GET")
+
+    try:
+        with request.urlopen(req, timeout=10) as response:
+            body = response.read().decode("utf-8")
+            data = json.loads(body) if body else []
+            return data[0] if data else None
+    except Exception:
+        return None

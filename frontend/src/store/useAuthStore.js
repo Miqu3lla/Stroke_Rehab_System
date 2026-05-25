@@ -6,15 +6,32 @@ const useAuthStore = create((set, get) => ({
   // State
   loading: false,
 
-  // ─── Login ────────────────────────────────────────────────────────────────
-  // Validates inputs, signs the user in via Supabase, then routes to the
-  // correct screen depending on whether an onboarding profile already exists.
+  //checks if the user is logged in or not
+  getAuthSession: async() => {
+    const { data: { session }, error } = await supabase.auth.getSession();
+
+    if (error) {
+      console.error('Error fetching session:', error.message);
+      set({ user: null });
+      return null;
+    }
+
+    if (session) {
+      set({ user: session.user });
+    } else {
+      set({ user: null });
+    }
+
+    return session;
+  },
+
+  //handles the user logins with validation checks
   handleLogin: async (email, password, navigation) => {
     if (!email || !password) {
       Alert.alert('Error', 'Please enter both email and password');
       return;
     }
-
+    //email validation check
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       Alert.alert('Error', 'Please enter a valid email address');
@@ -24,6 +41,7 @@ const useAuthStore = create((set, get) => ({
     set({ loading: true });
 
     try {
+      //supabase built in function that signs in the user with the email and password
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
@@ -64,16 +82,13 @@ const useAuthStore = create((set, get) => ({
       set({ loading: false });
     }
   },
-
-  // ─── Sign Up ──────────────────────────────────────────────────────────────
-  // Validates inputs and registers a new user via Supabase Auth.
-  // On success the user is directed back to the Login screen.
+  //handles the user registration and checks the validation of the inputs
   handleSignUp: async (email, password, confirmPassword, navigation) => {
     if (!email || !password || !confirmPassword) {
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
-
+    //email validation check
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       Alert.alert('Error', 'Please enter a valid email address');
@@ -122,9 +137,28 @@ const useAuthStore = create((set, get) => ({
   // Call this wherever you need a logout button (e.g. a settings or dashboard screen).
   logout: async (navigation) => {
     try {
-      await supabase.auth.signOut();
-      // Navigate to login
-      navigation.replace('Login');
+      // Navigate to login BEFORE signing out to prevent the navigation object
+      // from being destroyed when the session listener unmounts the Sidebar
+      if (navigation) {
+        try {
+          if (typeof navigation.reset === 'function') {
+            navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+          } else if (typeof navigation.replace === 'function') {
+            navigation.replace('Login');
+          } else if (typeof navigation.navigate === 'function') {
+            navigation.navigate('Login');
+          }
+        } catch (navErr) {
+          console.warn('Navigation before logout failed:', navErr);
+        }
+      }
+      
+      // Now destroy the session
+      const { error: signOutError } = await supabase.auth.signOut();
+      if (signOutError) {
+        console.error('[useAuthStore] signOut failed:', signOutError.message);
+        Alert.alert('Logout Failed', signOutError.message);
+      }
     } catch (error) {
       Alert.alert('Logout Failed', error.message);
     }

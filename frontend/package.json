@@ -3,19 +3,19 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "REACT_NATIVE_PACKAGER_HOSTNAME=192.168.1.13 expo start --lan",
-    "android": "REACT_NATIVE_PACKAGER_HOSTNAME=192.168.1.13 expo start --android",
-    "ios": "REACT_NATIVE_PACKAGER_HOSTNAME=192.168.1.13 expo start --ios",
+    "start": "REACT_NATIVE_PACKAGER_HOSTNAME=192.168.1.7 expo start --lan",
+    "android": "REACT_NATIVE_PACKAGER_HOSTNAME=192.168.1.7 expo start --android",
+    "ios": "REACT_NATIVE_PACKAGER_HOSTNAME=192.168.1.7 expo start --ios",
     "web": "expo start --web"
   },
   "dependencies": {
+    "@react-native-async-storage/async-storage": "2.2.0",
     "@react-navigation/native": "^7.2.2",
     "@react-navigation/stack": "^7.8.11",
     "@supabase/supabase-js": "^2.105.3",
     "axios": "^1.16.0",
     "expo": "~54.0.33",
     "expo-camera": "~17.0.10",
-    "expo-gl": "~16.0.10",
     "expo-secure-store": "~15.0.8",
     "expo-speech": "~14.0.8",
     "expo-status-bar": "~3.0.9",
@@ -28,6 +28,7 @@
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
     "react-native-svg": "15.12.1",
+    "react-native-worklets": "^0.5.1",
     "tailwindcss": "^3.4.19",
     "zustand": "^5.0.12"
   },

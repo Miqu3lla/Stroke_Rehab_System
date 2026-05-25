@@ -2,11 +2,10 @@ import React, { useEffect } from "react";
 import { View, ScrollView } from "react-native";
 import usePatientStore from "../store/usePatientStore";
 import useAuthStore from "../store/useAuthStore";
-import HistoryList from "../components/exercise/HistoryList";
-import OverallProgressCard from "../components/exercise/OverallProgressCard";
+import RecommendationCard from "../components/exercise/RecommendationCard";
 
-const HomeScreen = ({ navigation }) => {
-  const { fetchHistory } = usePatientStore();
+const SessionScreen = ({ navigation }) => {
+  const { fetchRecommendation } = usePatientStore();
   const { getAuthSession } = useAuthStore();
 
   // Guard: redirect to Login if there is no active session
@@ -20,19 +19,18 @@ const HomeScreen = ({ navigation }) => {
     checkSession();
   }, []);
 
-  // Fetch recommended exercises and past history when screen loads
+  // Fetch recommended exercises when screen loads
   useEffect(() => {
-    fetchHistory();
+    fetchRecommendation();
   }, []);
 
   return (
     <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 20 }}>
       <View className="p-4 mt-4">
-        <HistoryList />
-        <OverallProgressCard />
+        <RecommendationCard navigation={navigation} />
       </View>
     </ScrollView>
   );
 };
 
-export default HomeScreen;
+export default SessionScreen;

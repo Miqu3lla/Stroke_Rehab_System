@@ -1,22 +1,27 @@
 import React from "react";
 import { Pressable, Text, View, StyleSheet, Dimensions, Animated } from "react-native";
-import { Home, Settings, Sparkles, UserRound, X, Activity } from "lucide-react-native";
+import { Home, Settings, Sparkles, UserRound, X, Activity, LogOut } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
+import useAuthStore from "../../store/useAuthStore";
 
 //sideBar items
 const sidebarItems = [
   { label: "Dashboard", route: "Dashboard", icon: Home },
   { label: "Sessions", route: "Sessions", icon: Sparkles },
-  { label: "Patients", route: "Patients", icon: UserRound },
   { label: "Exercise", route: "Exercise", icon: Activity },
-  { label: "Settings", route: "Settings", icon: Settings },
 ];
 
 const Sidebar = ({ isOpen, onClose, currentRoute }) => {
   
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
+  const { logout } = useAuthStore();
+
+  const handleLogout = async () => {
+    onClose();
+    await logout(navigation);
+  };
 
   if (!isOpen) return null;
 
@@ -55,6 +60,19 @@ const Sidebar = ({ isOpen, onClose, currentRoute }) => {
             <Text className={`text-sm font-medium ${isActive ? "text-white" : "text-slate-200"}`}>{label}</Text>
           </Pressable>
         )})}
+
+        {/* Logout Button */}
+        <View className="border-t border-slate-800 mt-8 pt-4">
+          <Pressable
+            onPress={handleLogout}
+            className="flex-row items-center rounded-xl px-4 py-3 bg-red-900/20 hover:bg-red-900/30"
+          >
+            <View className="h-8 w-8 items-center justify-center rounded-lg mr-4 bg-red-900/40">
+              <LogOut color="#fca5a5" size={18} />
+            </View>
+            <Text className="text-sm font-medium text-red-300">Logout</Text>
+          </Pressable>
+        </View>
       </View>
     </View>
   );

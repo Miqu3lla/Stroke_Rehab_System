@@ -1,22 +1,20 @@
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import joblib
 import pandas as pd
+
+from core import exercise_catalog, trajectory
+from core.supabase_db import fetch_patient_history, get_patient_by_id
 
 DEFAULT_MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "rf_recommender.pkl"
 _MODEL_CACHE: Dict[str, Any] = {"model": None, "loaded": False, "source": "rule_based"}
 
 
 # Normalize the stroke type so the recommender can map it to numeric features.
+# All strokes are ischemic, so always return 0.
 def _encode_stroke_type(stroke_type: str) -> int:
-    mapping = {
-        "ischemic": 0,
-        "hemorrhagic": 1,
-        "tia": 2,
-        "unknown": 3,
-    }
-    return mapping.get(stroke_type.strip().lower(), 3)
+    return 0
 
 
 def _encode_area(area: str) -> int:
@@ -88,12 +86,9 @@ def _rule_based_intensity(
 def _focus_area(
     stroke_type: str, intensity: str, affected_area: str = "both", affected_side: str = "both"
 ) -> str:
-    stroke = stroke_type.strip().lower()
     area = affected_area.strip().lower()
 
-    if stroke == "hemorrhagic":
-        base = "balance + controlled mobility"
-    elif intensity == "high":
+    if intensity == "high":
         base = "strength + endurance"
     elif intensity == "low":
         base = "mobility + form correction"
@@ -149,9 +144,6 @@ def recommend_next_plan(
     if affected_side.strip().lower() in {"left", "right"}:
         details["notes"].append("Include unilateral training and emphasize weaker side")
 
-    if stroke_type.strip().lower() == "hemorrhagic":
-        details["notes"].append("Progress more conservatively; monitor blood pressure")
-
     return {
         "stroke_type": stroke_type,
         "intensity": intensity,
@@ -159,4 +151,149 @@ def recommend_next_plan(
         "confidence": round(confidence, 4),
         "model_source": cache["source"],
         "details": details,
+    }
+
+
+# ── v2: Trajectory-aware session recommender (Patient X loop) ──────────
+# The vision (Patient X scenario):
+#   Phase 1 (Gather)  → fetch_patient_history pulls the full war history
+#   Phase 2 (Brain)   → trajectory.analyze_trajectory classifies state
+#                        and fires signals (rapid_drop, strength_gain,
+#                        fatigue_pattern, sustained_high, …)
+#   Phase 3 (Prescribe) → trajectory.trajectory_to_action maps state →
+#                          downgrade/maintain/upgrade, then we pick
+#                          exercises from the catalog and scale duration.
+#
+# The brain is rule-based today; the interface is shaped so a trained
+# LSTM trajectory model can replace analyze_trajectory() without
+# touching this function.
+
+def _intensity_from_action(action: str) -> str:
+    return {"downgrade": "low", "maintain": "moderate", "upgrade": "high"}.get(action, "moderate")
+
+
+def _sessions_per_week_from_action(action: str) -> int:
+    return {"downgrade": 2, "maintain": 3, "upgrade": 4}.get(action, 3)
+
+
+def recommend_session_v2(
+    patient_id: str,
+    count: int = 3,
+    history_limit: int = 50,
+) -> Dict[str, Any]:
+    """Build a 3-phase adaptive session recommendation.
+
+    Returns a dict with shape:
+        {
+            "patient_id": "...",
+            "trajectory": { state, confidence, signals, summary, per_exercise, evidence },
+            "action": { action, duration_multiplier, rationale },
+            "exercises": [
+                { id, exercise_type, name, description, body_area,
+                  duration_minutes, intensity, difficulty_level, focus,
+                  affected_area, affected_side, reasoning }
+            ],
+            "model_source": "rule_based_trajectory",
+        }
+    """
+    patient = get_patient_by_id(patient_id)
+    if not patient:
+        return {
+            "patient_id": patient_id,
+            "error": "patient_not_found",
+            "exercises": [],
+        }
+
+    affected_area = (patient.get("affected_area") or "both").strip().lower()
+    # Default to 'both' (bilateral) for older or incomplete patient rows
+    # rather than silently assuming 'right' — the recommender exposes
+    # this in side guidance text the patient sees, so a wrong default
+    # would be visibly incorrect.
+    affected_side = (patient.get("affected_side") or "both").strip().lower()
+    months_in_recovery = int(patient.get("months_in_recovery") or 0)
+
+    # Phase 1: gather
+    history = fetch_patient_history(patient_id, limit=history_limit)
+
+    # Phase 2: classify
+    trajectory_result = trajectory.analyze_trajectory(history)
+    state = trajectory_result["state"]
+    signals = trajectory_result["signals"]
+
+    # Phase 3: prescribe
+    # Trajectory says what to do based on performance; recovery-phase
+    # modifier caps that for acute patients (don't push fresh post-stroke
+    # patients hard even if Day-3 scores look great) and gives chronic
+    # patients a slight bonus on upgrades.
+    raw_action = trajectory.trajectory_to_action(state, signals)
+    action = trajectory.apply_phase_modifier(raw_action, months_in_recovery)
+
+    catalog = exercise_catalog.load_catalog()
+    picked = exercise_catalog.pick_exercises_for_action(
+        catalog, affected_area, action["action"], count=count,
+    )
+
+    intensity = _intensity_from_action(action["action"])
+    sessions_per_week = _sessions_per_week_from_action(action["action"])
+    duration_multiplier = float(action.get("duration_multiplier") or 1.0)
+    # Side guidance appended to each exercise's reasoning so the patient
+    # sees a unilateral/bilateral training reminder per card.
+    side_note = trajectory.side_guidance(affected_side)
+
+    exercises: List[Dict[str, Any]] = []
+    for index, ex in enumerate(picked):
+        base_minutes = ex.get("base_duration_minutes") or 2
+        # Floor at 1min so trajectory downgrades on a short base duration
+        # (e.g. 2min * 0.8 = 1.6 → 2min) aren't clamped up to a longer
+        # session than the catalog prescribes.
+        duration_minutes = max(1, int(round(base_minutes * duration_multiplier)))
+
+        # Per-exercise reasoning: pull this exercise's trajectory stats
+        # if it appears in the patient's history.
+        stats = trajectory_result["per_exercise"].get(ex["id"])
+        if stats and stats.get("latest_score") is not None:
+            latest = stats["latest_score"]
+            mean = stats.get("mean_score") or latest
+            per_ex_reason = (
+                f"Your last {stats['exercise_name'] or 'session'} was "
+                f"{round(latest)}% (avg {round(mean)}%, trend: {stats['trend']})."
+            )
+        else:
+            per_ex_reason = "First time tracking this exercise — start at a comfortable pace."
+
+        if side_note:
+            per_ex_reason = f"{per_ex_reason} {side_note}"
+
+        exercises.append({
+            "id": ex["id"],
+            "exercise_type": ex["exercise_type"],
+            "name": ex["name"],
+            "description": ex["description"],
+            "body_area": ex["body_area"],
+            "duration_minutes": duration_minutes,
+            "intensity": intensity,
+            "difficulty_level": ex["difficulty_level"],
+            "focus": ex["focus"],
+            "affected_area": affected_area,
+            "affected_side": affected_side,
+            "session_index": index,
+            "reasoning": per_ex_reason,
+            "recommendation": {
+                "intensity": intensity,
+                "focus": ex["focus"],
+                "details": {
+                    "recommended_sessions_per_week": sessions_per_week,
+                    "primary_focus": ex["focus"],
+                },
+            },
+        })
+
+    return {
+        "patient_id": patient_id,
+        "trajectory": trajectory_result,
+        "action": action,
+        "recovery_phase": action.get("phase"),
+        "side_guidance": side_note,
+        "exercises": exercises,
+        "model_source": "rule_based_trajectory",
     }
