@@ -1,28 +1,48 @@
 -- ──────────────────────────────────────────────────────────────────────
--- Security migration: lock down RLS + pin set_updated_at search_path
--- 2026-05-26 — fixes the 7 errors + 1 warning from Supabase's linter.
+-- Security + Performance migration for RLS
+-- 2026-05-26 — last updated for the Performance Advisor warnings.
 --
--- WHY: the existing policies use USING (true) with no role scope, which
--- effectively grants unrestricted access to every role (including anon).
--- This migration drops those, then creates per-role policies so:
---   - service_role (backend) keeps unrestricted access
---   - authenticated users can only read their own rows (and a public
---     read of the exercises reference table)
---   - anon (the mobile app's bundled key before login) gets nothing
+-- Fixes the 7 Security errors + 1 warning AND the 8 Performance
+-- warnings Supabase's linter raises.
+--
+-- WHY (security): the original schema's policies used USING (true) with
+-- no role scope, so every role (including anon) got unrestricted access.
+-- WHY (performance): RLS policies that call auth.uid() bare get
+-- re-evaluated for every row in a query. Wrapping the call as
+-- (SELECT auth.uid()) turns it into an initPlan that runs once per
+-- query. Multiple permissive policies on the same role+action are
+-- evaluated together (OR), so we keep at most one per role per action.
 -- ──────────────────────────────────────────────────────────────────────
 
--- 1. Drop the existing permissive "Service role unrestricted access"
---    policies. They were misnamed — `USING (true)` with no `TO role`
---    clause applies to every role, not just service_role.
-DROP POLICY IF EXISTS "Service role unrestricted access" ON public.patients;
-DROP POLICY IF EXISTS "Service role unrestricted access" ON public.recommendation_logs;
-DROP POLICY IF EXISTS "Service role unrestricted access" ON public.form_predictions;
-DROP POLICY IF EXISTS "Service role unrestricted access" ON public.video_predictions;
-DROP POLICY IF EXISTS "Service role unrestricted access" ON public.exercises;
+-- 1. Wipe ALL existing policies on the affected tables. Doing it
+--    defensively (rather than DROP IF EXISTS by name) catches leftover
+--    policies from the original schema, prior migrations, or anything
+--    added via the Supabase UI. We're about to recreate the canonical
+--    set below, so this is safe.
+DO $$
+DECLARE
+  r RECORD;
+BEGIN
+  FOR r IN
+    SELECT schemaname, tablename, policyname
+    FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename IN (
+        'patients',
+        'recommendation_logs',
+        'form_predictions',
+        'video_predictions',
+        'exercises'
+      )
+  LOOP
+    EXECUTE format(
+      'DROP POLICY IF EXISTS %I ON %I.%I',
+      r.policyname, r.schemaname, r.tablename
+    );
+  END LOOP;
+END $$;
 
--- 2. Ensure RLS is on for every table the linter flagged. Idempotent —
---    no-op if already enabled, but Supabase's UI lets you disable it
---    after the fact so this re-asserts the desired state.
+-- 2. Ensure RLS is enabled. Idempotent.
 ALTER TABLE public.patients              ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.recommendation_logs   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.form_predictions      ENABLE ROW LEVEL SECURITY;
@@ -32,15 +52,18 @@ ALTER TABLE public.exercises             ENABLE ROW LEVEL SECURITY;
 -- ── patients ─────────────────────────────────────────────────────────
 -- Each authenticated user can SELECT/UPDATE only their own row.
 -- INSERTs come through the backend (/patients endpoint, service_role).
--- DELETEs are not exposed to authenticated users — only service_role.
+-- DELETEs are not exposed to authenticated users.
+--
+-- Note (SELECT auth.uid()) instead of auth.uid() — the subquery form is
+-- evaluated once per query (initPlan) instead of once per row.
 CREATE POLICY "patients_self_select" ON public.patients
   FOR SELECT TO authenticated
-  USING (id = auth.uid());
+  USING (id = (SELECT auth.uid()));
 
 CREATE POLICY "patients_self_update" ON public.patients
   FOR UPDATE TO authenticated
-  USING (id = auth.uid())
-  WITH CHECK (id = auth.uid());
+  USING (id = (SELECT auth.uid()))
+  WITH CHECK (id = (SELECT auth.uid()));
 
 CREATE POLICY "patients_service_all" ON public.patients
   FOR ALL TO service_role
@@ -52,17 +75,17 @@ CREATE POLICY "patients_service_all" ON public.patients
 -- through the backend.
 CREATE POLICY "recommendation_logs_self_select" ON public.recommendation_logs
   FOR SELECT TO authenticated
-  USING (patient_id = auth.uid());
+  USING (patient_id = (SELECT auth.uid()));
 
 CREATE POLICY "recommendation_logs_service_all" ON public.recommendation_logs
   FOR ALL TO service_role
   USING (true) WITH CHECK (true);
 
 -- ── form_predictions ─────────────────────────────────────────────────
--- Same shape: patient can read their own LSTM verdicts; backend writes.
+-- Patient can read their own LSTM verdicts; backend writes.
 CREATE POLICY "form_predictions_self_select" ON public.form_predictions
   FOR SELECT TO authenticated
-  USING (patient_id = auth.uid());
+  USING (patient_id = (SELECT auth.uid()));
 
 CREATE POLICY "form_predictions_service_all" ON public.form_predictions
   FOR ALL TO service_role
@@ -71,7 +94,7 @@ CREATE POLICY "form_predictions_service_all" ON public.form_predictions
 -- ── video_predictions ────────────────────────────────────────────────
 CREATE POLICY "video_predictions_self_select" ON public.video_predictions
   FOR SELECT TO authenticated
-  USING (patient_id = auth.uid());
+  USING (patient_id = (SELECT auth.uid()));
 
 CREATE POLICY "video_predictions_service_all" ON public.video_predictions
   FOR ALL TO service_role
@@ -89,10 +112,9 @@ CREATE POLICY "exercises_service_all" ON public.exercises
   USING (true) WITH CHECK (true);
 
 -- ── set_updated_at trigger function ──────────────────────────────────
--- Without a pinned search_path an attacker who can create objects in
--- another schema could shadow NOW() or pg_catalog functions and have
--- this trigger run their code. SET search_path = public, pg_catalog
--- removes the ambiguity.
+-- Pinned search_path so an attacker who can create objects in another
+-- schema can't shadow NOW() / pg_catalog functions and hijack the
+-- trigger invocation.
 CREATE OR REPLACE FUNCTION public.set_updated_at()
 RETURNS TRIGGER
 LANGUAGE plpgsql
