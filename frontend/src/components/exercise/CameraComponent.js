@@ -9,7 +9,7 @@ import BeforeYouStart from './BeforeYouStart';
 // onComplete is called when the patient ends this exercise (either by
 // Finish Current, End Early, or timer expiry). The parent is in charge
 // of deciding what to do next (rest state, next exercise, end session).
-const CameraComponent = ({ exercise, onComplete }) => {
+export default function CameraComponent({ exercise, onComplete }) {
   const [permission, requestPermission] = useCameraPermissions();
 
   const {
@@ -168,4 +168,4 @@ const PostureFeedback = ({ exercise, keypoints, isModelReady, feedbackText, curr
   return null;
 };
 
-export default CameraComponent;
+

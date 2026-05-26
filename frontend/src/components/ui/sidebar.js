@@ -12,7 +12,7 @@ const sidebarItems = [
   { label: "Exercise", route: "Exercise", icon: Activity },
 ];
 
-const Sidebar = ({ isOpen, onClose, currentRoute }) => {
+export default function Sidebar({ isOpen, onClose, currentRoute }) {
   
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -76,6 +76,4 @@ const Sidebar = ({ isOpen, onClose, currentRoute }) => {
       </View>
     </View>
   );
-};
-
-export default Sidebar;
+}

@@ -4,7 +4,7 @@ import { Calendar } from 'lucide-react-native';
 import usePatientStore from '../../store/usePatientStore';
 import Skeleton from '../ui/Skeleton';
 
-const HistoryList = () => {
+export default function HistoryList() {
   const { history, historyLoading, historyError } = usePatientStore();
 
   if (historyLoading) {
@@ -51,27 +51,35 @@ const HistoryList = () => {
     <View className="my-2 mb-8">
       <Text className="text-lg font-bold text-[#191b23] ml-1 mb-3">Recent Activity</Text>
       <View className="flex-col gap-3">
-        {history.slice(0, 3).map((item, index) => {
-          const score = Math.round(Number(item.latest_form_score) || 0);
-          const tone = score >= 85 ? '#4CAF50' : score >= 60 ? '#FFC107' : '#FF5252';
-          
-          const prevItem = item.exercise_id
-            ? history.slice(index + 1).find(h => h.exercise_id === item.exercise_id)
-            : null;
-          let diffElement = null;
-          if (prevItem) {
-            const prevScoreRounded = Math.round(Number(prevItem.latest_form_score) || 0);
-            const diff = score - prevScoreRounded;
-            if (diff > 0) {
-              diffElement = <Text className="text-[#4CAF50] text-xs font-bold mt-0.5">+{diff}% better on average</Text>;
-            } else if (diff < 0) {
-              diffElement = <Text className="text-[#FF5252] text-xs font-bold mt-0.5">{Math.abs(diff)}% less on average</Text>;
-            } else {
-              diffElement = <Text className="text-[#8a8d9b] text-xs font-bold mt-0.5">Same as before</Text>;
+        {history
+          .filter((item, index, self) => 
+            // Keep only the first occurrence of each exercise_id
+            index === self.findIndex((t) => t.exercise_id === item.exercise_id)
+          )
+          .slice(0, 3)
+          .map((item, index) => {
+            const score = Math.round(Number(item.latest_form_score) || 0);
+            const tone = score >= 85 ? '#4CAF50' : score >= 60 ? '#FFC107' : '#FF5252';
+            
+            // Find the index in the original history array
+            const historyIndex = history.findIndex(h => h.id === item.id);
+            const prevItem = item.exercise_id && historyIndex !== -1
+              ? history.slice(historyIndex + 1).find(h => h.exercise_id === item.exercise_id)
+              : null;
+            let diffElement = null;
+            if (prevItem) {
+              const prevScoreRounded = Math.round(Number(prevItem.latest_form_score) || 0);
+              const diff = score - prevScoreRounded;
+              if (diff > 0) {
+                diffElement = <Text className="text-[#4CAF50] text-xs font-bold mt-0.5">+{diff}% better on average</Text>;
+              } else if (diff < 0) {
+                diffElement = <Text className="text-[#FF5252] text-xs font-bold mt-0.5">{Math.abs(diff)}% less on average</Text>;
+              } else {
+                diffElement = <Text className="text-[#8a8d9b] text-xs font-bold mt-0.5">Same as before</Text>;
+              }
             }
-          }
-          
-          return (
+            
+            return (
             <View
               key={item.id || index}
               className="w-full flex-row items-center justify-between p-4 bg-white border border-[#e7e7f2] rounded-2xl shadow-sm"
@@ -100,6 +108,4 @@ const HistoryList = () => {
       </View>
     </View>
   );
-};
-
-export default HistoryList;
+}

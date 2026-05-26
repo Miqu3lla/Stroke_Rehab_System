@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ActivityIndicator } from 'react-native';
 import useAuthStore from '../../store/useAuthStore';
 
-const LoginCard = ({ navigation }) => {
+export default function LoginCard({ navigation }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
@@ -56,6 +56,4 @@ const LoginCard = ({ navigation }) => {
       </TouchableOpacity>
     </View>
   );
-};
-
-export default LoginCard;
+}
