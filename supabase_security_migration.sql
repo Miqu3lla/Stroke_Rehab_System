@@ -112,16 +112,19 @@ CREATE POLICY "exercises_service_all" ON public.exercises
   USING (true) WITH CHECK (true);
 
 -- ── set_updated_at trigger function ──────────────────────────────────
--- Pinned search_path so an attacker who can create objects in another
--- schema can't shadow NOW() / pg_catalog functions and hijack the
--- trigger invocation.
+-- Two layers of defense against now()/pg_catalog shadowing:
+--   1. search_path puts pg_catalog FIRST so a user-defined public.now()
+--      can't win lookup. (The earlier `public, pg_catalog` order let an
+--      attacker who could create objects in public shadow the real now.)
+--   2. CURRENT_TIMESTAMP is a SQL reserved keyword — it isn't resolved
+--      through search_path at all, so it can't be hijacked regardless.
 CREATE OR REPLACE FUNCTION public.set_updated_at()
 RETURNS TRIGGER
 LANGUAGE plpgsql
-SET search_path = public, pg_catalog
+SET search_path = pg_catalog, public
 AS $$
 BEGIN
-  NEW.updated_at = NOW();
+  NEW.updated_at = CURRENT_TIMESTAMP;
   RETURN NEW;
 END;
 $$;
