@@ -27,6 +27,11 @@ DROP INDEX IF EXISTS public.patients_name_idx;
 DROP INDEX IF EXISTS public.patients_stroke_type_idx;
 DROP INDEX IF EXISTS public.video_predictions_created_at_idx;
 
--- idx_* prefix (supabase_schema.sql legacy convention)
+-- idx_* prefix (supabase_schema.sql legacy / any DB created with that
+-- schema). Mirror every dropped index above — partial coverage would
+-- leave stragglers if the live DB happens to use this convention.
+DROP INDEX IF EXISTS public.idx_form_predictions_created_at;
 DROP INDEX IF EXISTS public.idx_patients_created_at;
 DROP INDEX IF EXISTS public.idx_patients_name;
+DROP INDEX IF EXISTS public.idx_patients_stroke_type;
+DROP INDEX IF EXISTS public.idx_video_predictions_created_at;
