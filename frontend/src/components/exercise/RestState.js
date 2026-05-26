@@ -5,14 +5,14 @@ import { ChevronRight, X } from 'lucide-react-native';
 // Rest / Transition state between exercises. Shows the score from the
 // exercise the patient just ended and offers two choices: Move to Next
 // (continue the session) or End Workout (flush and exit).
-const RestState = ({
+export default function RestState({
   justFinishedName,
   justFinishedScore,
   isLastExercise,
   upNextName,
   onNext,
   onEndWorkout,
-}) => {
+}) {
   const [isLoadingNext, setIsLoadingNext] = useState(false);
   const [isLoadingEnd, setIsLoadingEnd] = useState(false);
 
@@ -125,6 +125,4 @@ const RestState = ({
       </View>
     </View>
   );
-};
-
-export default RestState;
+}

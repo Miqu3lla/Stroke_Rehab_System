@@ -37,7 +37,7 @@ const isArmExercise = (name) =>
 const isLegExercise = (name) =>
   /leg|knee|squat|walk|gait|ankle|lunge|step/i.test(name);
 
-const SkeletonOverlay = ({
+export default function SkeletonOverlay({
   keypoints,
   jointColors,
   viewWidth,
@@ -46,7 +46,7 @@ const SkeletonOverlay = ({
   imageHeight,
   affectedSide = 'right',
   exerciseType = '',
-}) => {
+}) {
   if (
     !keypoints?.length ||
     !viewWidth || !viewHeight ||
@@ -156,6 +156,4 @@ const SkeletonOverlay = ({
       })}
     </Svg>
   );
-};
-
-export default SkeletonOverlay;
+}

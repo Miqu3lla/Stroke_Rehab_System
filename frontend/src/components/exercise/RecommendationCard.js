@@ -10,7 +10,7 @@ import usePatientStore from '../../store/usePatientStore';
 import ExerciseModal from '../ui/ExerciseModal';
 import Skeleton from '../ui/Skeleton';
 
-const RecommendationCard = ({ navigation }) => {
+export default function RecommendationCard({ navigation }) {
   const {
     recommendedExercises,
     recommendationLoading,
@@ -86,6 +86,4 @@ const RecommendationCard = ({ navigation }) => {
       />
     </View>
   );
-};
-
-export default RecommendationCard;
+}
