@@ -106,6 +106,25 @@ Stroke_Rehab_System/
 - `cloudflared` (bundled at `backend/cloudflared/cloudflared.exe`)
 - Cloudflare tunnel token (set as `CLOUDFLARED_TOKEN`)
 
+## Environment Variables
+
+Create `backend/.env` with the Supabase credentials. The backend rejects
+every request to a protected route unless the JWT in the
+`Authorization: Bearer ...` header validates against `SUPABASE_JWT_SECRET`.
+
+```env
+SUPABASE_URL=https://<project>.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=<service-role-key>   # backend writes, bypasses RLS
+SUPABASE_JWT_SECRET=<jwt-secret>                # Settings → API → JWT Settings
+```
+
+Frontend reads from `frontend/.env`:
+
+```env
+EXPO_PUBLIC_SUPABASE_URL=https://<project>.supabase.co
+EXPO_PUBLIC_SUPABASE_ANON_KEY=<anon-key>
+```
+
 ## One-Time Install
 
 **Backend:**

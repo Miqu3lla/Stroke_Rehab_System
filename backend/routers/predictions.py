@@ -3,8 +3,9 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
+from core.auth import assert_patient_match, verify_jwt
 from core.mediapipe_vision import extract_sequence_from_video
 from core.neural_network import classify_form_sequence
 from core.exercise_catalog import is_lstm_supported
@@ -16,7 +17,8 @@ router = APIRouter()
 
 
 @router.post("/predict/form")
-def predict_form(payload: FormRequest) -> dict:
+def predict_form(payload: FormRequest, claims: Dict[str, Any] = Depends(verify_jwt)) -> dict:
+    assert_patient_match(claims, payload.patient_id)
     # For exercise_types the LSTM was never trained on, skip and return a
     # 'skipped' marker rather than polluting form_predictions with
     # out-of-distribution guesses.
@@ -66,7 +68,9 @@ async def predict_form_from_video(
     patient_id: str = Form(...),
     exercise_type: str = Form(...),
     video: UploadFile = File(...),
+    claims: Dict[str, Any] = Depends(verify_jwt),
 ) -> Dict[str, Any]:
+    assert_patient_match(claims, patient_id)
     suffix = Path(video.filename or "session.mp4").suffix or ".mp4"
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp:

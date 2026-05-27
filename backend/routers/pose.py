@@ -1,7 +1,9 @@
 import base64
+from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from core.auth import verify_jwt
 from core.mediapipe_vision import estimate_pose_from_image_bytes
 from schemas.pose import PoseEstimateRequest, MAX_DECODED_IMAGE_BYTES
 from services.pose_service import score_pose
@@ -10,7 +12,13 @@ router = APIRouter()
 
 
 @router.post("/pose/estimate")
-def estimate_pose(payload: PoseEstimateRequest) -> dict:
+def estimate_pose(
+    payload: PoseEstimateRequest,
+    _claims: Dict[str, Any] = Depends(verify_jwt),
+) -> dict:
+    # No patient_id check — pose scoring is stateless. We just want to
+    # ensure the caller is logged in so anonymous traffic can't burn
+    # MediaPipe / GPU time on the tunnel.
     """Run MediaPipe Pose on a single mobile camera frame and return keypoints,
     per-segment colours, an overall form score, and a corrective hint."""
     try:

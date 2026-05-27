@@ -1,7 +1,9 @@
 import logging
+from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from core.auth import assert_patient_match, verify_jwt
 from core.supabase_db import save_recommendation_log, get_patient_by_id, recommendation_log_exists
 
 logger = logging.getLogger("uvicorn.error")
@@ -9,7 +11,7 @@ router = APIRouter()
 
 
 @router.post("/sessions")
-def save_session(payload: dict) -> dict:
+def save_session(payload: dict, claims: Dict[str, Any] = Depends(verify_jwt)) -> dict:
     """Batch-save a completed workout session.
 
     The frontend buffers per-exercise results in Zustand during a session
@@ -30,6 +32,10 @@ def save_session(payload: dict) -> dict:
                 status_code=400,
                 detail="Missing required fields: patient_id, session_id",
             )
+
+        # Token must own the patient_id being written to — otherwise an
+        # authenticated user could batch-write into another patient's history.
+        assert_patient_match(claims, patient_id)
 
         if not isinstance(results, list):
             raise HTTPException(status_code=400, detail="results must be a list")
