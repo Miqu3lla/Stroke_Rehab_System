@@ -4,6 +4,7 @@ import HomeScreen from "../screens/HomeScreen";
 import SessionScreen from "../screens/SessionScreen";
 import ExerciseScreen from "../screens/ExerciseScreen";
 import SessionSummaryScreen from "../screens/SessionSummaryScreen";
+import PatientProfileScreen from "../screens/PatientProfileScreen";
 import OnboardingScreen from "../screens/OnboardingScreen";
 import LoginScreen from "../screens/LoginScreen";
 import SignupScreen from "../screens/SignupScreen";
@@ -51,6 +52,7 @@ const AppNavigator = () => {
       <Stack.Screen name="Sessions" component={SessionScreen} />
       <Stack.Screen name="Exercise" component={ExerciseScreen} />
       <Stack.Screen name="SessionSummary" component={SessionSummaryScreen} />
+      <Stack.Screen name="PatientProfile" component={PatientProfileScreen} />
     </Stack.Navigator>
   );
 };

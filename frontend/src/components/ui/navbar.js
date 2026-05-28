@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Pressable, Text, View } from "react-native";
-import { Menu } from "lucide-react-native";
+import { Menu, User } from "lucide-react-native";
+import { useNavigation } from "@react-navigation/native";
 import Sidebar from "./sidebar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { supabase } from "../../services/supabase";
@@ -8,6 +9,7 @@ import { supabase } from "../../services/supabase";
 export default function Navbar({ title, currentRoute, children }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [session, setSession] = useState(null);
+  const navigation = useNavigation();
 
   //get user session to check if user is logged in or not 
   useEffect(() => {
@@ -45,6 +47,13 @@ export default function Navbar({ title, currentRoute, children }) {
         <View>
           <Text className="text-xl font-bold text-slate-900">{title}</Text>
         </View>
+        <View className="flex-1" />
+        <Pressable 
+          onPress={() => navigation.navigate("PatientProfile")}
+          className="p-2 ml-3 bg-slate-100 rounded-full"
+        >
+          <User color="#0f172a" size={24} />
+        </Pressable>
       </View>
 
       {/* Main Content Area */}
