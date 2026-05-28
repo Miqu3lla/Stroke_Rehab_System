@@ -33,6 +33,30 @@ const usePatientProfileStore = create((set) => ({
       set({ loading: false });
     }
   },
+
+  updatePatientName: async (newName) => {
+    set({ loading: true, error: null });
+    try {
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      if (authError || !user) throw new Error('User not authenticated');
+
+      const { error } = await supabase
+        .from('patients')
+        .update({ name: newName })
+        .eq('id', user.id);
+
+      if (error) throw error;
+
+      set((state) => ({
+        profile: { ...state.profile, name: newName }
+      }));
+    } catch (error) {
+      console.error('Failed to update patient name:', error.message);
+      set({ error: error.message });
+    } finally {
+      set({ loading: false });
+    }
+  },
 }));
 
 export default usePatientProfileStore;
