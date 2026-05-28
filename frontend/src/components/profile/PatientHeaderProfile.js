@@ -10,9 +10,15 @@ export default function PatientHeaderProfile({ profile }) {
 
   const handleSave = async () => {
     if (editName.trim() && editName !== profile?.name) {
-      await updatePatientName(editName.trim());
+      try {
+        await updatePatientName(editName.trim());
+        setIsEditing(false);
+      } catch (err) {
+        // Error is propagated here; could show an alert or toast to the user
+      }
+    } else {
+      setIsEditing(false);
     }
-    setIsEditing(false);
   };
   const accountCreated = profile?.created_at 
     ? new Date(profile.created_at).toLocaleDateString('en-US', {

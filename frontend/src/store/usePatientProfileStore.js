@@ -53,6 +53,7 @@ const usePatientProfileStore = create((set) => ({
     } catch (error) {
       console.error('Failed to update patient name:', error.message);
       set({ error: error.message });
+      throw error;
     } finally {
       set({ loading: false });
     }
