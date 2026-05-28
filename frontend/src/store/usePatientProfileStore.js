@@ -17,7 +17,7 @@ const usePatientProfileStore = create((set) => ({
 
       const { data, error } = await supabase
         .from('patients')
-        .select('name, created_at, affected_side, affected_area')
+        .select('name, created_at, affected_side, affected_area, months_in_recovery')
         .eq('id', user.id)
         .single();
 

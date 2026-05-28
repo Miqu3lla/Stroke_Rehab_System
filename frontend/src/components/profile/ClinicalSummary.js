@@ -11,16 +11,19 @@ export default function ClinicalSummary({ profile }) {
     focusArea = `${side} ${area}`.trim();
   }
 
-  // Calculate months in recovery
-  let monthsInRecovery = 0;
+  // Calculate total months in recovery
+  let monthsInRecovery = parseInt(profile?.months_in_recovery || 0, 10);
   if (profile?.created_at) {
     const createdDate = new Date(profile.created_at);
     const currentDate = new Date();
-    const diffTime = Math.abs(currentDate - createdDate);
-    // Approximation for months
-    monthsInRecovery = Math.floor(diffTime / (1000 * 60 * 60 * 24 * 30.44));
+    
+    // Calculate elapsed months by comparing years and months directly
+    const elapsedMonths = (currentDate.getFullYear() - createdDate.getFullYear()) * 12 
+      + (currentDate.getMonth() - createdDate.getMonth());
+      
+    // Add elapsed months to the initial value
+    monthsInRecovery += elapsedMonths;
   }
-
   return (
     <View>
       <Text className="text-lg font-bold text-slate-900 mb-4">Clinical Summary</Text>

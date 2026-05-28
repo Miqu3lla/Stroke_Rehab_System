@@ -24,19 +24,23 @@ const usePoseDetection = () => {
   // Checks if the backend server is reachable before starting to send camera frames
   const startDetection = useCallback(async () => {
     try {
+
       await api.get('/health', { timeout: 5000 });
       isDetectingRef.current = true;
       setIsDetecting(true);
       setIsModelReady(true);
       setModelError(null);
       return true;
+
     } catch (err) {
+
       const message = err?.response?.data?.detail || err?.message || 'Backend unreachable';
       setModelError(`Backend unreachable — ${message}`);
       setIsModelReady(false);
       setIsDetecting(false);
       isDetectingRef.current = false;
       return false;
+      
     }
   }, []);
 
