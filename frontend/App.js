@@ -26,7 +26,7 @@ export default function App() {
         }}
       >
         
-        <Navbar title="TheraMotion" currentRoute={currentRoute}>
+        <Navbar title="TheraMotion" currentRoute={currentRoute} navigationRef={navigationRef}>
           <AppNavigator />
         </Navbar>
       </NavigationContainer>
