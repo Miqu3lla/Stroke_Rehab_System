@@ -4,7 +4,7 @@ import { Clock, X, Play } from 'lucide-react-native';
 import usePatientStore from '../../store/usePatientStore';
 import useSessionStore from '../../store/useSessionStore';
 
-const ExerciseModal = ({ visible, exercise, onClose, navigation }) => {
+export default function ExerciseModal({ visible, exercise, onClose, navigation }) {
   const { recommendedExercises } = usePatientStore();
   const { beginSession } = useSessionStore();
 
@@ -86,6 +86,4 @@ const ExerciseModal = ({ visible, exercise, onClose, navigation }) => {
       </View>
     </Modal>
   );
-};
-
-export default ExerciseModal;
+}

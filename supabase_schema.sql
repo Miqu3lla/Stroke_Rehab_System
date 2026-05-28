@@ -71,14 +71,21 @@ CREATE INDEX idx_recommendation_logs_created_at ON recommendation_logs(created_a
 CREATE INDEX idx_form_predictions_patient_id ON form_predictions(patient_id);
 CREATE INDEX idx_video_predictions_patient_id ON video_predictions(patient_id);
 
--- Create trigger function for updated_at
+-- Create trigger function for updated_at.
+-- pg_catalog comes first in search_path so an attacker who can create
+-- objects in public can't shadow NOW()/timestamp resolution. We also
+-- use CURRENT_TIMESTAMP (a reserved keyword, not subject to
+-- search_path at all) as a second layer of defense.
 CREATE OR REPLACE FUNCTION set_updated_at()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
 BEGIN
-  NEW.updated_at = NOW();
+  NEW.updated_at = CURRENT_TIMESTAMP;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
 -- Create triggers for updated_at
 CREATE TRIGGER trg_patients_updated_at

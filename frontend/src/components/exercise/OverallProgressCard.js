@@ -35,7 +35,7 @@ const TrendBadge = ({ trend }) => {
   );
 };
 
-const OverallProgressCard = () => {
+export default function OverallProgressCard() {
   const { history, historyLoading } = usePatientStore();
   const { overallAverage, trend, hasData } = useOverallProgress(history);
   const navigation = useNavigation();
@@ -102,6 +102,4 @@ const OverallProgressCard = () => {
       </View>
     </View>
   );
-};
-
-export default OverallProgressCard;
+}

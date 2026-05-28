@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Animated } from 'react-native';
 
-const Skeleton = ({ width, height, borderRadius = 12, style, className }) => {
+export default function Skeleton({ width, height, borderRadius = 12, style, className }) {
   const opacity = useRef(new Animated.Value(0.3)).current;
 
   useEffect(() => {
@@ -38,6 +38,4 @@ const Skeleton = ({ width, height, borderRadius = 12, style, className }) => {
       ]}
     />
   );
-};
-
-export default Skeleton;
+}

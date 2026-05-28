@@ -1,7 +1,9 @@
 import logging
+from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from core.auth import assert_patient_match, verify_jwt
 from core.recommender import recommend_session_v2
 
 logger = logging.getLogger("uvicorn.error")
@@ -9,7 +11,11 @@ router = APIRouter()
 
 
 @router.get("/recommendation/{patient_id}")
-def get_recommended_exercise(patient_id: str) -> dict:
+def get_recommended_exercise(
+    patient_id: str,
+    claims: Dict[str, Any] = Depends(verify_jwt),
+) -> dict:
+    assert_patient_match(claims, patient_id)
     """Return trajectory-adapted recommended exercises for the patient.
 
     Trajectory-aware Patient X loop:

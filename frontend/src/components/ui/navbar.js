@@ -5,7 +5,7 @@ import Sidebar from "./sidebar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { supabase } from "../../services/supabase";
 
-const Navbar = ({ title, currentRoute, children }) => {
+export default function Navbar({ title, currentRoute, children }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [session, setSession] = useState(null);
 
@@ -60,6 +60,4 @@ const Navbar = ({ title, currentRoute, children }) => {
       />
     </View>
   );
-};
-
-export default Navbar;
+}

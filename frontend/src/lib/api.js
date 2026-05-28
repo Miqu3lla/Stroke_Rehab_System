@@ -1,10 +1,40 @@
 import axios from "axios"
+import { supabase } from "../services/supabase"
 
 // Create a singleton Axios instance used throughout the app.
 // baseURL points to the production API (Cloudflare tunnel). All requests
 // will be relative to this URL, e.g. instance.post('/patients', payload).
 export const instance = axios.create({
     baseURL: "https://api.necookie.dev",
+})
+
+// Auth interceptor — attaches the Supabase JWT as a Bearer token on
+// every outbound request. The backend's verify_jwt dependency rejects
+// anything without a valid token, so this is what proves we're a logged-in
+// patient (not a random curl from the open tunnel).
+//
+// supabase.auth.getSession() returns the cached session and silently
+// refreshes the access_token in the background when it's near expiry
+// (autoRefreshToken: true in services/supabase.js), so this always grabs
+// a fresh token without us managing the refresh ourselves.
+//
+// We DON'T throw when there's no session — let the request go through
+// without a header, and the backend will return 401. That keeps pre-login
+// flows (signup, password reset if we ever add it) working uniformly.
+instance.interceptors.request.use(async (cfg) => {
+    try {
+        const { data: { session } } = await supabase.auth.getSession()
+        const token = session?.access_token
+        if (token) {
+            cfg.headers = cfg.headers || {}
+            cfg.headers.Authorization = `Bearer ${token}`
+        }
+    } catch (err) {
+        // If session lookup fails, send the request without auth — backend
+        // will reject it. Don't block the request chain on storage hiccups.
+        console.log("[API] Could not attach auth token:", err?.message || err)
+    }
+    return cfg
 })
 
 // In development mode we attach request/response interceptors to

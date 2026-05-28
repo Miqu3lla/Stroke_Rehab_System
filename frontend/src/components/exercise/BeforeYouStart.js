@@ -8,7 +8,7 @@ const COLOR_LEGEND = [
   { color: '#F44336', label: 'Red — adjust your position' },
 ];
 
-const BeforeYouStart = ({ exercise, onBegin }) => {
+export default function BeforeYouStart({ exercise, onBegin }) {
   return (
     <View className="flex-1 justify-center bg-[#0f1116] p-6">
       <Text className="text-white text-2xl font-bold text-center mb-2">{exercise?.name}</Text>
@@ -37,6 +37,4 @@ const BeforeYouStart = ({ exercise, onBegin }) => {
       </TouchableOpacity>
     </View>
   );
-};
-
-export default BeforeYouStart;
+}

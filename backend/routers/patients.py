@@ -1,9 +1,11 @@
 import logging
 import os
+from typing import Any, Dict
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from core import supabase_db as supabase_db_module
+from core.auth import assert_patient_match, verify_jwt
 from core.supabase_db import save_patient_profile
 from schemas.patient import PatientProfileRequest
 
@@ -12,7 +14,15 @@ router = APIRouter()
 
 
 @router.post("/patients")
-def create_patient_profile(payload: PatientProfileRequest) -> dict:
+def create_patient_profile(
+    payload: PatientProfileRequest,
+    claims: Dict[str, Any] = Depends(verify_jwt),
+) -> dict:
+    # The JWT is issued at signup time, BEFORE this endpoint runs to
+    # create the patients row — so the auth user exists but the patient
+    # row doesn't yet. The token's sub IS the user id we'll insert as
+    # the patient_id; reject any request trying to set a different one.
+    assert_patient_match(claims, payload.id)
     record = {
         "name": payload.name,
         "id": payload.id,
