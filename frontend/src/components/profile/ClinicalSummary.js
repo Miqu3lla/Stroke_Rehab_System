@@ -30,7 +30,7 @@ export default function ClinicalSummary({ profile }) {
       
       <View className="flex-row items-center mb-4">
         <View className="w-12 h-12 rounded-full bg-blue-50 items-center justify-center mr-4">
-          <Activity size={24} color="#0052cc" />
+          <Activity size={24} color="#2563eb" />
         </View>
         <View>
           <Text className="text-slate-500 text-sm mb-1">Focus Area</Text>

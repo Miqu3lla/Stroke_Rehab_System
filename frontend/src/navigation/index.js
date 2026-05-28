@@ -4,7 +4,7 @@ import HomeScreen from "../screens/HomeScreen";
 import SessionScreen from "../screens/SessionScreen";
 import ExerciseScreen from "../screens/ExerciseScreen";
 import SessionSummaryScreen from "../screens/SessionSummaryScreen";
-import PatientProfileScreen from "../screens/PatientProfileScreen";
+import PatientProfileScreen from "../screens/PatientProfileScreen.js";
 import OnboardingScreen from "../screens/OnboardingScreen";
 import LoginScreen from "../screens/LoginScreen";
 import SignupScreen from "../screens/SignupScreen";

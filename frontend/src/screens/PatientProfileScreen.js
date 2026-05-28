@@ -21,9 +21,9 @@ export default function PatientProfileScreen() {
     <SafeAreaView className="flex-1 bg-slate-50">
       <View className="flex-row items-center px-4 py-4 bg-white border-b border-slate-200">
         <Pressable onPress={() => navigation.goBack()} className="p-2 mr-3 bg-slate-100 rounded-lg">
-          <ArrowLeft color="#0f172a" size={24} />
+          <ArrowLeft color="#2563eb" size={24} />
         </Pressable>
-        <Text className="text-xl font-bold text-slate-900">Patient Profile</Text>
+        <Text className="text-xl font-bold text-blue-600">Patient Profile</Text>
       </View>
 
       <ScrollView className="flex-1" contentContainerStyle={{ flexGrow: 1, padding: 16 }}>

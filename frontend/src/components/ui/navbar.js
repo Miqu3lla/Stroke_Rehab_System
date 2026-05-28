@@ -1,15 +1,13 @@
 import React, { useState, useEffect } from "react";
 import { Pressable, Text, View } from "react-native";
 import { Menu, User } from "lucide-react-native";
-import { useNavigation } from "@react-navigation/native";
 import Sidebar from "./sidebar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { supabase } from "../../services/supabase";
 
-export default function Navbar({ title, currentRoute, children }) {
+export default function Navbar({ title, currentRoute, children, navigationRef }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [session, setSession] = useState(null);
-  const navigation = useNavigation();
 
   //get user session to check if user is logged in or not 
   useEffect(() => {
@@ -26,47 +24,49 @@ export default function Navbar({ title, currentRoute, children }) {
 
   const insets = useSafeAreaInsets();
 
-  // Hide the navbar entirely when not logged in, or when on the Onboarding, Login, Signup, or PatientProfile screens
-  if (!session || currentRoute === "Onboarding" || currentRoute === "Login" || currentRoute === "Signup" || currentRoute === "PatientProfile") {
-    return <View className="flex-1 bg-white">{children}</View>;
-  }
+  const hideNavbar = !session || currentRoute === "Onboarding" || currentRoute === "Login" || currentRoute === "Signup" || currentRoute === "PatientProfile";
 
   return (
     <View className="flex-1 bg-white">
       {/* Horizontal Navbar */}
-      <View 
-        className="flex-row items-center bg-white px-4 shadow-sm border-b border-slate-200"
-        style={{ paddingTop: Math.max(insets.top, 16), paddingBottom: 16 }}
-      >
-        <Pressable 
-          onPress={() => setIsSidebarOpen(true)}
-          className="p-2 mr-3 bg-slate-100 rounded-lg"
+      {!hideNavbar && (
+        <View 
+          className="flex-row items-center justify-between bg-white px-4 shadow-sm border-b border-slate-200"
+          style={{ paddingTop: Math.max(insets.top, 16), paddingBottom: 16 }}
         >
-          <Menu color="#0f172a" size={24} />
-        </Pressable>
-        <View>
-          <Text className="text-xl font-bold text-slate-900">{title}</Text>
+          <Pressable 
+            onPress={() => setIsSidebarOpen(true)}
+            className="p-2 bg-slate-100 rounded-lg"
+          >
+            <Menu color="#2563eb" size={24} />
+          </Pressable>
+          
+          <View className="flex-1 items-center justify-center">
+            <Text className="text-2xl font-black tracking-tight text-blue-600">{title}</Text>
+          </View>
+          
+          <Pressable 
+            onPress={() => navigationRef?.navigate("PatientProfile")}
+            className="p-2 bg-slate-100 rounded-full"
+          >
+            <User color="#2563eb" size={24} />
+          </Pressable>
         </View>
-        <View className="flex-1" />
-        <Pressable 
-          onPress={() => navigation.navigate("PatientProfile")}
-          className="p-2 ml-3 bg-slate-100 rounded-full"
-        >
-          <User color="#0f172a" size={24} />
-        </Pressable>
-      </View>
+      )}
 
       {/* Main Content Area */}
-      <View className="flex-1 bg-white p-4">
+      <View className={`flex-1 bg-white ${!hideNavbar ? "p-4" : ""}`}>
         {children}
       </View>
 
       {/* Sidebar Overlay */}
-      <Sidebar 
-        isOpen={isSidebarOpen} 
-        onClose={() => setIsSidebarOpen(false)} 
-        currentRoute={currentRoute} 
-      />
+      {!hideNavbar && (
+        <Sidebar 
+          isOpen={isSidebarOpen} 
+          onClose={() => setIsSidebarOpen(false)} 
+          currentRoute={currentRoute} 
+        />
+      )}
     </View>
   );
 }
