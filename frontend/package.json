@@ -19,6 +19,7 @@
     "expo-secure-store": "~15.0.8",
     "expo-speech": "~14.0.8",
     "expo-status-bar": "~3.0.9",
+    "expo-video": "~3.0.16",
     "lucide-react-native": "^1.7.0",
     "nativewind": "^4.2.3",
     "react": "19.1.0",
