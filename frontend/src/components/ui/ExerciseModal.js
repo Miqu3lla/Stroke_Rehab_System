@@ -5,6 +5,7 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import { supabase } from '../../services/supabase';
 import usePatientStore from '../../store/usePatientStore';
 import useSessionStore from '../../store/useSessionStore';
+import { formatExerciseDuration } from '../../utils/duration';
 
 export default function ExerciseModal({ visible, exercise, onClose, navigation }) {
   const { recommendedExercises } = usePatientStore();
@@ -83,7 +84,7 @@ export default function ExerciseModal({ visible, exercise, onClose, navigation }
               <View className="flex-row items-center gap-2 mt-2">
                 <Clock size={18} color="#434654" />
                 <Text className="text-[16px] font-medium text-[#434654]">
-                  {exercise.duration_minutes} minutes
+                  {formatExerciseDuration(exercise)}
                 </Text>
               </View>
             </View>

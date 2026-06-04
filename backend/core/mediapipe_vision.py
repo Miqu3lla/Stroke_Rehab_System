@@ -20,9 +20,15 @@ _realtime_pose_instance: Optional[Any] = None
 def _get_realtime_pose():
     global _realtime_pose_instance
     if _realtime_pose_instance is None:
+        # static_image_mode=False enables MediaPipe's per-frame tracking — it
+        # only runs the heavy detector once, then tracks landmarks frame-to-
+        # frame. 2-5x faster than re-detecting from scratch every call.
+        # model_complexity=0 is the Lite model — ~2-3x faster than Full (1)
+        # with minor accuracy loss that doesn't matter for slow rehab motion.
         _realtime_pose_instance = mp.solutions.pose.Pose(
-            static_image_mode=True,
-            model_complexity=1,
+            static_image_mode=False,
+            model_complexity=0,
+            smooth_landmarks=True,
             min_detection_confidence=0.5,
             min_tracking_confidence=0.5,
         )

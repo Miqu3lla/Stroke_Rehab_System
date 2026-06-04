@@ -176,6 +176,46 @@ def _sessions_per_week_from_action(action: str) -> int:
     return {"downgrade": 2, "maintain": 3, "upgrade": 4}.get(action, 3)
 
 
+def _per_exercise_duration_multiplier(stats: Optional[Dict[str, Any]]) -> float:
+    """Scale the next session's duration for ONE exercise by how much the
+    patient improved on it specifically.
+
+    Why per-exercise instead of the trajectory's global multiplier:
+    `trajectory_to_action` reads ALL of the patient's recent sessions
+    flattened together, so a `fatigue_pattern` or `rapid_drop` signal
+    can fire from old struggling sessions on a different exercise and
+    drag the next recommendation's duration down even when the patient
+    just had a great session. With per-exercise scaling, improvement on
+    knee_extension shows up as a longer knee_extension next time, no
+    matter what other exercises in the history are doing.
+
+    Formula:
+        delta = latest_score - mean(previous_scores_for_this_exercise)
+        multiplier = 1 + delta / 200, clamped to [0.75, 1.5]
+
+    Why /200: matches the trajectory's existing +15% "upgrade" boost
+    when the patient improves by ~30 points — a reasonable threshold
+    for "noticeably better." A +15-point gain produces +7.5% duration,
+    a -50-point drop bottoms out at 0.75× (the floor).
+
+    First-time exercises (no prior attempts) return 1.0 → base duration,
+    so a fresh patient never gets a downgrade on their first try.
+    """
+    if not stats:
+        return 1.0
+    scores = stats.get("scores_oldest_first") or []
+    if len(scores) < 2:
+        return 1.0  # need at least one prior attempt to measure improvement
+
+    latest = float(scores[-1])
+    prior_scores = scores[:-1]
+    prior_mean = sum(prior_scores) / len(prior_scores)
+    delta = latest - prior_mean
+
+    multiplier = 1.0 + (delta / 200.0)
+    return max(0.75, min(1.5, multiplier))
+
+
 def recommend_session_v2(
     patient_id: str,
     count: int = 3,
@@ -235,7 +275,10 @@ def recommend_session_v2(
 
     intensity = _intensity_from_action(action["action"])
     sessions_per_week = _sessions_per_week_from_action(action["action"])
-    duration_multiplier = float(action.get("duration_multiplier") or 1.0)
+    # NOTE: action["duration_multiplier"] is intentionally not read here
+    # anymore — per-exercise improvement now drives duration (see
+    # _per_exercise_duration_multiplier). The action still drives
+    # exercise selection and intensity labelling.
     # Side guidance appended to each exercise's reasoning so the patient
     # sees a unilateral/bilateral training reminder per card.
     side_note = trajectory.side_guidance(affected_side)
@@ -243,14 +286,34 @@ def recommend_session_v2(
     exercises: List[Dict[str, Any]] = []
     for index, ex in enumerate(picked):
         base_minutes = ex.get("base_duration_minutes") or 2
-        # Floor at 1min so trajectory downgrades on a short base duration
-        # (e.g. 2min * 0.8 = 1.6 → 2min) aren't clamped up to a longer
-        # session than the catalog prescribes.
-        duration_minutes = max(1, int(round(base_minutes * duration_multiplier)))
+        # Work in seconds so the upgrade/downgrade multiplier is actually
+        # visible. The old `int(round(base_minutes * 1.15))` path
+        # silently rounded 2 * 1.15 = 2.3 back down to 2 minutes, so
+        # the bonus never reached the timer.
+        base_seconds = base_minutes * 60
 
         # Per-exercise reasoning: pull this exercise's trajectory stats
         # if it appears in the patient's history.
         stats = trajectory_result["per_exercise"].get(ex["id"])
+
+        # Duration multiplier is now per-exercise: it tracks improvement
+        # on THIS exercise specifically, not the noisy global trajectory
+        # action. The global action still drives exercise selection (the
+        # easier vs harder picks come from pick_exercises_for_action),
+        # but duration shouldn't punish a patient who improved on knee
+        # extension just because their old arm raise sessions ended
+        # early. Acute patients are still safety-capped at 1.0× so a
+        # post-stroke improvement spike doesn't push them past base.
+        per_ex_multiplier = _per_exercise_duration_multiplier(stats)
+        if action.get("phase") == "acute":
+            per_ex_multiplier = min(1.0, per_ex_multiplier)
+
+        # Floor at 60s so a downgrade on a 2-minute base (e.g.
+        # 120 * 0.75 = 90) still produces at least a 1-minute exercise.
+        duration_seconds = max(60, int(round(base_seconds * per_ex_multiplier)))
+        # Kept for UI cards that only need a coarse label. The timer
+        # itself reads `duration_seconds` so it's exact.
+        duration_minutes = max(1, int(round(duration_seconds / 60)))
         if stats and stats.get("latest_score") is not None:
             latest = stats["latest_score"]
             mean = stats.get("mean_score") or latest
@@ -271,6 +334,7 @@ def recommend_session_v2(
             "description": ex["description"],
             "body_area": ex["body_area"],
             "duration_minutes": duration_minutes,
+            "duration_seconds": duration_seconds,
             "intensity": intensity,
             "difficulty_level": ex["difficulty_level"],
             "focus": ex["focus"],
