@@ -160,6 +160,18 @@ const useCamera = (exercise, { onComplete } = {}) => {
   // Captures one frame from the camera and ships it down the WS as
   // binary. Sets the in-flight flag so the next call short-circuits
   // until the result lands. The watchdog backstops a missing result.
+  //
+  // Retry policy (CodeRabbit review 2026-06-04): the old loop retried
+  // every 200ms on any send failure, which meant a closed mid-session
+  // socket left captureAndSend calling takePictureAsync forever with no
+  // chance of delivery. Now we distinguish:
+  //   - 'not_open'  → handshake still in flight → schedule a 200ms retry
+  //   - 'closed'    → socket is gone → STOP the loop (handlePoseClose
+  //                   will already have run; nothing for us to send to)
+  //   - 'send_failed' → runtime error → also stop; reconnect via the
+  //                   higher-level session lifecycle, not in this loop
+  // And the catch block now schedules a retry on transient capture
+  // errors instead of silently parking the loop with inFlight cleared.
   const captureAndSend = useCallback(async () => {
     if (!timerRef.current || !cameraRef.current) return;
     if (inFlightRef.current) return;
@@ -178,16 +190,24 @@ const useCamera = (exercise, { onComplete } = {}) => {
 
       frameCountRef.current += 1;
 
-      const sent = sendFrameBase64(photo?.base64);
-      if (!sent) {
-        // WS not open yet (first-frame race) or send failed. Retry
-        // shortly without holding the in-flight flag.
+      const result = sendFrameBase64(photo?.base64);
+      if (!result?.ok) {
         inFlightRef.current = false;
-        if (retryRef.current) clearTimeout(retryRef.current);
-        retryRef.current = setTimeout(() => {
-          retryRef.current = null;
-          if (timerRef.current) captureAndSend();
-        }, 200);
+        if (result?.reason === 'not_open') {
+          // Handshake not finished yet (first-frame race). Try again
+          // shortly — no need to escalate.
+          if (retryRef.current) clearTimeout(retryRef.current);
+          retryRef.current = setTimeout(() => {
+            retryRef.current = null;
+            if (timerRef.current) captureAndSend();
+          }, 200);
+          return;
+        }
+        // 'closed' or 'send_failed' — the socket is terminal. Stop the
+        // loop entirely. The onClose callback registered with
+        // startDetection has already (or will shortly) update the UI
+        // state and tear down detection. Reconnect is a higher-level
+        // concern — not the capture loop's job.
         return;
       }
 
@@ -203,14 +223,28 @@ const useCamera = (exercise, { onComplete } = {}) => {
         }
       }, 2000);
     } catch (_) {
+      // Capture exceptions are usually transient (camera busy, orientation
+      // change, etc). Reschedule a fresh attempt instead of stalling the
+      // loop forever with inFlight cleared and no follow-up timer.
       inFlightRef.current = false;
+      if (retryRef.current) clearTimeout(retryRef.current);
+      retryRef.current = setTimeout(() => {
+        retryRef.current = null;
+        if (timerRef.current) captureAndSend();
+      }, 200);
     }
   }, [sendFrameBase64]);
 
-  // Handler the WebSocket calls once per pose result. Updates the UI
+  // Handler the WebSocket calls once per server message. Updates the UI
   // state, buffers keypoints for the end-of-session LSTM call, then
   // immediately kicks off the next capture (no fixed sleep — the
   // backend's response IS the pacing signal).
+  //
+  // Server may also send error payloads ({error: 'decode_failed' |
+  // 'frame_too_large' | 'empty_frame' | 'inference_failed'}) for frames
+  // it couldn't process. We treat those as "no-op for skeleton state,
+  // just unblock the loop" — clearing setKeypoints([]) on every bad
+  // frame would visibly flicker the overlay.
   const handlePoseResult = useCallback((result) => {
     // The reply landed — clear the watchdog before it fires a
     // duplicate capture.
@@ -219,12 +253,11 @@ const useCamera = (exercise, { onComplete } = {}) => {
       watchdogRef.current = null;
     }
 
-    let score = null;
-    let colors = {};
+    const isErrorPayload = result && typeof result.error === 'string';
 
-    if (result) {
-      score = result.score;
-      colors = result.colors || {};
+    if (result && !isErrorPayload) {
+      const score = result.score;
+      const colors = result.colors || {};
       if (result.imageWidth && result.imageHeight) {
         setInferenceSize({ width: result.imageWidth, height: result.imageHeight });
       }
@@ -236,16 +269,20 @@ const useCamera = (exercise, { onComplete } = {}) => {
       if (Array.isArray(frameKeypoints) && frameKeypoints.length > 0) {
         keypointsBufferRef.current.push(frameKeypoints);
       }
+      // Only commit the frame to scoreHistory if MediaPipe actually
+      // returned a score. Synthesising a fake number for missing
+      // frames poisoned the per-exercise trend the trajectory
+      // analyzer reads.
+      if (score !== null && score !== undefined) {
+        setCurrentScore(score);
+        setScoreHistory((prev) => [...prev, score]);
+      }
+      setJointColors(colors);
     }
-
-    // Only commit the frame to scoreHistory if MediaPipe actually
-    // returned a score. Synthesising a fake number for missing frames
-    // poisoned the per-exercise trend the trajectory analyzer reads.
-    if (score !== null && score !== undefined) {
-      setCurrentScore(score);
-      setScoreHistory((prev) => [...prev, score]);
-    }
-    setJointColors(colors);
+    // Error payload: deliberately do NOT clear keypoints / colors so
+    // the existing skeleton keeps showing while the next good frame
+    // catches up. The whole point of the server sending an error
+    // payload (rather than silent drop) is to keep this loop moving.
 
     inFlightRef.current = false;
     // Self-pacing loop: as soon as the last result is processed, ship
@@ -255,6 +292,23 @@ const useCamera = (exercise, { onComplete } = {}) => {
       captureAndSend();
     }
   }, [captureAndSend]);
+
+  // Called by usePoseDetection when the WebSocket closes mid-session
+  // (server hung up, network dropped, etc). We stop the capture loop
+  // so it doesn't burn camera cycles into a dead channel. The patient
+  // sees the "🟢 Pose tracking active" indicator flip off via the
+  // hook's isModelReady state; ending the exercise is their call.
+  const handlePoseClose = useCallback(() => {
+    inFlightRef.current = false;
+    if (watchdogRef.current) {
+      clearTimeout(watchdogRef.current);
+      watchdogRef.current = null;
+    }
+    if (retryRef.current) {
+      clearTimeout(retryRef.current);
+      retryRef.current = null;
+    }
+  }, []);
 
   //resets all state and starts the exercise timer + pose detection
   const startExercise = useCallback(() => {
@@ -294,7 +348,12 @@ const useCamera = (exercise, { onComplete } = {}) => {
 
     const loadModelAndStartDetection = async () => {
       try {
-        const ready = await startDetection(exerciseHint, affectedSide, handlePoseResult);
+        const ready = await startDetection(
+          exerciseHint,
+          affectedSide,
+          handlePoseResult,
+          handlePoseClose,
+        );
         if (!ready) {
           setFeedbackText('Pose detection unavailable — exercise without skeleton');
           return;
@@ -310,7 +369,7 @@ const useCamera = (exercise, { onComplete } = {}) => {
     };
 
     loadModelAndStartDetection();
-  }, [startDetection, captureAndSend, handlePoseResult, exercise, affectedSide]);
+  }, [startDetection, captureAndSend, handlePoseResult, handlePoseClose, exercise, affectedSide]);
 
   //auto-finish when time runs out
   useEffect(() => {

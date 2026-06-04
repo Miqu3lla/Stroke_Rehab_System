@@ -7,15 +7,30 @@ import { supabase } from '../services/supabase';
  * Hook to handle pose detection by communicating with the backend.
  *
  * Phase 2 architecture: a persistent WebSocket replaces the HTTP-per-frame
- * pattern. We open one /ws/pose connection per exercise (the JWT, exercise
- * type, and affected side are query params on the handshake URL), then
- * stream raw JPEG bytes over binary frames and receive JSON pose results
- * via the message handler. This removes ~80–150ms of per-frame HTTP +
- * base64 overhead that the old POST /pose/estimate path paid every cycle.
+ * pattern. We open one /ws/pose connection per exercise, stream raw JPEG
+ * bytes over binary frames, and receive JSON pose results via the message
+ * handler. This removes ~80–150ms of per-frame HTTP + base64 overhead that
+ * the old POST /pose/estimate path paid every cycle.
+ *
+ * Auth protocol (since 2026-06-04, after CodeRabbit feedback):
+ *   1. Open WS to /ws/pose with NO token in the URL — query-string tokens
+ *      end up in reverse-proxy logs and would leak the bearer.
+ *   2. On open, send {"type": "auth", "token", "exercise_type",
+ *      "affected_side"} as the first message.
+ *   3. Wait for {"type": "auth_ok"} from the server before we consider
+ *      the connection live and let the frame loop start.
+ *   4. The whole handshake (TCP connect + auth round-trip) is bounded by
+ *      HANDSHAKE_TIMEOUT_MS — without it a stuck CONNECTING socket would
+ *      leave the UI on "Preparing pose detection…" forever.
  *
  * The end-of-session LSTM call (classifyFormSequence) still uses HTTP
  * because it's one-shot and benefits from the standard auth interceptor.
  */
+
+// Cap on how long startDetection waits for handshake + auth_ok. Real
+// networks resolve this in under a second; a stuck CONNECTING socket
+// previously hung the UI indefinitely.
+const HANDSHAKE_TIMEOUT_MS = 10000;
 
 const usePoseDetection = () => {
   // UI states for loading and error handling
@@ -28,31 +43,41 @@ const usePoseDetection = () => {
   // closure when useCamera re-renders mid-exercise.
   const wsRef = useRef(null);
   const onResultRef = useRef(null);
+  // onCloseRef lets useCamera know the underlying socket dropped so it
+  // can stop the capture loop instead of busy-retrying takePictureAsync.
+  const onCloseRef = useRef(null);
+  // True once the auth_ok handshake has completed. Pose result messages
+  // arriving before this point would be a protocol error.
+  const authedRef = useRef(false);
 
   // Build the wss:// URL from the axios baseURL — same host as the HTTP
-  // API, so dev/prod just works without an extra env var. URLSearchParams
-  // handles the param escaping (token contains '.', '+', '/' that must
-  // pass through unmodified for JWT validation to succeed).
-  const buildWsUrl = useCallback((exerciseType, affectedSide, token) => {
+  // API, so dev/prod just works without an extra env var. We deliberately
+  // do NOT put the token in the query string; auth happens via the first
+  // message after open.
+  const buildWsUrl = useCallback(() => {
     const httpBase = (api.defaults?.baseURL || '').replace(/\/$/, '');
     const wsBase = httpBase.replace(/^https?:/i, (scheme) =>
       scheme.toLowerCase() === 'https:' ? 'wss:' : 'ws:'
     );
-    const params = new URLSearchParams({
-      token,
-      exercise_type: exerciseType || '',
-      affected_side: affectedSide || 'right',
-    });
-    return `${wsBase}/ws/pose?${params.toString()}`;
+    return `${wsBase}/ws/pose`;
   }, []);
 
   // Opens the realtime pose WebSocket. Resolves true on successful
-  // handshake, false on auth/connection failure. The supplied onResult
-  // callback is invoked once per server message with the decoded pose
-  // payload — useCamera uses this to update skeleton state AND to
-  // trigger the next frame capture (backpressure-driven loop).
-  const startDetection = useCallback(async (exerciseType = '', affectedSide = 'right', onResult = null) => {
+  // auth_ok handshake, false on connection / auth / timeout failure. The
+  // supplied onResult callback is invoked once per server pose message
+  // (after auth_ok); useCamera uses this to update skeleton state and
+  // trigger the next frame capture (backpressure-driven loop). The
+  // onClose callback fires when the socket drops so useCamera can tear
+  // down its capture loop instead of retrying into a dead channel.
+  const startDetection = useCallback(async (
+    exerciseType = '',
+    affectedSide = 'right',
+    onResult = null,
+    onClose = null,
+  ) => {
     onResultRef.current = onResult;
+    onCloseRef.current = onClose;
+    authedRef.current = false;
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -64,8 +89,7 @@ const usePoseDetection = () => {
         return false;
       }
 
-      const url = buildWsUrl(exerciseType, affectedSide, token);
-      const ws = new WebSocket(url);
+      const ws = new WebSocket(buildWsUrl());
       // arraybuffer so future server→client binary messages (if we ever
       // send compressed pose deltas) come through as ArrayBuffer instead
       // of Blob. Current server only sends JSON text, so this is forward-
@@ -73,47 +97,100 @@ const usePoseDetection = () => {
       ws.binaryType = 'arraybuffer';
       wsRef.current = ws;
 
-      // Wrap the open/error events in a promise so the caller can await
-      // the handshake completing before kicking off the frame loop.
       return await new Promise((resolve) => {
         let settled = false;
         const finish = (ok) => {
           if (settled) return;
           settled = true;
+          if (timeoutHandle) clearTimeout(timeoutHandle);
           resolve(ok);
         };
 
+        // Handshake timeout — without this a socket stuck in CONNECTING
+        // (e.g. tunnel unavailable, server hung) would leave the caller
+        // awaiting forever and the UI on "Preparing pose detection…".
+        const timeoutHandle = setTimeout(() => {
+          setModelError('Pose tracking handshake timed out');
+          setIsModelReady(false);
+          setIsDetecting(false);
+          try { ws.close(); } catch (_) { /* already closed */ }
+          finish(false);
+        }, HANDSHAKE_TIMEOUT_MS);
+
         ws.onopen = () => {
-          setIsDetecting(true);
-          setIsModelReady(true);
-          setModelError(null);
-          finish(true);
+          // Don't mark ready yet — we still need auth_ok from the server.
+          try {
+            ws.send(JSON.stringify({
+              type: 'auth',
+              token,
+              exercise_type: exerciseType || '',
+              affected_side: affectedSide || 'right',
+            }));
+          } catch (err) {
+            setModelError('Failed to send auth message');
+            try { ws.close(); } catch (_) { /* already closed */ }
+            finish(false);
+          }
         };
+
         ws.onerror = () => {
           setModelError('Pose tracking connection error');
           setIsModelReady(false);
           setIsDetecting(false);
           finish(false);
         };
+
         ws.onmessage = (event) => {
+          let data;
           try {
             const raw = typeof event.data === 'string'
               ? event.data
               : new TextDecoder().decode(event.data);
-            const data = JSON.parse(raw);
-            onResultRef.current?.(data);
+            data = JSON.parse(raw);
           } catch (err) {
-            console.log('[Pose WS] Failed to parse result:', err?.message || err);
+            console.log('[Pose WS] Failed to parse message:', err?.message || err);
+            return;
           }
+
+          // Auth phase — first message must be auth_ok.
+          if (!authedRef.current) {
+            if (data?.type === 'auth_ok') {
+              authedRef.current = true;
+              setIsDetecting(true);
+              setIsModelReady(true);
+              setModelError(null);
+              finish(true);
+            } else {
+              // Anything other than auth_ok before we're authed is a
+              // protocol failure — bail.
+              setModelError('Pose tracking auth failed');
+              try { ws.close(); } catch (_) { /* already closed */ }
+              finish(false);
+            }
+            return;
+          }
+
+          // Post-auth: every message is either a pose result or a
+          // server-side error payload (decode_failed / frame_too_large
+          // / etc). We forward both to useCamera so its backpressure
+          // loop always clears its in-flight flag on any reply.
+          onResultRef.current?.(data);
         };
+
         ws.onclose = (event) => {
           setIsDetecting(false);
           setIsModelReady(false);
-          // 4401 = our app-defined "unauthorized" close code.
           if (event?.code === 4401) {
             setModelError('Pose tracking auth failed — please log in again');
           }
-          // If we never opened (failed handshake), unblock the promise.
+          // Notify the consumer (useCamera) so it can stop capturing
+          // instead of feeding a dead socket. Skip if we never even
+          // authed — startDetection's promise rejection handles that.
+          if (authedRef.current) {
+            onCloseRef.current?.(event);
+          }
+          // If the handshake hadn't completed yet, this closes the
+          // resolution path too.
           finish(false);
         };
       });
@@ -125,13 +202,15 @@ const usePoseDetection = () => {
     }
   }, [buildWsUrl]);
 
-  // Closes the pose WebSocket and clears the callback. Safe to call
+  // Closes the pose WebSocket and clears all callbacks. Safe to call
   // multiple times — both unmount cleanup and the explicit stop path
   // route through here.
   const stopDetection = useCallback(() => {
     setIsDetecting(false);
     setIsModelReady(false);
     onResultRef.current = null;
+    onCloseRef.current = null;
+    authedRef.current = false;
     const ws = wsRef.current;
     if (ws) {
       wsRef.current = null;
@@ -140,29 +219,41 @@ const usePoseDetection = () => {
   }, []);
 
   // Convert a base64-encoded JPEG to an ArrayBuffer and send it over the
-  // open WebSocket as a binary frame. Returns true when the frame was
-  // queued for send, false when the socket isn't ready (caller can use
-  // this to know whether backpressure was actually applied). Drops
-  // silently on broken sockets — the watchdog in useCamera handles
-  // recovery.
+  // open WebSocket as a binary frame. Returns one of:
+  //   { ok: true }                                — frame queued for send
+  //   { ok: false, reason: 'not_open' }           — handshake not finished yet (retryable)
+  //   { ok: false, reason: 'closed' }             — socket gone (terminal)
+  //   { ok: false, reason: 'send_failed', err }   — runtime error (terminal-ish)
+  // useCamera uses these to decide between retrying and tearing down.
   const sendFrameBase64 = useCallback((base64) => {
     const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN || !base64) return false;
+    if (!ws) return { ok: false, reason: 'closed' };
+    // CLOSING (2) and CLOSED (3) are both terminal from our side.
+    if (ws.readyState === WebSocket.CLOSING || ws.readyState === WebSocket.CLOSED) {
+      return { ok: false, reason: 'closed' };
+    }
+    // CONNECTING (0) or pre-auth_ok OPEN (1) — caller can retry shortly.
+    if (ws.readyState !== WebSocket.OPEN || !authedRef.current) {
+      return { ok: false, reason: 'not_open' };
+    }
+    if (!base64) {
+      return { ok: false, reason: 'send_failed' };
+    }
     try {
       // atob is available globally in modern React Native / Expo SDK 49+.
-      // We could use a fetch(file://photo.uri).arrayBuffer() instead but
-      // that adds a filesystem round-trip; the base64 path is already in
-      // hand from takePictureAsync.
+      // We could use fetch(file://photo.uri).arrayBuffer() instead but
+      // that adds a filesystem round-trip; base64 is already in hand
+      // from takePictureAsync.
       const binary = atob(base64);
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i += 1) {
         bytes[i] = binary.charCodeAt(i);
       }
       ws.send(bytes.buffer);
-      return true;
+      return { ok: true };
     } catch (err) {
       console.log('[Pose WS] sendFrame failed:', err?.message || err);
-      return false;
+      return { ok: false, reason: 'send_failed', err };
     }
   }, []);
 

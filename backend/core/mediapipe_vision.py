@@ -1,4 +1,3 @@
-import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -9,37 +8,63 @@ import numpy as np
 LANDMARK_COUNT = 33
 KEYPOINT_DIM = LANDMARK_COUNT * 3
 
-# Single reusable Pose instance for realtime single-frame requests from the
-# mobile client. MediaPipe Pose isn't thread-safe, so serialize access with a
-# lock — FastAPI runs sync endpoints in a thread pool and concurrent .process()
-# calls on the same Pose object crash the underlying C++ graph.
-_realtime_pose_lock = threading.Lock()
-_realtime_pose_instance: Optional[Any] = None
+
+def create_realtime_pose() -> Any:
+    """Build a fresh MediaPipe Pose instance for one realtime stream.
+
+    Used by the /ws/pose endpoint: each WebSocket connection owns its
+    own Pose object for the life of the connection, so MediaPipe's
+    internal tracking + smoothing state never leaks between clients.
+    Previously a single module-global instance was shared across
+    requests — concurrent users would inherit each other's last-frame
+    landmark continuity, which is a subtle correctness bug.
+
+    `static_image_mode=False` keeps the per-frame tracking optimization
+    (~2-5x faster than re-detecting). `model_complexity=0` is the Lite
+    model (~2-3x faster than Full) — accuracy loss doesn't matter for
+    slow rehab motion. `smooth_landmarks=True` provides built-in
+    temporal smoothing on the landmark stream.
+    """
+    return mp.solutions.pose.Pose(
+        static_image_mode=False,
+        model_complexity=0,
+        smooth_landmarks=True,
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5,
+    )
 
 
-def _get_realtime_pose():
-    global _realtime_pose_instance
-    if _realtime_pose_instance is None:
-        # static_image_mode=False enables MediaPipe's per-frame tracking — it
-        # only runs the heavy detector once, then tracks landmarks frame-to-
-        # frame. 2-5x faster than re-detecting from scratch every call.
-        # model_complexity=0 is the Lite model — ~2-3x faster than Full (1)
-        # with minor accuracy loss that doesn't matter for slow rehab motion.
-        _realtime_pose_instance = mp.solutions.pose.Pose(
-            static_image_mode=False,
-            model_complexity=0,
-            smooth_landmarks=True,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5,
-        )
-    return _realtime_pose_instance
+def _create_single_frame_pose() -> Any:
+    """Build a Pose for one-shot single-frame inference (HTTP /pose/estimate).
+
+    `static_image_mode=True` runs the detector from scratch every call
+    — no inter-frame state to worry about, which makes the instance
+    safe to discard immediately. This is what the legacy HTTP path uses
+    so each request stays stateless.
+    """
+    return mp.solutions.pose.Pose(
+        static_image_mode=True,
+        model_complexity=0,
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5,
+    )
 
 
-def estimate_pose_from_image_bytes(image_bytes: bytes) -> Dict[str, Any]:
+def estimate_pose_from_image_bytes(
+    image_bytes: bytes,
+    pose_instance: Optional[Any] = None,
+) -> Dict[str, Any]:
     """
     Decode a single JPEG/PNG and run MediaPipe Pose on it. Returns 33 keypoints
     in PIXEL coordinates (matching the input image dimensions) so the mobile
     client can map them directly to its camera view.
+
+    Caller MAY pass an existing Pose instance — used by the WebSocket
+    path so a long-running stream reuses one stateful detector. The
+    caller is responsible for serializing concurrent access to that
+    instance (MediaPipe Pose isn't thread-safe). When `pose_instance`
+    is None we build a fresh stateless `static_image_mode=True` Pose
+    just for this call so HTTP requests never share state with anyone.
     """
     np_arr = np.frombuffer(image_bytes, np.uint8)
     bgr_frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
@@ -56,8 +81,12 @@ def estimate_pose_from_image_bytes(image_bytes: bytes) -> Dict[str, Any]:
     h, w = bgr_frame.shape[:2]
     rgb_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
 
-    with _realtime_pose_lock:
-        results = _get_realtime_pose().process(rgb_frame)
+    if pose_instance is not None:
+        results = pose_instance.process(rgb_frame)
+    else:
+        # Build-then-close so the C++ graph is torn down with the call.
+        with _create_single_frame_pose() as pose:
+            results = pose.process(rgb_frame)
 
     if not results.pose_landmarks:
         return {"keypoints": [], "image_width": w, "image_height": h}

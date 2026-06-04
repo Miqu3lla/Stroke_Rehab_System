@@ -93,7 +93,7 @@ function useSmoothedKeypoints(rawKeypoints) {
       const displayed = displayedRef.current;
 
       if (target.length > 0 && displayed.length === target.length) {
-        let didMove = false;
+        let needsRender = false;
         const next = new Array(displayed.length);
         for (let i = 0; i < displayed.length; i += 1) {
           const d = displayed[i];
@@ -104,13 +104,19 @@ function useSmoothedKeypoints(rawKeypoints) {
           }
           const dx = t.x - d.x;
           const dy = t.y - d.y;
-          // Skip the math when this joint has already caught up — saves
-          // allocations on still poses.
+          // Track confidence delta too — a joint whose position has
+          // already settled but whose MediaPipe visibility dropped
+          // below MIN_CONFIDENCE still needs the overlay to repaint
+          // and hide that bone. The old code only checked dx/dy, so
+          // stale visibility could keep a phantom bone drawn until
+          // the joint moved again.
+          const scoreChanged = Math.abs((d.score || 0) - (t.score || 0)) > 0.01;
           if (Math.abs(dx) < SNAP_DISTANCE_PX && Math.abs(dy) < SNAP_DISTANCE_PX) {
             next[i] = { x: t.x, y: t.y, z: t.z, score: t.score };
+            if (scoreChanged) needsRender = true;
             continue;
           }
-          didMove = true;
+          needsRender = true;
           next[i] = {
             x: d.x + dx * SMOOTHING_FACTOR,
             y: d.y + dy * SMOOTHING_FACTOR,
@@ -122,7 +128,7 @@ function useSmoothedKeypoints(rawKeypoints) {
           };
         }
         displayedRef.current = next;
-        if (didMove) forceRender((n) => n + 1);
+        if (needsRender) forceRender((n) => n + 1);
       }
 
       rafRef.current = requestAnimationFrame(tick);
