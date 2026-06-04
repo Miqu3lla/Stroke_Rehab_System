@@ -94,7 +94,7 @@ def _get_pg_config() -> Dict[str, str]:
 def _fetch_catalog_rows() -> List[Dict[str, Any]]:
     """Return all rows from `public.exercises`. Tries docker → psycopg2 → REST."""
     query = (
-        "SELECT id, exercise_type, display_name, body_area, description "
+        "SELECT id, exercise_type, display_name, body_area, description, demo_video_path "
         "FROM public.exercises"
     )
 
@@ -144,7 +144,7 @@ def _fetch_catalog_rows() -> List[Dict[str, Any]]:
     supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
     service_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
     if supabase_url and service_key:
-        url = f"{supabase_url}/rest/v1/exercises?select=id,exercise_type,display_name,body_area,description"
+        url = f"{supabase_url}/rest/v1/exercises?select=id,exercise_type,display_name,body_area,description,demo_video_path"
         req = request.Request(url, headers={
             "apikey": service_key,
             "Authorization": f"Bearer {service_key}",
@@ -170,6 +170,11 @@ def _decorate(row: Dict[str, Any]) -> Dict[str, Any]:
         "difficulty_level": overlay["difficulty_level"],
         "base_duration_minutes": overlay["base_duration_minutes"],
         "focus": overlay["focus"],
+        # demo_video_path is the storage-relative filename (e.g.
+        # "shoulder_flexion.mp4"). The frontend builds the full URL via
+        # supabase.storage.from('exercise-demos').getPublicUrl(path) so
+        # the host adapts to dev vs prod automatically.
+        "demo_video_path": row.get("demo_video_path"),
     }
 
 

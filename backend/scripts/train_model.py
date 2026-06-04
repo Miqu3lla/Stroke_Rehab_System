@@ -5,7 +5,6 @@ import sys
 from typing import Dict, Tuple
 
 import numpy as np
-import pandas as pd
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset, random_split
@@ -19,7 +18,10 @@ from core.mediapipe_vision import extract_sequence_from_video
 
 INPUT_SIZE = 99
 SEQUENCE_LEN = 40
-DEFAULT_BATCH_SIZE = 256
+# Bumped from 256 to 1024 — the LSTM is tiny (~100K params) so 16GB
+# VRAM has room to spare and a larger batch keeps the GPU busier
+# between data loads. Override with --batch-size if you ever go OOM.
+DEFAULT_BATCH_SIZE = 1024
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".avi", ".mkv"}
 LABEL_ALIASES = {
     "correct": 1,
@@ -229,7 +231,9 @@ def train_lstm(
     output_weights: Path,
     epochs: int = 25,
     batch_size: int = DEFAULT_BATCH_SIZE,
-    num_workers: int = 4,
+    # i5-10400F has 12 threads — pushing workers higher than 4 lets video
+    # decoding parallelize so the GPU isn't waiting on data preprocessing.
+    num_workers: int = 8,
     compile_model: bool = True,
     val_split: float = 0.2,
     early_stopping_patience: int = 3,
@@ -421,8 +425,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num-workers",
         type=int,
-        default=4,
-        help="DataLoader worker processes",
+        default=8,
+        help="DataLoader worker processes (default 8 — fine for 6c/12t CPUs like the i5-10400F)",
     )
     parser.add_argument(
         "--no-compile",

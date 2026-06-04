@@ -278,6 +278,7 @@ def recommend_session_v2(
             "affected_side": affected_side,
             "session_index": index,
             "reasoning": per_ex_reason,
+            "demo_video_path": ex.get("demo_video_path"),
             "recommendation": {
                 "intensity": intensity,
                 "focus": ex["focus"],
