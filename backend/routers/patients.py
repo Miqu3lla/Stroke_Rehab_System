@@ -28,7 +28,7 @@ def create_patient_profile(
         "id": payload.id,
         "stroke_type": "ischemic",
         "months_in_recovery": payload.months_in_recovery,
-        "affected_part": payload.affected_area,
+        "affected_area": payload.affected_area,
         "affected_side": payload.affected_side,
         "source_app": "frontend",
     }
