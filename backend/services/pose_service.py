@@ -289,3 +289,115 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
             hint = "Step back — show your full body"
 
     return {"score": overall, "angles": angles, "colors": colors, "hint": hint}
+
+
+# ── Rep counting (sets-and-modes feature, Phase A, 2026-06-04) ─────────
+# Counts repetitions by watching the active joint angle cross into the
+# green form-band and back out, with hysteresis at the yellow-band edge
+# so a patient hovering near the boundary doesn't spam-count reps.
+#
+# Wired in Phase C — for now this class lives on its own. The WebSocket
+# pose loop will instantiate one per rep-set (target_reps=12 by default)
+# and call .update() per frame with the joint angle + the same band
+# parameters that color_and_score uses for that exercise.
+
+class RepCounter:
+    """Per-set rep counter with form-band hysteresis.
+
+    State machine:
+        INITIAL          → patient may have started in the green band;
+                            wait for them to leave it so the first rep
+                            counts on a real movement, not the
+                            already-correct starting pose.
+        WAITING_FOR_TOP  → patient is outside the green band; the next
+                            entry into green = +1 rep.
+        AT_TOP           → patient is at correct form; must move BEYOND
+                            the yellow band before another rep can
+                            count (hysteresis).
+
+    Why hysteresis: without the yellow-band exit threshold, a patient
+    hovering at the green/yellow boundary would oscillate between
+    in-green and out-of-green every frame and rack up false reps.
+    Yellow-band exit forces a meaningful movement away from the target
+    before the next rep is countable.
+
+    Typical usage (from the WS pose loop, Phase C):
+        counter = RepCounter(target_reps=12)
+        # ...for each frame...
+        snapshot = counter.update(
+            angle=current_joint_angle,
+            target_angle=90,        # same target color_and_score uses
+            green_band=15,          # same green band
+            yellow_band=30,         # same yellow band
+        )
+        if snapshot["set_complete"]:
+            # advance to break screen / next set
+    """
+
+    STATE_INITIAL = "initial"
+    STATE_WAITING_FOR_TOP = "waiting_for_top"
+    STATE_AT_TOP = "at_top"
+
+    def __init__(self, target_reps: int = 12) -> None:
+        self.target_reps = max(1, int(target_reps))
+        self.reps_completed = 0
+        self.state = self.STATE_INITIAL
+
+    def update(
+        self,
+        angle: Optional[float],
+        target_angle: float,
+        green_band: float,
+        yellow_band: float,
+    ) -> Dict[str, Any]:
+        """Process one frame's joint angle and advance the state machine.
+
+        Returns a snapshot the WS endpoint forwards to the client HUD:
+            {
+                "reps_completed": int,
+                "target_reps": int,
+                "set_complete": bool,
+                "state": "initial" | "waiting_for_top" | "at_top",
+            }
+
+        `angle=None` (joint not visible, low confidence) is treated as
+        "no signal" — state is preserved, no rep change. Set-complete
+        snapshots are idempotent: calling update() again after the set
+        finished returns the same snapshot without advancing.
+        """
+        if angle is None or self.reps_completed >= self.target_reps:
+            return self._snapshot()
+
+        diff = abs(angle - target_angle)
+        in_green = diff <= green_band
+        beyond_yellow = diff > yellow_band
+
+        if self.state == self.STATE_INITIAL:
+            # Refuse the first rep until the patient has demonstrably
+            # left correct form — guards against the "started in green
+            # zone = instant rep" foot-gun.
+            if not in_green:
+                self.state = self.STATE_WAITING_FOR_TOP
+
+        elif self.state == self.STATE_WAITING_FOR_TOP:
+            if in_green:
+                self.reps_completed += 1
+                self.state = self.STATE_AT_TOP
+
+        elif self.state == self.STATE_AT_TOP:
+            # Hysteresis: the patient must travel out of the yellow
+            # band entirely before the next rep can count. Inside
+            # yellow we hold AT_TOP so a slight wobble at the boundary
+            # doesn't trigger another rep.
+            if beyond_yellow:
+                self.state = self.STATE_WAITING_FOR_TOP
+
+        return self._snapshot()
+
+    def _snapshot(self) -> Dict[str, Any]:
+        return {
+            "reps_completed": self.reps_completed,
+            "target_reps": self.target_reps,
+            "set_complete": self.reps_completed >= self.target_reps,
+            "state": self.state,
+        }

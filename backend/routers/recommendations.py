@@ -27,9 +27,21 @@ def get_recommended_exercise(
     if result.get("error") == "patient_not_found":
         raise HTTPException(status_code=404, detail="Patient not found")
 
+    functionality = result.get("functionality") or {"exercises": []}
+    strength = result.get("strength") or {"exercises": []}
+
     return {
         "patient_id": result["patient_id"],
-        "exercises": result["exercises"],
+        # New shape: both session-mode variants returned in one payload
+        # so the frontend can cache them and toggle instantly. Frontend
+        # Phase B switches to reading these fields; legacy `exercises`
+        # below stays in the response until that migration ships.
+        "functionality": functionality,
+        "strength": strength,
+        # Backward-compat: existing frontend reads `.exercises` directly.
+        # We point it at the functionality variant so unchanged callers
+        # behave exactly as they did before sets-and-modes landed.
+        "exercises": functionality.get("exercises", []),
         "trajectory": result.get("trajectory"),
         "action": result.get("action"),
         "recovery_phase": result.get("recovery_phase"),
