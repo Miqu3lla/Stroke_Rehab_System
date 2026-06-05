@@ -62,7 +62,7 @@ export function useOnboarding(navigation) {
         id: user.id,
         name: answers.name,
         months_in_recovery: parseInt(answers.months_in_recovery, 10) || 0,
-        affected_area: answers.affected_part,
+        affected_area: answers.affected_area,
         affected_side: answers.affected_side,
       });
       // Only navigate on success
