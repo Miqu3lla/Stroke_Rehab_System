@@ -341,7 +341,7 @@ def save_patient_profile(payload: Dict[str, Any]) -> Dict[str, Any]:
         "name": payload.get("name", "").strip(),
         "stroke_type": "ischemic",
         "months_in_recovery": int(payload.get("months_in_recovery") or 0),
-        "affected_area": payload.get("affected_part", "").strip().lower(),
+        "affected_area": payload.get("affected_area", "").strip().lower(),
         "affected_side": payload.get("affected_side", "").strip().lower(),
         "source_app": payload.get("source_app", "frontend"),
     }
