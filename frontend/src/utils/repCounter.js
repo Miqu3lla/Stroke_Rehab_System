@@ -118,6 +118,22 @@ export function repAwareHint(snapshot, activeColor, fallbackHint) {
   return fallbackHint;
 }
 
+// Limb classifiers — exported so both pickActiveColor (rep counter)
+// and SkeletonOverlay (highlighting) use the same heuristic and a fix
+// here doesn't have to be duplicated.
+//
+// "flex" was intentionally OMITTED from the arm regex even though
+// `shoulder_flexion` is an arm exercise: a substring match would also
+// catch `knee_flexion` and `hip_flexion`, mis-classifying those leg
+// exercises as arm and reading the wrong color channel for the rep
+// counter. `shoulder` (and `elbow`/`wrist`) already cover the upper-body
+// flexion exercises by limb name.
+export const isArmExercise = (name) =>
+  /bicep|arm|reach|upper|curl|shoulder|elbow|wrist/i.test(name || '');
+
+export const isLegExercise = (name) =>
+  /leg|knee|squat|walk|gait|ankle|lunge|step|hip|sit_to_stand/i.test(name || '');
+
 // Pick the relevant band color out of the WS `colors` map for rep
 // counting. Arm exercises track the elbow angle (returned as
 // `bicepCurl`); leg exercises track the knee angle (`kneeFlexion`).
@@ -126,8 +142,8 @@ export function repAwareHint(snapshot, activeColor, fallbackHint) {
 export function pickActiveColor(colors, exerciseHint) {
   if (!colors) return undefined;
   const hint = (exerciseHint || '').toLowerCase();
-  const isArm = /bicep|arm|reach|upper|curl|flex|shoulder/.test(hint);
-  const isLeg = /leg|knee|squat|walk|gait|ankle|lunge|step/.test(hint);
+  const isArm = isArmExercise(hint);
+  const isLeg = isLegExercise(hint);
 
   if (isArm && !isLeg) return colors.bicepCurl;
   if (isLeg && !isArm) return colors.kneeFlexion;

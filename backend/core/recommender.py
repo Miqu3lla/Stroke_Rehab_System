@@ -368,11 +368,19 @@ def recommend_session_v2(
     functionality_exercises: List[Dict[str, Any]] = []
     strength_exercises: List[Dict[str, Any]] = []
 
+    # Acute-phase safety cap (replaces the old per-exercise duration
+    # multiplier that was removed when sets[] took over duration). Even
+    # if a fresh post-stroke patient is posting Day-3 form scores that
+    # would normally unlock the +30%/+60% rep counts and the strength
+    # hold finisher, force progression_level=0 so they stay at the safe
+    # baseline (12 reps, no hold). Clinical: never push acute patients.
+    is_acute = action.get("phase") == "acute"
+
     for index, ex in enumerate(picked):
         # Per-exercise reasoning: pull this exercise's trajectory stats
         # if it appears in the patient's history. Same for both variants.
         stats = trajectory_result["per_exercise"].get(ex["id"])
-        progression_level = _progression_level(stats)
+        progression_level = 0 if is_acute else _progression_level(stats)
 
         if stats and stats.get("latest_score") is not None:
             latest = stats["latest_score"]

@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
+import { formatExerciseSession } from '../../utils/duration';
 
 //color legend items displayed on the "Before you start" card
 const COLOR_LEGEND = [
@@ -8,32 +9,11 @@ const COLOR_LEGEND = [
   { color: '#F44336', label: 'Red — adjust your position' },
 ];
 
-// Summarize the exercise's sets[] composition for the pre-start card.
-// Patient sees what they're actually signing up for: number of sets,
-// reps per set, and whether there's a hold finisher (Strength mode).
-// Falls back to "Exercise" when sets is missing (older recommender
-// shapes during the deploy window).
-function describeSets(sets) {
-  if (!Array.isArray(sets) || sets.length === 0) return 'Exercise';
-
-  const repSets = sets.filter((s) => s.format === 'reps');
-  const holdSets = sets.filter((s) => s.format === 'hold');
-
-  const parts = [];
-  if (repSets.length > 0) {
-    const reps = repSets[0]?.target_reps || 12;
-    parts.push(`${repSets.length} sets × ${reps} reps`);
-  }
-  if (holdSets.length > 0) {
-    const seconds = holdSets[0]?.hold_seconds || 0;
-    const minutes = Math.round(seconds / 60);
-    parts.push(`${minutes}-min hold finisher`);
-  }
-  return parts.join(' + ');
-}
-
 export default function BeforeYouStart({ exercise, onBegin }) {
-  const setsLabel = describeSets(exercise?.sets);
+  // Same composition string the catalog card shows ("3 sets × 12 reps
+  // [+ 5-min hold]") — kept in sync via the shared helper so a wording
+  // change here doesn't drift from the card the patient just tapped.
+  const setsLabel = formatExerciseSession(exercise) || 'Exercise';
   const hasHold = Array.isArray(exercise?.sets)
     && exercise.sets.some((s) => s.format === 'hold');
 

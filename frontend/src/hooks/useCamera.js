@@ -37,6 +37,12 @@ import RepCounter, {
 // (resetting would be too punishing in stroke rehab).
 const REP_SET_CAP_SECONDS = 120;
 const HOLD_FORM_BROKEN_LIMIT_MS = 30 * 1000;
+// Defensive defaults for a hold set whose hold_seconds field is missing
+// or malformed. The recommender always sends 300; these only kick in
+// during deploy overlap or schema drift. Floor at 60s so a payload of
+// 0/NaN can't degrade the hold to a 1-second blip.
+const HOLD_DEFAULT_SECONDS = 300;
+const HOLD_MIN_SECONDS = 60;
 
 // Default sets payload when an exercise is missing the sets[] field —
 // shouldn't happen in production (recommender always returns sets), but
@@ -51,7 +57,9 @@ const _fallbackSets = () => [
 const _capForSet = (set) => {
   if (!set) return REP_SET_CAP_SECONDS;
   if (set.format === 'hold') {
-    return Math.max(1, Number(set.hold_seconds) || 0);
+    const raw = Number(set.hold_seconds);
+    if (!Number.isFinite(raw) || raw <= 0) return HOLD_DEFAULT_SECONDS;
+    return Math.max(HOLD_MIN_SECONDS, raw);
   }
   return REP_SET_CAP_SECONDS;
 };
@@ -73,7 +81,6 @@ const useCamera = (exercise, { onComplete } = {}) => {
   // Per-set timer + score
   const [setElapsedSeconds, setSetElapsedSeconds] = useState(0);
   const [currentScore, setCurrentScore] = useState(0);
-  const [scoreHistory, setScoreHistory] = useState([]); // live current-set scores
   // Per-set RepCounter snapshot, surfaced for the HUD
   const [repProgress, setRepProgress] = useState({
     repsCompleted: 0,
@@ -148,6 +155,10 @@ const useCamera = (exercise, { onComplete } = {}) => {
   const holdInFormMsRef = useRef(0);
   const brokenMsRef = useRef(0);
   const lastFrameTimeRef = useRef(null);
+  // Latest handlePoseResult — kept in a ref so the stable wrapper
+  // passed to startDetection never reads a stale closure when
+  // currentSet.format flips mid-exercise (reps → hold transition).
+  const handlePoseResultRef = useRef(() => {});
 
   //derived values
   const currentSet = sets[currentSetIndex] || sets[0];
@@ -405,6 +416,14 @@ const useCamera = (exercise, { onComplete } = {}) => {
       watchdogRef.current = null;
     }
 
+    // Drop late frames that arrive after the BreakScreen took over —
+    // processing them would advance reps/hold counters for a set the
+    // patient already finished.
+    if (pausedRef.current) {
+      inFlightRef.current = false;
+      return;
+    }
+
     const isErrorPayload = result && typeof result.error === 'string';
 
     if (result && !isErrorPayload) {
@@ -420,7 +439,6 @@ const useCamera = (exercise, { onComplete } = {}) => {
       }
       if (score !== null && score !== undefined) {
         setCurrentScore(score);
-        setScoreHistory((prev) => [...prev, score]);
         setScoreBufferRef.current.push(score);
       }
       setJointColors(colors);
@@ -439,7 +457,18 @@ const useCamera = (exercise, { onComplete } = {}) => {
       if (currentSet?.format === 'reps') {
         const activeColor = pickActiveColor(colors, exerciseHint);
         const snapshot = repCounterRef.current.update(activeColor);
-        setRepProgress(snapshot);
+        // 8-15Hz rerenders cost: only flush if something user-visible
+        // changed. The rep state machine churns AT_TOP↔WAITING_FOR_TOP
+        // many times per rep — only the counted-reps and the
+        // state-name matter to the HUD.
+        setRepProgress((prev) =>
+          prev.repsCompleted === snapshot.repsCompleted
+            && prev.state === snapshot.state
+            && prev.setComplete === snapshot.setComplete
+            && prev.targetReps === snapshot.targetReps
+            ? prev
+            : snapshot
+        );
 
         const hintForRep = repAwareHint(snapshot, activeColor, result.hint);
         if (hintForRep) setFeedbackText(hintForRep);
@@ -470,12 +499,22 @@ const useCamera = (exercise, { onComplete } = {}) => {
         }
 
         // Surface the hold meters to the HUD. Keeping them in seconds
-        // for display while the refs stay in ms for precision.
-        setHoldProgress({
-          secondsInForm: Math.floor(holdInFormMsRef.current / 1000),
-          brokenSeconds: Math.floor(brokenMsRef.current / 1000),
-          targetSeconds: setTotalSeconds,
-        });
+        // for display while the refs stay in ms for precision. Diff-
+        // check to avoid 8-15Hz rerenders when the second hasn't
+        // ticked over yet.
+        const nextSecondsInForm = Math.floor(holdInFormMsRef.current / 1000);
+        const nextBrokenSeconds = Math.floor(brokenMsRef.current / 1000);
+        setHoldProgress((prev) =>
+          prev.secondsInForm === nextSecondsInForm
+            && prev.brokenSeconds === nextBrokenSeconds
+            && prev.targetSeconds === setTotalSeconds
+            ? prev
+            : {
+                secondsInForm: nextSecondsInForm,
+                brokenSeconds: nextBrokenSeconds,
+                targetSeconds: setTotalSeconds,
+              }
+        );
 
         // Hint for hold: when actively in form, encourage the patient
         // to hold; when broken, surface the countdown to auto-end.
@@ -509,6 +548,23 @@ const useCamera = (exercise, { onComplete } = {}) => {
       captureAndSend();
     }
   }, [captureAndSend, currentSet?.format, exerciseHint]);
+
+  // Keep the ref in sync with the latest handlePoseResult so the stable
+  // wrapper handed to startDetection never reads a stale closure. Without
+  // this, the wrapper closes over the original (currentSet?.format === 'reps')
+  // handler and never sees the hold-set branch when the patient transitions
+  // from a rep set to the hold set within the same exercise — silently
+  // skipping all hold tracking.
+  useEffect(() => {
+    handlePoseResultRef.current = handlePoseResult;
+  }, [handlePoseResult]);
+
+  // Stable wrapper handed to startDetection — identity never changes,
+  // so the WS handler set up at startDetection time always dispatches
+  // to the LATEST handlePoseResult via the ref.
+  const stableHandlePoseResult = useCallback((result) => {
+    handlePoseResultRef.current?.(result);
+  }, []);
 
   const handlePoseClose = useCallback(() => {
     inFlightRef.current = false;
@@ -546,7 +602,6 @@ const useCamera = (exercise, { onComplete } = {}) => {
       brokenSeconds: 0,
       targetSeconds,
     });
-    setScoreHistory([]);
     setCurrentScore(0);
     setSetElapsedSeconds(0);
 
@@ -677,7 +732,7 @@ const useCamera = (exercise, { onComplete } = {}) => {
         const ready = await startDetection(
           exerciseHint,
           affectedSide,
-          handlePoseResult,
+          stableHandlePoseResult,
           handlePoseClose,
         );
         if (!ready) {
@@ -694,7 +749,7 @@ const useCamera = (exercise, { onComplete } = {}) => {
 
     loadModelAndStartDetection();
   }, [
-    startDetection, captureAndSend, handlePoseResult, handlePoseClose,
+    startDetection, captureAndSend, stableHandlePoseResult, handlePoseClose,
     exerciseHint, affectedSide, sets, beginSetTimers,
   ]);
 
@@ -738,7 +793,6 @@ const useCamera = (exercise, { onComplete } = {}) => {
     setElapsedSeconds,
     setTotalSeconds,
     currentScore,
-    scoreHistory,
     repProgress,
     holdProgress,
     completedSetResults,

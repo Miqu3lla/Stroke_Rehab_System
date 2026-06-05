@@ -37,8 +37,14 @@ const ExerciseScreen = ({ navigation }) => {
 
   // Saves the exercise score when the user finishes it (or the timer runs out),
   // and switches the view to the Rest screen.
-  const handleExerciseComplete = useCallback(({ avgFormScore, durationSeconds, endedVia }) => {
-    saveCurrentScore({ avgFormScore, durationSeconds, endedVia });
+  //
+  // Phase E (sets-and-modes, 2026-06-04): forward the structured
+  // setResults[], holdScore, and mode fields useCamera now emits. Dropping
+  // them here would silently zero out the therapist dashboard's per-set
+  // fatigue curve, lose every Strength-mode hold score, and tag every
+  // session with mode=null — defeating Phase E end-to-end.
+  const handleExerciseComplete = useCallback((payload) => {
+    saveCurrentScore(payload);
   }, [saveCurrentScore]);
 
   const handleMoveToNext = useCallback(async () => {

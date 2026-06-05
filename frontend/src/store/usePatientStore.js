@@ -28,6 +28,11 @@ const usePatientStore = create((set, get) => ({
   // The mode the patient has currently selected. Synced with
   // patients.preferred_mode on load; written back on every toggle.
   activeMode: 'functionality',
+  // True once the patient has explicitly toggled the mode in this
+  // session (via setActiveMode). loadActiveModeFromProfile skips any
+  // override after this flips so a slow profile fetch can't undo a
+  // tap that already happened — the user's intent always wins the race.
+  activeModeInitialized: false,
   // Derived view of `recommendationVariants[activeMode]`. Held as plain
   // state (not a getter) so Zustand subscribers re-render on swap.
   recommendedExercises: [],
@@ -92,6 +97,7 @@ const usePatientStore = create((set, get) => ({
     if (get().activeMode === mode) return;
     set({
       activeMode: mode,
+      activeModeInitialized: true,
       recommendedExercises: _resolveExercises(get().recommendationVariants, mode),
     });
     // Fire-and-forget persistence — UI doesn't block on the network.
@@ -117,6 +123,12 @@ const usePatientStore = create((set, get) => ({
   // — both update derived state, so order of completion doesn't matter.
   loadActiveModeFromProfile: async () => {
     try {
+      // If the patient has already tapped the toggle in this session,
+      // their intent wins — never overwrite it with the stored profile
+      // value. The race: setActiveMode + loadActiveModeFromProfile run
+      // in parallel from the Sessions screen, and a slow Supabase query
+      // would otherwise undo a fast tap.
+      if (get().activeModeInitialized) return;
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
       const { data, error } = await supabase
@@ -128,12 +140,18 @@ const usePatientStore = create((set, get) => ({
         console.log('Load preferred_mode failed:', error.message);
         return;
       }
+      // Re-check after the await — the user may have tapped during the
+      // network round-trip.
+      if (get().activeModeInitialized) return;
       const mode = data?.preferred_mode;
       if (VALID_MODES.includes(mode) && mode !== get().activeMode) {
         set({
           activeMode: mode,
+          activeModeInitialized: true,
           recommendedExercises: _resolveExercises(get().recommendationVariants, mode),
         });
+      } else {
+        set({ activeModeInitialized: true });
       }
     } catch (e) {
       console.log('Load preferred_mode failed:', e?.message || e);

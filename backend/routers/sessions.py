@@ -23,7 +23,12 @@ def _normalize_set_results(raw: Any) -> List[Dict[str, Any]]:
     if not isinstance(raw, list):
         return []
 
-    cleaned: List[Dict[str, Any]] = []
+    # Dedupe by set_index so a retried set or a buggy client emitting the
+    # same set twice doesn't double-count in the dashboard's fatigue
+    # curve. Last write wins (most recent attempt is the one the patient
+    # actually finished). Built as a dict keyed by set_index, then
+    # returned as a sorted list.
+    cleaned_by_index: Dict[int, Dict[str, Any]] = {}
     for index, item in enumerate(raw):
         if not isinstance(item, dict):
             continue
@@ -52,14 +57,14 @@ def _normalize_set_results(raw: Any) -> List[Dict[str, Any]]:
                 target_reps = max(1, int(item.get("target_reps") or 12))
             except (ValueError, TypeError):
                 target_reps = 12
-            cleaned.append({
+            cleaned_by_index[set_index] = {
                 "set_index": set_index,
                 "format": "reps",
                 "score": score,
                 "reps_completed": reps_completed,
                 "target_reps": target_reps,
                 "ended_via": ended_via,
-            })
+            }
         else:
             try:
                 seconds_held = max(0, int(item.get("seconds_held") or 0))
@@ -69,16 +74,16 @@ def _normalize_set_results(raw: Any) -> List[Dict[str, Any]]:
                 target_seconds = max(1, int(item.get("target_seconds") or 300))
             except (ValueError, TypeError):
                 target_seconds = 300
-            cleaned.append({
+            cleaned_by_index[set_index] = {
                 "set_index": set_index,
                 "format": "hold",
                 "score": score,
                 "seconds_held": seconds_held,
                 "target_seconds": target_seconds,
                 "ended_via": ended_via,
-            })
+            }
 
-    return cleaned
+    return [cleaned_by_index[i] for i in sorted(cleaned_by_index.keys())]
 
 
 @router.post("/sessions")
@@ -165,8 +170,16 @@ def save_session(payload: dict, claims: Dict[str, Any] = Depends(verify_jwt)) ->
                         hold_score = max(0.0, min(100.0, float(hold_score)))
                     except (ValueError, TypeError):
                         hold_score = None
-                mode = result.get("mode")
-                if mode not in ("functionality", "strength"):
+                # Normalize before validating so a payload of "Functionality"
+                # or "  strength  " (case/whitespace drift from a future
+                # client tweak) doesn't silently fall through and tag the
+                # session row with mode=null.
+                raw_mode = result.get("mode")
+                if isinstance(raw_mode, str):
+                    mode = raw_mode.strip().lower()
+                    if mode not in ("functionality", "strength"):
+                        mode = None
+                else:
                     mode = None
 
                 recommendation_payload = {
