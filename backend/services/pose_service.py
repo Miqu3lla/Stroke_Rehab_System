@@ -78,6 +78,8 @@ arm_hint = arm_raise_hint
 
 
 def leg_hint(angle: Optional[float]) -> str:
+    """Generic leg hint for sit_to_stand and the cross-body fallback —
+    target 90° = seated squat depth where the knee is bent."""
     if angle is None:
         return "Step back — your hip, knee, and ankle need to be visible"
     diff = angle - 90
@@ -89,6 +91,23 @@ def leg_hint(angle: Optional[float]) -> str:
             else "Almost there — straighten your leg a little"
     return "Bend your knee further — try sitting lower" if diff > 0 \
         else "Stand tall and straighten your leg fully"
+
+
+def knee_extension_hint(angle: Optional[float]) -> str:
+    """Hints for knee_extension — measured by KNEE angle (hip-knee-ankle).
+    Patient sits in a chair and lifts their foot to extend the affected leg
+    straight out, parallel to the floor. Target ~170° = leg fully extended.
+    The seated start position is ~90°, so we want them to OPEN the knee
+    angle (the opposite of a squat), not close it like sit_to_stand does."""
+    if angle is None:
+        return "Sit down — your hip, knee, and ankle need to be visible"
+    if angle >= 160:
+        return "Great form! Hold your leg out straight"
+    if angle >= 130:
+        return "Almost there — straighten your knee a little more"
+    if angle >= 100:
+        return "Lift your foot up — extend your leg out straight"
+    return "Sit upright, then lift your foot and straighten your knee out in front of you"
 
 
 def overall_visibility_score(keypoints: List[Dict[str, float]]) -> int:
@@ -132,6 +151,13 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
     # are different. Shoulder flexion = raising the whole arm at the
     # shoulder; arm raise = bending the elbow toward the shoulder.
     is_shoulder_flexion = "shoulder_flexion" in hint_lower or "shoulder flexion" in hint_lower
+    # Distinguish knee_extension from sit_to_stand — same body area, but
+    # target angles point in opposite directions. Seated knee extension
+    # = lift the foot to OPEN the knee (target ~170°); sit_to_stand =
+    # bend the knee on descent (target ~90°). Without this split the
+    # generic leg_hint kept telling extension patients to "bend more"
+    # while they were doing the correct straightening motion.
+    is_knee_extension = "knee_extension" in hint_lower or "knee extension" in hint_lower
 
     side = (affected_side or "right").lower()
     left_side = side == "left"
@@ -203,16 +229,28 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
     elif is_leg:
         hp, kn, an = (_LEFT_HIP, _LEFT_KNEE, _LEFT_ANKLE) if left_side else (_RIGHT_HIP, _RIGHT_KNEE, _RIGHT_ANKLE)
         triple = joint_triple(keypoints, hp, kn, an)
+        # Knee extension is rewarded at the open/straight end of the
+        # joint range, sit_to_stand at the bent/seated end. Same angle
+        # measurement, opposite target — without splitting these the
+        # extension exercise scored 0 the moment the patient started
+        # straightening their leg correctly.
+        if is_knee_extension:
+            target_angle, green_band, yellow_band = 170, 15, 30
+        else:
+            target_angle, green_band, yellow_band = 90, 15, 30
         if triple:
             angle = angle_at_vertex(*triple)
             angles["kneeFlexion"] = angle
-            cs = color_and_score(angle, target=90, green=15, yellow=30)
+            cs = color_and_score(angle, target=target_angle, green=green_band, yellow=yellow_band)
             colors["kneeFlexion"] = cs["color"]
             overall = cs["score"]
         else:
             angles["kneeFlexion"] = None
             colors["kneeFlexion"] = "#FFC107"
-        hint = leg_hint(angles.get("kneeFlexion"))
+        if is_knee_extension:
+            hint = knee_extension_hint(angles.get("kneeFlexion"))
+        else:
+            hint = leg_hint(angles.get("kneeFlexion"))
 
     else:
         arm_sh, arm_el, arm_wr = (_LEFT_SHOULDER, _LEFT_ELBOW, _LEFT_WRIST) if left_side else (_RIGHT_SHOULDER, _RIGHT_ELBOW, _RIGHT_WRIST)
