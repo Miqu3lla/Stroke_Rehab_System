@@ -24,7 +24,8 @@ def create_patient_profile(
     # the patient_id; reject any request trying to set a different one.
     assert_patient_match(claims, payload.id)
     record = {
-        "name": payload.name,
+        "first_name": payload.first_name,
+        "last_name": payload.last_name,
         "id": payload.id,
         "stroke_type": "ischemic",
         "months_in_recovery": payload.months_in_recovery,

@@ -13,9 +13,12 @@ export default function OnboardingScreen({ navigation }) {
     currentStep,
     currentQuestion,
     selectedOption,
+    answers,
+    hasAnswer,
     isLastStep,
     isSubmitting,
     setAnswer,
+    setFieldAnswer,
     handleNext,
     handleBack,
   } = useOnboarding(navigation);
@@ -42,13 +45,15 @@ export default function OnboardingScreen({ navigation }) {
           question={currentQuestion}
           selectedOption={selectedOption}
           onSelect={setAnswer}
+          answers={answers}
+          setFieldAnswer={setFieldAnswer}
         />
 
         <OnboardingNav
           currentStep={currentStep}
           isLastStep={isLastStep}
           isSubmitting={isSubmitting}
-          hasAnswer={!!selectedOption}
+          hasAnswer={hasAnswer}
           onBack={handleBack}
           onNext={handleNext}
         />

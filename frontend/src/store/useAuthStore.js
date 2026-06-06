@@ -59,10 +59,13 @@ const useAuthStore = create((set, get) => ({
         return;
       }
 
-      // Check if onboarding has been completed (name is filled in during onboarding)
+      // Check if onboarding has been completed — first_name is the
+      // first question, so if it's populated the patient finished
+      // onboarding at least once. (Old rows backfilled from the legacy
+      // `name` column via the first/last migration also pass this.)
       const { data: patientProfile, error: profileError } = await supabase
         .from('patients')
-        .select('name')
+        .select('first_name')
         .eq('id', userId)
         .maybeSingle();
 
@@ -72,7 +75,7 @@ const useAuthStore = create((set, get) => ({
         return;
       }
 
-      if (patientProfile?.name) {
+      if (patientProfile?.first_name) {
         navigation.replace('Dashboard');
       } else {
         navigation.replace('Onboarding');

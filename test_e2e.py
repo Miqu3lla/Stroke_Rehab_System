@@ -16,10 +16,11 @@ import urllib.request
 from urllib import error
 
 data = {
-    'name': 'Test Patient E2E',
+    'first_name': 'Test',
+    'last_name': 'PatientE2E',
     'stroke_type': 'ischemic',
     'months_in_recovery': '1 Month',
-    'affected_part': 'Arms',
+    'affected_area': 'Arms',
     'affected_side': 'Right'
 }
 

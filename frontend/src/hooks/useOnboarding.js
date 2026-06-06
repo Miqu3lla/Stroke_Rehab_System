@@ -4,12 +4,25 @@ import { supabase } from '../services/supabase';
 
 //custom hook for onboarding Screen Logic
 
-//set the questions for the onboarding screen
+// QUESTIONS shape:
+//   id      — answer key in `answers` for single-input/options steps. Not
+//             used as an answer key for `fields`-based steps (the fields
+//             carry their own ids).
+//   title   — header rendered by QuestionCard
+//   options — list of choices for choice-style steps; empty = free-text
+//   fields  — optional array of { id, placeholder, required? } for
+//             multi-input steps (e.g. first/last name on one card). When
+//             present, each field writes to answers[field.id] so the
+//             submit payload stays flat.
 const QUESTIONS = [
   {
-    id: 'name',
+    id: 'full_name',
     title: 'What is your name?',
     options: [],
+    fields: [
+      { id: 'first_name', placeholder: 'First name', required: true },
+      { id: 'last_name', placeholder: 'Last name', required: false },
+    ],
   },
   {
     id: 'months_in_recovery',
@@ -35,15 +48,31 @@ export function useOnboarding(navigation) {
 
   //get the question for the current step
   const currentQuestion = QUESTIONS[currentStep];
-  //get the answer for the current question
+  //get the answer for the current question (single-input/options steps)
   const selectedOption = answers[currentQuestion.id];
   //check if the current step is the last step
   const isLastStep = currentStep === QUESTIONS.length - 1;
 
-  //set the answer for the current question
+  //set the answer for the current question (single-input/options path)
   const setAnswer = (option) => {
     setAnswers((prev) => ({ ...prev, [currentQuestion.id]: option }));
   };
+
+  // Write one field's value on a multi-field step. Keyed by field.id so
+  // each input stays addressable in the flat `answers` object.
+  const setFieldAnswer = (fieldId, value) => {
+    setAnswers((prev) => ({ ...prev, [fieldId]: value }));
+  };
+
+  // True when the current step has enough input to allow Next.
+  // Multi-field: every REQUIRED field must be non-empty. Optional fields
+  // (e.g. last_name for single-name patients) don't block progression.
+  const hasAnswer = currentQuestion.fields
+    ? currentQuestion.fields
+        .filter((f) => f.required !== false)
+        .every((f) => !!(answers[f.id] || '').toString().trim())
+    : !!selectedOption;
+
   //navigates to the next page of the onboarding
   //or submits the data to the backend if on the last page
   const handleNext = async () => {
@@ -60,7 +89,8 @@ export function useOnboarding(navigation) {
       //sends the form to the backend
       await instance.post('/patients', {
         id: user.id,
-        name: answers.name,
+        first_name: answers.first_name,
+        last_name: answers.last_name,
         months_in_recovery: parseInt(answers.months_in_recovery, 10) || 0,
         affected_area: answers.affected_area,
         affected_side: answers.affected_side,
@@ -89,9 +119,12 @@ export function useOnboarding(navigation) {
     currentStep,
     currentQuestion,
     selectedOption,
+    answers,
+    hasAnswer,
     isLastStep,
     isSubmitting,
     setAnswer,
+    setFieldAnswer,
     handleNext,
     handleBack,
     reset,
