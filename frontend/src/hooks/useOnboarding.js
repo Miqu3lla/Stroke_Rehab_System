@@ -17,7 +17,7 @@ const QUESTIONS = [
     options: ['1 Month', '2 months', '3 months'],
   },
   {
-    id: 'affected_part',
+    id: 'affected_area',
     title: 'Which part did the stroke affect you?',
     options: ['Arms', 'Legs', 'Both'],
   },

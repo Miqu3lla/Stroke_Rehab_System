@@ -9,7 +9,7 @@ import { ChevronRight, Clock } from 'lucide-react-native';
 import usePatientStore from '../../store/usePatientStore';
 import ExerciseModal from '../ui/ExerciseModal';
 import Skeleton from '../ui/Skeleton';
-import { formatExerciseDuration } from '../../utils/duration';
+import { formatExerciseSession } from '../../utils/duration';
 
 export default function RecommendationCard({ navigation }) {
   const {
@@ -70,7 +70,7 @@ export default function RecommendationCard({ navigation }) {
               <View className="flex-row items-center gap-1.5 mt-0.5">
                 <Clock size={14} color="#434654" />
                 <Text className="text-[14px] font-medium text-[#434654]">
-                  {formatExerciseDuration(exercise)}
+                  {formatExerciseSession(exercise)}
                 </Text>
               </View>
             </View>
