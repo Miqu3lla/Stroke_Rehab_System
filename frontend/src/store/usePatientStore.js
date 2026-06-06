@@ -94,7 +94,15 @@ const usePatientStore = create((set, get) => ({
   // session starts on the same mode.
   setActiveMode: async (mode) => {
     if (!VALID_MODES.includes(mode)) return;
-    if (get().activeMode === mode) return;
+    if (get().activeMode === mode) {
+      // No state swap needed, but if this is the user's first tap we
+      // still need to lock the mode in so a late loadActiveModeFromProfile
+      // can't override their intent. Without this, tapping the already-
+      // selected mode looks like a no-op but actually leaves the door
+      // open for the stored profile value to flip it later.
+      if (!get().activeModeInitialized) set({ activeModeInitialized: true });
+      return;
+    }
     set({
       activeMode: mode,
       activeModeInitialized: true,

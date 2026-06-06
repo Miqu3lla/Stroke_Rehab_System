@@ -24,6 +24,7 @@ BEGIN
     IF EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conname = 'patients_preferred_mode_check'
+          AND conrelid = 'public.patients'::regclass
     ) THEN
         ALTER TABLE public.patients DROP CONSTRAINT patients_preferred_mode_check;
     END IF;
