@@ -66,6 +66,7 @@ const useSessionStore = create((set, get) => ({
     const result = {
       recommendation_id: current.id,
       exercise_name: current.name || '',
+      exercise_type: current.exercise_type || '',
       session_index: session.currentIndex,
       ended_via: endedVia,
       avg_form_score: Math.max(0, Number(avgFormScore) || 0),

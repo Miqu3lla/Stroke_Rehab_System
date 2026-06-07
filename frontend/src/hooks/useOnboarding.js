@@ -47,10 +47,23 @@ export function useOnboarding(navigation) {
   //navigates to the next page of the onboarding
   //or submits the data to the backend if on the last page
   const handleNext = async () => {
+    // Belt-and-suspenders: block if no answer selected for current step
+    if (!selectedOption) return;
+
     if (!isLastStep) {
       setCurrentStep((s) => s + 1);
       return;
     }
+
+    // Validate all required answers exist before submitting
+    const missing = QUESTIONS.filter(
+      (q) => q.options.length > 0 && !answers[q.id]
+    ).map((q) => q.id);
+    if (missing.length > 0) {
+      console.error('Missing answers for:', missing);
+      return;
+    }
+
     //handle form submition after patient fills out the form
     setIsSubmitting(true);
     try {
@@ -62,7 +75,7 @@ export function useOnboarding(navigation) {
         id: user.id,
         name: answers.name,
         months_in_recovery: parseInt(answers.months_in_recovery, 10) || 0,
-        affected_area: answers.affected_area,
+        affected_area: answers.affected_part,
         affected_side: answers.affected_side,
       });
       // Only navigate on success
