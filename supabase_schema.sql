@@ -6,6 +6,10 @@ CREATE TABLE IF NOT EXISTS patients (
   months_in_recovery INTEGER NOT NULL,
   affected_area TEXT NOT NULL CHECK (affected_area IN ('arms', 'legs', 'both')),
   affected_side TEXT NOT NULL CHECK (affected_side IN ('left', 'right', 'both')),
+  -- Session mode picked on the Sessions tab. Functionality = rep-only;
+  -- Strength = rep baseline + 5-min hold finisher once unlocked.
+  preferred_mode TEXT NOT NULL DEFAULT 'functionality'
+    CHECK (preferred_mode IN ('functionality', 'strength')),
   source_app TEXT DEFAULT 'frontend',
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()

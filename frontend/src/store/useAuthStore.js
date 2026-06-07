@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { Alert } from 'react-native';
 import { supabase } from '../services/supabase';
+import { validatePassword } from '../utils/passwordPolicy';
 
 const useAuthStore = create((set, get) => ({
   // State
@@ -58,10 +59,13 @@ const useAuthStore = create((set, get) => ({
         return;
       }
 
-      // Check if onboarding has been completed (name is filled in during onboarding)
+      // Check if onboarding has been completed — first_name is the
+      // first question, so if it's populated the patient finished
+      // onboarding at least once. (Old rows backfilled from the legacy
+      // `name` column via the first/last migration also pass this.)
       const { data: patientProfile, error: profileError } = await supabase
         .from('patients')
-        .select('name')
+        .select('first_name')
         .eq('id', userId)
         .maybeSingle();
 
@@ -71,7 +75,7 @@ const useAuthStore = create((set, get) => ({
         return;
       }
 
-      if (patientProfile?.name) {
+      if (patientProfile?.first_name) {
         navigation.replace('Dashboard');
       } else {
         navigation.replace('Onboarding');
@@ -94,10 +98,13 @@ const useAuthStore = create((set, get) => ({
       Alert.alert('Error', 'Please enter a valid email address');
       return;
     }
-    if (password.length < 6) {
-      Alert.alert('Error', 'Password must be at least 6 characters long');
+    const policy = validatePassword(password);
+    if (!policy.ok) {
+      // Surface the specific failing rules so the patient knows what
+      // to fix — `123456` shouldn't get a generic "too short" anymore.
+      Alert.alert('Password too weak', `• ${policy.failed.join('\n• ')}`);
       return;
-    } 
+    }
     if (password !== confirmPassword) {
       Alert.alert('Error', 'Passwords do not match');
       return;

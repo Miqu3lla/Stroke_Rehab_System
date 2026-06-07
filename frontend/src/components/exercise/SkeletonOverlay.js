@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { StyleSheet } from 'react-native';
 import Svg, { Line, Circle } from 'react-native-svg';
+import { isArmExercise, isLegExercise } from '../../utils/repCounter';
 
 // MediaPipe Pose connections — pairs of keypoint indices to draw as bones
 const CONNECTIONS = [
@@ -46,12 +47,6 @@ const SMOOTHING_FACTOR = 0.45;
 // Below this distance from target we stop animating and snap, so the RAF
 // loop isn't spinning forever on sub-pixel deltas after the target settles.
 const SNAP_DISTANCE_PX = 0.5;
-
-const isArmExercise = (name) =>
-  /bicep|arm|reach|upper|curl|flex|shoulder/i.test(name);
-
-const isLegExercise = (name) =>
-  /leg|knee|squat|walk|gait|ankle|lunge|step/i.test(name);
 
 // Hook: takes the raw keypoints from props (updates ~10x/sec from the
 // pose WS) and returns smoothed keypoints that update at 60 FPS via

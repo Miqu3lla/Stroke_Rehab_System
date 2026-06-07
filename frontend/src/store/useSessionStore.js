@@ -57,11 +57,52 @@ const useSessionStore = create((set, get) => ({
   // user pressing the Finish button), the existing row is replaced in
   // place instead of being appended. This stops duplicate rows from
   // reaching /sessions and skewing the trajectory history.
-  saveCurrentScore: ({ avgFormScore, durationSeconds, endedVia = 'finish' }) => {
+  saveCurrentScore: ({
+    avgFormScore,
+    durationSeconds,
+    endedVia = 'finish',
+    setResults = [],
+    holdScore = null,
+    mode = null,
+  }) => {
     const { session } = get();
     if (!session.sessionId) return;
     const current = session.playlist[session.currentIndex];
     if (!current) return;
+
+    // Phase E (2026-06-04) replaced the parallel `set_scores`/`set_reps`
+    // arrays with a single structured `set_results[]` so the backend
+    // can persist format-aware data (rep form % vs hold completion %)
+    // straight into the recommendation JSONB. The therapist dashboard
+    // reads `set_results` to render the per-set fatigue curve.
+    //
+    // `avg_form_score` is now REP SETS ONLY — hold completion no
+    // longer drags down the headline form-quality number. `hold_score`
+    // is the separate endurance metric.
+    const normalizedSetResults = Array.isArray(setResults)
+      ? setResults.map((r, idx) => {
+          if (!r || typeof r !== 'object') return null;
+          const format = r.format === 'hold' ? 'hold' : 'reps';
+          const base = {
+            set_index: Number.isInteger(r.set_index) ? r.set_index : idx,
+            format,
+            score: Math.max(0, Number(r.score) || 0),
+            ended_via: r.ended_via || 'finish',
+          };
+          if (format === 'reps') {
+            return {
+              ...base,
+              reps_completed: Math.max(0, Math.floor(Number(r.reps_completed) || 0)),
+              target_reps: Math.max(1, Math.floor(Number(r.target_reps) || 12)),
+            };
+          }
+          return {
+            ...base,
+            seconds_held: Math.max(0, Math.floor(Number(r.seconds_held) || 0)),
+            target_seconds: Math.max(1, Math.floor(Number(r.target_seconds) || 300)),
+          };
+        }).filter(Boolean)
+      : [];
 
     const result = {
       recommendation_id: current.id,
@@ -71,6 +112,12 @@ const useSessionStore = create((set, get) => ({
       ended_via: endedVia,
       avg_form_score: Math.max(0, Number(avgFormScore) || 0),
       duration_seconds: Math.max(0, Number(durationSeconds) || 0),
+      set_results: normalizedSetResults,
+      set_count: normalizedSetResults.length,
+      hold_score: holdScore !== null && holdScore !== undefined
+        ? Math.max(0, Math.min(100, Number(holdScore) || 0))
+        : null,
+      mode: mode || null,
     };
 
     const existingIndex = session.results.findIndex(
