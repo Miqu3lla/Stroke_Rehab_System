@@ -457,7 +457,11 @@ def fetch_patient_history(patient_id: str, limit: int = 50) -> list:
         "id, "
         "patient_id, "
         "latest_form_score, "
-        "exercise_type, "
+        # COALESCE to '' so legacy rows (created before exercise_type
+        # existed) match the REST path's normalization below — otherwise
+        # docker/psycopg2 return None while REST returns "", and the
+        # recommender's history lookup sees inconsistent shapes.
+        "COALESCE(exercise_type, '') AS exercise_type, "
         "(recommendation->>'recommendation_id') AS exercise_id, "
         "(recommendation->>'exercise_name') AS exercise_name, "
         "(recommendation->>'ended_via') AS ended_via, "
@@ -500,7 +504,8 @@ def fetch_patient_history(patient_id: str, limit: int = 50) -> list:
             config = _get_postgres_config()
             parameterised_sql = (
                 "SELECT "
-                "id, patient_id, latest_form_score, exercise_type, "
+                "id, patient_id, latest_form_score, "
+                "COALESCE(exercise_type, '') AS exercise_type, "
                 "(recommendation->>'recommendation_id') AS exercise_id, "
                 "(recommendation->>'exercise_name') AS exercise_name, "
                 "(recommendation->>'ended_via') AS ended_via, "

@@ -76,6 +76,12 @@ export function useOnboarding(navigation) {
   //navigates to the next page of the onboarding
   //or submits the data to the backend if on the last page
   const handleNext = async () => {
+    // Re-entrancy guard: the disabled state on the Next button only
+    // propagates after a render, so two fast taps can both enter here
+    // before isSubmitting flips — firing a duplicate POST /patients.
+    // Bail immediately if a submit is already in flight.
+    if (isSubmitting) return;
+
     // Belt-and-suspenders: block if the current step doesn't have enough
     // input yet. Uses `hasAnswer` (not `selectedOption`) so multi-field
     // steps — where the answer lives in fields[*].id, not the step's own
