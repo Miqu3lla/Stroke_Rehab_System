@@ -135,6 +135,7 @@ def save_session(payload: dict, claims: Dict[str, Any] = Depends(verify_jwt)) ->
                 duration_seconds = int(result.get("duration_seconds") or 0)
                 recommendation_id = result.get("recommendation_id")
                 exercise_name = result.get("exercise_name") or ""
+                exercise_type = result.get("exercise_type") or ""
                 # Safely parse session_index — default to None when missing or
                 # invalid so we don't accidentally collide with index 0 during dedupe.
                 try:
@@ -187,6 +188,7 @@ def save_session(payload: dict, claims: Dict[str, Any] = Depends(verify_jwt)) ->
                     "session_id": session_id,
                     "recommendation_id": recommendation_id,
                     "exercise_name": exercise_name,
+                    "exercise_type": exercise_type,
                     "session_index": session_index,
                     "ended_via": ended_via,
                     "avg_form_score": avg_form_score,
@@ -203,6 +205,7 @@ def save_session(payload: dict, claims: Dict[str, Any] = Depends(verify_jwt)) ->
                 log_entry = {
                     "patient_id": patient_id,
                     "latest_form_score": avg_form_score,
+                    "exercise_type": exercise_type,
                     "recommendation": recommendation_payload,
                 }
 

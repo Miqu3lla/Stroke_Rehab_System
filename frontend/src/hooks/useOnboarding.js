@@ -76,10 +76,43 @@ export function useOnboarding(navigation) {
   //navigates to the next page of the onboarding
   //or submits the data to the backend if on the last page
   const handleNext = async () => {
+    // Re-entrancy guard: the disabled state on the Next button only
+    // propagates after a render, so two fast taps can both enter here
+    // before isSubmitting flips — firing a duplicate POST /patients.
+    // Bail immediately if a submit is already in flight.
+    if (isSubmitting) return;
+
+    // Belt-and-suspenders: block if the current step doesn't have enough
+    // input yet. Uses `hasAnswer` (not `selectedOption`) so multi-field
+    // steps — where the answer lives in fields[*].id, not the step's own
+    // id — pass the check once their required fields are non-empty.
+    if (!hasAnswer) return;
+
     if (!isLastStep) {
       setCurrentStep((s) => s + 1);
       return;
     }
+
+    // Validate all required answers exist before submitting. Covers both
+    // options-style steps (the answer key matches the step id) AND
+    // fields-style steps (each required field carries its own key).
+    const missing = [];
+    QUESTIONS.forEach((q) => {
+      if (Array.isArray(q.fields) && q.fields.length > 0) {
+        q.fields
+          .filter((f) => f.required !== false)
+          .forEach((f) => {
+            if (!(answers[f.id] || '').toString().trim()) missing.push(f.id);
+          });
+      } else if (q.options.length > 0 && !answers[q.id]) {
+        missing.push(q.id);
+      }
+    });
+    if (missing.length > 0) {
+      console.error('Missing answers for:', missing);
+      return;
+    }
+
     //handle form submition after patient fills out the form
     setIsSubmitting(true);
     try {

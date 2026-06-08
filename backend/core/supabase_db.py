@@ -457,6 +457,11 @@ def fetch_patient_history(patient_id: str, limit: int = 50) -> list:
         "id, "
         "patient_id, "
         "latest_form_score, "
+        # COALESCE to '' so legacy rows (created before exercise_type
+        # existed) match the REST path's normalization below — otherwise
+        # docker/psycopg2 return None while REST returns "", and the
+        # recommender's history lookup sees inconsistent shapes.
+        "COALESCE(exercise_type, '') AS exercise_type, "
         "(recommendation->>'recommendation_id') AS exercise_id, "
         "(recommendation->>'exercise_name') AS exercise_name, "
         "(recommendation->>'ended_via') AS ended_via, "
@@ -500,6 +505,7 @@ def fetch_patient_history(patient_id: str, limit: int = 50) -> list:
             parameterised_sql = (
                 "SELECT "
                 "id, patient_id, latest_form_score, "
+                "COALESCE(exercise_type, '') AS exercise_type, "
                 "(recommendation->>'recommendation_id') AS exercise_id, "
                 "(recommendation->>'exercise_name') AS exercise_name, "
                 "(recommendation->>'ended_via') AS ended_via, "
@@ -527,7 +533,7 @@ def fetch_patient_history(patient_id: str, limit: int = 50) -> list:
             _rest_url("recommendation_logs")
             + f"?patient_id=eq.{parse.quote(patient_id, safe='')}"
             "&latest_form_score=gt.0"
-            "&select=id,patient_id,latest_form_score,recommendation,created_at"
+            "&select=id,patient_id,latest_form_score,exercise_type,recommendation,created_at"
             "&order=created_at.desc"
             f"&limit={safe_limit}"
         )
@@ -543,6 +549,7 @@ def fetch_patient_history(patient_id: str, limit: int = 50) -> list:
                         "id": row.get("id"),
                         "patient_id": row.get("patient_id"),
                         "latest_form_score": row.get("latest_form_score"),
+                        "exercise_type": row.get("exercise_type") or "",
                         "exercise_id": rec.get("recommendation_id"),
                         "exercise_name": rec.get("exercise_name"),
                         "ended_via": rec.get("ended_via"),
