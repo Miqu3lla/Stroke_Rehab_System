@@ -19,36 +19,53 @@ export default function App() {
     //creates a channel
     const presenceChannel = supabase.channel('tracking')
 
+    let appStateSubscription;
+
     //Subscribes to presence events in the channel
     presenceChannel.subscribe(async(status) => {
       console.log("Websocket Status: ", status)
       //if the user exists
       if (status == 'SUBSCRIBED') {
-        await presenceChannel.track({
-          patient_id: user.id,
-          status: "Active",
-          updated_at: new Date().toISOString()
+        try {
+          await presenceChannel.track({
+            patient_id: user.id,
+            status: "Active",
+            updated_at: new Date().toISOString()
+          })
+        } catch (error) {
+          console.error("Error tracking presence:", error)
+        }
+        
+        //checks for when the user comes back to the app via eventListener on change
+        appStateSubscription = AppState.addEventListener('change', async (nextAppState) => {
+          if (nextAppState === 'background' || nextAppState === 'inactive') {
+            try {
+              await presenceChannel.untrack()
+              console.log('tracking ended for user:', user.id)
+            } catch (error) {
+              console.error("Error untracking presence:", error)
+            }
+          } else if (nextAppState === 'active') {
+            try {
+              await presenceChannel.track({
+                patient_id: user.id,
+                status: "Active",
+                updated_at: new Date().toISOString()
+              })
+            } catch (error) {
+              console.error("Error tracking presence on app active:", error)
+            }
+          }
         })
       }
     })
-    //checks for when the user comes back to the app via eventListener on change
-    const appStateSubscription = AppState.addEventListener('change', async (nextAppState) => {
-      if (nextAppState === 'background' || nextAppState === 'inactive') {
-        await presenceChannel.untrack()
-        console.log('tracking ended for user:', user.id)
 
-      }else if (nextAppState === 'active') {
-        await presenceChannel.track({
-          patient_id: user.id,
-          status: "Active",
-          updated_at: new Date().toISOString()
-        })
-      }
-    })
 
     //cleanup when user logs out or app closes
     return () => {
-      appStateSubscription.remove();
+      if (appStateSubscription) {
+        appStateSubscription.remove();
+      }
       supabase.removeChannel(presenceChannel)
     }
   }, [user])
