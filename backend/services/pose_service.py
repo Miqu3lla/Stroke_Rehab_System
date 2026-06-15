@@ -78,6 +78,8 @@ arm_hint = arm_raise_hint
 
 
 def leg_hint(angle: Optional[float]) -> str:
+    """Generic leg hint for sit_to_stand and the cross-body fallback —
+    target 90° = seated squat depth where the knee is bent."""
     if angle is None:
         return "Step back — your hip, knee, and ankle need to be visible"
     diff = angle - 90
@@ -89,6 +91,23 @@ def leg_hint(angle: Optional[float]) -> str:
             else "Almost there — straighten your leg a little"
     return "Bend your knee further — try sitting lower" if diff > 0 \
         else "Stand tall and straighten your leg fully"
+
+
+def knee_extension_hint(angle: Optional[float]) -> str:
+    """Hints for knee_extension — measured by KNEE angle (hip-knee-ankle).
+    Patient sits in a chair and lifts their foot to extend the affected leg
+    straight out, parallel to the floor. Target ~170° = leg fully extended.
+    The seated start position is ~90°, so we want them to OPEN the knee
+    angle (the opposite of a squat), not close it like sit_to_stand does."""
+    if angle is None:
+        return "Sit down — your hip, knee, and ankle need to be visible"
+    if angle >= 160:
+        return "Great form! Hold your leg out straight"
+    if angle >= 130:
+        return "Almost there — straighten your knee a little more"
+    if angle >= 100:
+        return "Lift your foot up — extend your leg out straight"
+    return "Sit upright, then lift your foot and straighten your knee out in front of you"
 
 
 def overall_visibility_score(keypoints: List[Dict[str, float]]) -> int:
@@ -132,6 +151,13 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
     # are different. Shoulder flexion = raising the whole arm at the
     # shoulder; arm raise = bending the elbow toward the shoulder.
     is_shoulder_flexion = "shoulder_flexion" in hint_lower or "shoulder flexion" in hint_lower
+    # Distinguish knee_extension from sit_to_stand — same body area, but
+    # target angles point in opposite directions. Seated knee extension
+    # = lift the foot to OPEN the knee (target ~170°); sit_to_stand =
+    # bend the knee on descent (target ~90°). Without this split the
+    # generic leg_hint kept telling extension patients to "bend more"
+    # while they were doing the correct straightening motion.
+    is_knee_extension = "knee_extension" in hint_lower or "knee extension" in hint_lower
 
     side = (affected_side or "right").lower()
     left_side = side == "left"
@@ -203,16 +229,28 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
     elif is_leg:
         hp, kn, an = (_LEFT_HIP, _LEFT_KNEE, _LEFT_ANKLE) if left_side else (_RIGHT_HIP, _RIGHT_KNEE, _RIGHT_ANKLE)
         triple = joint_triple(keypoints, hp, kn, an)
+        # Knee extension is rewarded at the open/straight end of the
+        # joint range, sit_to_stand at the bent/seated end. Same angle
+        # measurement, opposite target — without splitting these the
+        # extension exercise scored 0 the moment the patient started
+        # straightening their leg correctly.
+        if is_knee_extension:
+            target_angle, green_band, yellow_band = 170, 15, 30
+        else:
+            target_angle, green_band, yellow_band = 90, 15, 30
         if triple:
             angle = angle_at_vertex(*triple)
             angles["kneeFlexion"] = angle
-            cs = color_and_score(angle, target=90, green=15, yellow=30)
+            cs = color_and_score(angle, target=target_angle, green=green_band, yellow=yellow_band)
             colors["kneeFlexion"] = cs["color"]
             overall = cs["score"]
         else:
             angles["kneeFlexion"] = None
             colors["kneeFlexion"] = "#FFC107"
-        hint = leg_hint(angles.get("kneeFlexion"))
+        if is_knee_extension:
+            hint = knee_extension_hint(angles.get("kneeFlexion"))
+        else:
+            hint = leg_hint(angles.get("kneeFlexion"))
 
     else:
         arm_sh, arm_el, arm_wr = (_LEFT_SHOULDER, _LEFT_ELBOW, _LEFT_WRIST) if left_side else (_RIGHT_SHOULDER, _RIGHT_ELBOW, _RIGHT_WRIST)
@@ -251,3 +289,115 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
             hint = "Step back — show your full body"
 
     return {"score": overall, "angles": angles, "colors": colors, "hint": hint}
+
+
+# ── Rep counting (sets-and-modes feature, Phase A, 2026-06-04) ─────────
+# Counts repetitions by watching the active joint angle cross into the
+# green form-band and back out, with hysteresis at the yellow-band edge
+# so a patient hovering near the boundary doesn't spam-count reps.
+#
+# Wired in Phase C — for now this class lives on its own. The WebSocket
+# pose loop will instantiate one per rep-set (target_reps=12 by default)
+# and call .update() per frame with the joint angle + the same band
+# parameters that color_and_score uses for that exercise.
+
+class RepCounter:
+    """Per-set rep counter with form-band hysteresis.
+
+    State machine:
+        INITIAL          → patient may have started in the green band;
+                            wait for them to leave it so the first rep
+                            counts on a real movement, not the
+                            already-correct starting pose.
+        WAITING_FOR_TOP  → patient is outside the green band; the next
+                            entry into green = +1 rep.
+        AT_TOP           → patient is at correct form; must move BEYOND
+                            the yellow band before another rep can
+                            count (hysteresis).
+
+    Why hysteresis: without the yellow-band exit threshold, a patient
+    hovering at the green/yellow boundary would oscillate between
+    in-green and out-of-green every frame and rack up false reps.
+    Yellow-band exit forces a meaningful movement away from the target
+    before the next rep is countable.
+
+    Typical usage (from the WS pose loop, Phase C):
+        counter = RepCounter(target_reps=12)
+        # ...for each frame...
+        snapshot = counter.update(
+            angle=current_joint_angle,
+            target_angle=90,        # same target color_and_score uses
+            green_band=15,          # same green band
+            yellow_band=30,         # same yellow band
+        )
+        if snapshot["set_complete"]:
+            # advance to break screen / next set
+    """
+
+    STATE_INITIAL = "initial"
+    STATE_WAITING_FOR_TOP = "waiting_for_top"
+    STATE_AT_TOP = "at_top"
+
+    def __init__(self, target_reps: int = 12) -> None:
+        self.target_reps = max(1, int(target_reps))
+        self.reps_completed = 0
+        self.state = self.STATE_INITIAL
+
+    def update(
+        self,
+        angle: Optional[float],
+        target_angle: float,
+        green_band: float,
+        yellow_band: float,
+    ) -> Dict[str, Any]:
+        """Process one frame's joint angle and advance the state machine.
+
+        Returns a snapshot the WS endpoint forwards to the client HUD:
+            {
+                "reps_completed": int,
+                "target_reps": int,
+                "set_complete": bool,
+                "state": "initial" | "waiting_for_top" | "at_top",
+            }
+
+        `angle=None` (joint not visible, low confidence) is treated as
+        "no signal" — state is preserved, no rep change. Set-complete
+        snapshots are idempotent: calling update() again after the set
+        finished returns the same snapshot without advancing.
+        """
+        if angle is None or self.reps_completed >= self.target_reps:
+            return self._snapshot()
+
+        diff = abs(angle - target_angle)
+        in_green = diff <= green_band
+        beyond_yellow = diff > yellow_band
+
+        if self.state == self.STATE_INITIAL:
+            # Refuse the first rep until the patient has demonstrably
+            # left correct form — guards against the "started in green
+            # zone = instant rep" foot-gun.
+            if not in_green:
+                self.state = self.STATE_WAITING_FOR_TOP
+
+        elif self.state == self.STATE_WAITING_FOR_TOP:
+            if in_green:
+                self.reps_completed += 1
+                self.state = self.STATE_AT_TOP
+
+        elif self.state == self.STATE_AT_TOP:
+            # Hysteresis: the patient must travel out of the yellow
+            # band entirely before the next rep can count. Inside
+            # yellow we hold AT_TOP so a slight wobble at the boundary
+            # doesn't trigger another rep.
+            if beyond_yellow:
+                self.state = self.STATE_WAITING_FOR_TOP
+
+        return self._snapshot()
+
+    def _snapshot(self) -> Dict[str, Any]:
+        return {
+            "reps_completed": self.reps_completed,
+            "target_reps": self.target_reps,
+            "set_complete": self.reps_completed >= self.target_reps,
+            "state": self.state,
+        }

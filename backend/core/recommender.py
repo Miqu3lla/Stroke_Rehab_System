@@ -176,32 +176,151 @@ def _sessions_per_week_from_action(action: str) -> int:
     return {"downgrade": 2, "maintain": 3, "upgrade": 4}.get(action, 3)
 
 
+# ── Sets-and-modes feature constants (Phase A, 2026-06-04) ─────────────
+# 3 sets × 12 reps is the rep baseline both modes share. The hold
+# finisher is appended to Strength mode once the patient has unlocked
+# it via _progression_level. SET_CAP_SECONDS is the per-set 2-minute
+# hard cap enforced by the camera loop (Phase C); it doubles here as
+# the "worst case time per set" used to project total exercise length
+# for the recommendation card.
+_SETS_REPS_PER_SET = 12
+_SETS_REP_COUNT = 3
+_SET_CAP_SECONDS = 120
+_HOLD_SECONDS = 300  # 5-min stretch goal; patient ends early on fatigue
+
+
+def _build_sets(mode: str, progression_level: int) -> List[Dict[str, Any]]:
+    """Build the sets[] array for one exercise card given mode + progression.
+
+    Composition rules:
+        Functionality (any progression):   3 rep sets
+        Strength, level 0 (locked):        3 rep sets (same as functionality)
+        Strength, level 1 (unlocked):      3 rep sets + 1 hold finisher
+
+    Each set entry carries enough for the frontend to render a card and
+    drive the per-set execution loop (Phase C). `score` is None at
+    prescription time and gets filled in after the patient completes
+    each set (Phase E).
+    """
+    sets: List[Dict[str, Any]] = []
+    for i in range(_SETS_REP_COUNT):
+        sets.append({
+            "set_index": i,
+            "format": "reps",
+            "target_reps": _SETS_REPS_PER_SET,
+            "hold_seconds": None,
+            "score": None,
+        })
+    if mode == "strength" and progression_level >= 1:
+        sets.append({
+            "set_index": len(sets),
+            "format": "hold",
+            "target_reps": None,
+            "hold_seconds": _HOLD_SECONDS,
+            "score": None,
+        })
+    return sets
+
+
+def _sets_total_seconds(sets: List[Dict[str, Any]]) -> int:
+    """Worst-case total duration for an exercise based on its set list.
+
+    Rep sets bill at the camera-loop 2-minute hard cap; hold sets bill
+    at their `hold_seconds` ceiling. Used for the recommendation card's
+    "this exercise takes up to N minutes" label — the actual timer is
+    per-set and lives in the frontend (Phase C).
+    """
+    total = 0
+    for s in sets:
+        if s.get("format") == "reps":
+            total += _SET_CAP_SECONDS
+        elif s.get("format") == "hold":
+            total += int(s.get("hold_seconds") or 0)
+    return total
+
+
+def _progression_level(stats: Optional[Dict[str, Any]]) -> int:
+    """Per-exercise progression tier for the sets-and-modes feature.
+
+    Returns:
+        0 — rep-only baseline (3 sets × 12 reps)
+        1 — holds unlocked (3 sets × 12 reps + 1 continuous 5-min hold)
+
+    Criterion for level 1 (sets-and-modes Phase A, 2026-06-04):
+        The patient's mean score across all attempts AFTER their first 3
+        sessions is at least +30 points higher than the mean of their
+        first 3 attempts on THIS specific exercise. Improvement on knee
+        extension does not unlock holds for arm raise.
+
+    Why "first 3 attempts" as baseline (not first 1): early sessions are
+    contaminated by figuring out the camera, the posture, and the form
+    hints. Averaging the first 3 smooths out that learning curve and
+    gives a fairer "where they actually started" number for comparison.
+
+    Why +30 points (absolute, not relative): the form score is on a
+    0–100 scale and "+30%" in clinical conversation usually means "+30
+    percentage points." A patient going from 40% to 70% is meaningfully
+    stronger; from 40% to 52% (a relative 30% gain) isn't really.
+
+    Edge case: a patient who scored 95% on their first 3 attempts can
+    never gain another +30 (ceiling at 100). They stay at level 0
+    forever. That's an acceptable corner case for v1 — at 95% form,
+    they're already executing reps near perfectly and the rep-only
+    plan continues to serve them. If this comes up clinically we can
+    add a "strong baseline → auto-unlock" branch.
+    """
+    if not stats:
+        return 0
+
+    scores = stats.get("scores_oldest_first") or []
+    BASELINE_WINDOW = 3
+    IMPROVEMENT_THRESHOLD_POINTS = 30.0
+
+    # Need the full 3-attempt baseline AND at least one session past
+    # baseline before we can compute improvement at all.
+    if len(scores) < BASELINE_WINDOW + 1:
+        return 0
+
+    baseline_mean = sum(scores[:BASELINE_WINDOW]) / BASELINE_WINDOW
+    recent_scores = scores[BASELINE_WINDOW:]
+    recent_mean = sum(recent_scores) / len(recent_scores)
+
+    if (recent_mean - baseline_mean) >= IMPROVEMENT_THRESHOLD_POINTS:
+        return 1
+    return 0
+
+
 def recommend_session_v2(
     patient_id: str,
     count: int = 3,
     history_limit: int = 50,
 ) -> Dict[str, Any]:
-    """Build a 3-phase adaptive session recommendation.
+    """Build the trajectory-adapted recommendation with both session-mode
+    variants populated.
 
     Returns a dict with shape:
         {
             "patient_id": "...",
             "trajectory": { state, confidence, signals, summary, per_exercise, evidence },
             "action": { action, duration_multiplier, rationale },
-            "exercises": [
-                { id, exercise_type, name, description, body_area,
-                  duration_minutes, intensity, difficulty_level, focus,
-                  affected_area, affected_side, reasoning }
-            ],
+            "functionality": { "exercises": [...rep-only cards...] },
+            "strength":      { "exercises": [...rep cards + hold finisher where unlocked...] },
             "model_source": "rule_based_trajectory",
         }
+
+    Both variants share the same picked exercise pool — the difference
+    is purely the sets[] composition per card. Strength adds the 5-min
+    hold finisher for any exercise the patient has unlocked via
+    _progression_level. Computing both server-side lets the frontend
+    cache them and toggle instantly between modes without re-fetching.
     """
     patient = get_patient_by_id(patient_id)
     if not patient:
         return {
             "patient_id": patient_id,
             "error": "patient_not_found",
-            "exercises": [],
+            "functionality": {"exercises": []},
+            "strength": {"exercises": []},
         }
 
     affected_area = (patient.get("affected_area") or "both").strip().lower()
@@ -235,22 +354,34 @@ def recommend_session_v2(
 
     intensity = _intensity_from_action(action["action"])
     sessions_per_week = _sessions_per_week_from_action(action["action"])
-    duration_multiplier = float(action.get("duration_multiplier") or 1.0)
+    # NOTE: action["duration_multiplier"] is intentionally not read here
+    # anymore — per-exercise improvement now drives duration (see
+    # _per_exercise_duration_multiplier). The action still drives
+    # exercise selection and intensity labelling.
     # Side guidance appended to each exercise's reasoning so the patient
     # sees a unilateral/bilateral training reminder per card.
     side_note = trajectory.side_guidance(affected_side)
 
-    exercises: List[Dict[str, Any]] = []
-    for index, ex in enumerate(picked):
-        base_minutes = ex.get("base_duration_minutes") or 2
-        # Floor at 1min so trajectory downgrades on a short base duration
-        # (e.g. 2min * 0.8 = 1.6 → 2min) aren't clamped up to a longer
-        # session than the catalog prescribes.
-        duration_minutes = max(1, int(round(base_minutes * duration_multiplier)))
+    # Build both Functionality and Strength variants of each picked
+    # exercise. The shared identity (id, name, body_area, reasoning) is
+    # computed once; sets[] composition is what diverges between modes.
+    functionality_exercises: List[Dict[str, Any]] = []
+    strength_exercises: List[Dict[str, Any]] = []
 
+    # Acute-phase safety cap (replaces the old per-exercise duration
+    # multiplier that was removed when sets[] took over duration). Even
+    # if a fresh post-stroke patient is posting Day-3 form scores that
+    # would normally unlock the +30%/+60% rep counts and the strength
+    # hold finisher, force progression_level=0 so they stay at the safe
+    # baseline (12 reps, no hold). Clinical: never push acute patients.
+    is_acute = action.get("phase") == "acute"
+
+    for index, ex in enumerate(picked):
         # Per-exercise reasoning: pull this exercise's trajectory stats
-        # if it appears in the patient's history.
+        # if it appears in the patient's history. Same for both variants.
         stats = trajectory_result["per_exercise"].get(ex["id"])
+        progression_level = 0 if is_acute else _progression_level(stats)
+
         if stats and stats.get("latest_score") is not None:
             latest = stats["latest_score"]
             mean = stats.get("mean_score") or latest
@@ -264,13 +395,13 @@ def recommend_session_v2(
         if side_note:
             per_ex_reason = f"{per_ex_reason} {side_note}"
 
-        exercises.append({
+        # Shared card identity — mode/sets/duration get added per variant.
+        base_card = {
             "id": ex["id"],
             "exercise_type": ex["exercise_type"],
             "name": ex["name"],
             "description": ex["description"],
             "body_area": ex["body_area"],
-            "duration_minutes": duration_minutes,
             "intensity": intensity,
             "difficulty_level": ex["difficulty_level"],
             "focus": ex["focus"],
@@ -278,6 +409,8 @@ def recommend_session_v2(
             "affected_side": affected_side,
             "session_index": index,
             "reasoning": per_ex_reason,
+            "demo_video_path": ex.get("demo_video_path"),
+            "progression_level": progression_level,
             "recommendation": {
                 "intensity": intensity,
                 "focus": ex["focus"],
@@ -286,6 +419,32 @@ def recommend_session_v2(
                     "primary_focus": ex["focus"],
                 },
             },
+        }
+
+        # Functionality variant — always rep-only, ignores progression
+        # (holds are a Strength-mode feature exclusively).
+        func_sets = _build_sets("functionality", progression_level)
+        func_total = _sets_total_seconds(func_sets)
+        functionality_exercises.append({
+            **base_card,
+            "mode": "functionality",
+            "sets": func_sets,
+            "set_count": len(func_sets),
+            "duration_seconds": func_total,
+            "duration_minutes": max(1, int(round(func_total / 60))),
+        })
+
+        # Strength variant — same rep baseline; appends the 5-min hold
+        # finisher once the patient has unlocked it on this exercise.
+        str_sets = _build_sets("strength", progression_level)
+        str_total = _sets_total_seconds(str_sets)
+        strength_exercises.append({
+            **base_card,
+            "mode": "strength",
+            "sets": str_sets,
+            "set_count": len(str_sets),
+            "duration_seconds": str_total,
+            "duration_minutes": max(1, int(round(str_total / 60))),
         })
 
     return {
@@ -294,6 +453,7 @@ def recommend_session_v2(
         "action": action,
         "recovery_phase": action.get("phase"),
         "side_guidance": side_note,
-        "exercises": exercises,
+        "functionality": {"exercises": functionality_exercises},
+        "strength": {"exercises": strength_exercises},
         "model_source": "rule_based_trajectory",
     }

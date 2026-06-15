@@ -2,7 +2,7 @@ import logging
 import os
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from core import supabase_db as supabase_db_module
 from core.auth import assert_patient_match, verify_jwt
@@ -24,11 +24,12 @@ def create_patient_profile(
     # the patient_id; reject any request trying to set a different one.
     assert_patient_match(claims, payload.id)
     record = {
-        "name": payload.name,
+        "first_name": payload.first_name,
+        "last_name": payload.last_name,
         "id": payload.id,
         "stroke_type": "ischemic",
         "months_in_recovery": payload.months_in_recovery,
-        "affected_part": payload.affected_part,
+        "affected_area": payload.affected_area,
         "affected_side": payload.affected_side,
         "source_app": "frontend",
     }
@@ -42,7 +43,13 @@ def create_patient_profile(
         logger.info("Could not evaluate supabase config state")
 
     database_result = save_patient_profile(record)
+    if not database_result.get("stored"):
+        logger.error("Patient insert failed: %s", database_result)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to save patient profile: {database_result}",
+        )
     saved_patient_id = None
-    if database_result.get("stored") and database_result.get("data"):
+    if database_result.get("data"):
         saved_patient_id = database_result["data"][0].get("id")
     return {"patient_id": saved_patient_id, "patient_profile": record, "database": database_result}
