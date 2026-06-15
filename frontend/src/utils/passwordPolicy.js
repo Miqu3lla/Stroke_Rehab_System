@@ -1,13 +1,5 @@
-// Signup password policy (2026-06-05). Replaces the previous "at least
-// 6 characters" check, which let `123456`, `qwerty`, `password` through.
-//
-// Floor for new patient accounts: 8 chars + 1 uppercase + 1 number.
-// Deliberately no symbol requirement and no banned-words list — the
-// patient population skews motor/cognitive-impaired and mobile typing
-// is already a barrier; we want a real-bar-not-a-frustration-bar.
-//
-// The same SignupCard checklist + handleSignUp gate import from here so
-// the UI and the final validation never drift from each other.
+// Password policy rules and validation helper for user signup.
+// Requires: at least 8 characters, 1 uppercase letter, and 1 number.
 
 export const PASSWORD_RULES = [
   {
@@ -27,9 +19,8 @@ export const PASSWORD_RULES = [
   },
 ];
 
-// Returns { ok, failed } — `failed` is the list of rule LABELS the
-// password violates, ready to surface in an Alert. Empty failed array
-// means the password meets every rule.
+// Validates a password against PASSWORD_RULES.
+// Returns { ok: boolean, failed: string[] } where failed contains labels of violated rules.
 export function validatePassword(pw) {
   const failed = PASSWORD_RULES.filter((r) => !r.test(pw)).map((r) => r.label);
   return { ok: failed.length === 0, failed };
