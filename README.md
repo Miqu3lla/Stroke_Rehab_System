@@ -23,8 +23,6 @@ Stroke patients often lose supervised feedback after clinic sessions. This proje
 Stroke_Rehab_System/
 ├── README.md
 ├── docker-compose.yaml
-├── test_api.ps1                    # smoke test for the API endpoints
-├── test_e2e.py                     # end-to-end patient-profile flow check
 ├── datasets/
 │   ├── archive/
 │   ├── Ready_Dataset/
