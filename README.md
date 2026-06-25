@@ -23,7 +23,8 @@ Stroke patients often lose supervised feedback after clinic sessions. This proje
 Stroke_Rehab_System/
 ├── README.md
 ├── docker-compose.yaml
-├── docs/
+├── test_api.ps1                    # smoke test for the API endpoints
+├── test_e2e.py                     # end-to-end patient-profile flow check
 ├── datasets/
 │   ├── archive/
 │   ├── Ready_Dataset/
@@ -38,10 +39,11 @@ Stroke_Rehab_System/
 │   │   ├── lstm_weights.pth
 │   │   └── rf_recommender.pkl
 │   ├── core/                       # domain logic (pure functions, no FastAPI)
+│   │   ├── auth.py                 # JWT verification + patient-ownership guard
 │   │   ├── exercise_catalog.py     # catalog + difficulty overlays + body-area filter
 │   │   ├── mediapipe_vision.py     # MediaPipe pose extraction
 │   │   ├── neural_network.py       # LSTM form classifier
-│   │   ├── recommender.py          # trajectory-adapted session picker
+│   │   ├── recommender.py          # trajectory-adapted session picker (dual-mode variants)
 │   │   ├── supabase_db.py          # Supabase / Postgres access (docker -> psycopg2 -> REST)
 │   │   └── trajectory.py           # Patient X loop: progressing / plateauing / deteriorating
 │   ├── routers/                    # FastAPI route handlers (thin, validation only)
@@ -49,13 +51,13 @@ Stroke_Rehab_System/
 │   │   ├── pose.py                 # POST /pose/estimate
 │   │   ├── predictions.py          # POST /predict/form, /predict/form-from-video
 │   │   ├── recommendations.py      # GET  /recommendation/{patient_id}
-│   │   └── sessions.py             # POST /sessions
+│   │   └── sessions.py             # POST /sessions (batch per-set results)
 │   ├── schemas/                    # Pydantic request/response models
 │   │   ├── patient.py
 │   │   ├── pose.py
 │   │   └── prediction.py
 │   ├── services/                   # cross-cutting helpers used by routers
-│   │   └── pose_service.py         # angle + form-score + patient-friendly hints
+│   │   └── pose_service.py         # angle + form-score + RepCounter + hints
 │   └── scripts/
 │       ├── dataset_splitter.py
 │       └── train_model.py
@@ -73,29 +75,35 @@ Stroke_Rehab_System/
         ├── components/
         │   ├── Auth/               # LoginCard, SignupCard
         │   ├── exercise/           # CameraComponent, SkeletonOverlay, BeforeYouStart,
-        │   │                       # RestState, RecommendationCard, HistoryList
-        │   ├── onboarding/         # OnboardingNav, QuestionCard
-        │   └── ui/                 # ExerciseModal, Skeleton, navbar, sidebar
+        │   │                       # BreakScreen, RestState, RecommendationCard,
+        │   │                       # HistoryList, OverallProgressCard, SessionModeToggle
+        │   ├── onboarding/         # OnboardingNav, QuestionCard (options + multi-field)
+        │   ├── profile/            # PatientHeaderProfile, ClinicalSummary
+        │   └── ui/                 # ExerciseModal, Skeleton, navbar
         ├── constants/
         │   └── exerciseTypes.js    # LSTM-supported set, display names
         ├── hooks/
-        │   ├── useCamera.js        # frame capture + keypoint buffering
-        │   ├── useOnboarding.js
-        │   └── usePoseDetection.js # POST /pose/estimate + LSTM classify on finish
+        │   ├── useCamera.js        # per-set frame loop + rep/hold tracking
+        │   ├── useOnboarding.js    # onboarding step machine + submit
+        │   ├── useOverallProgress.js # aggregates history into progress curve
+        │   └── usePoseDetection.js # WS pose loop + LSTM classify on finish
         ├── lib/
         │   └── api.js              # axios client for the backend
         ├── navigation/
         │   └── index.js            # React Navigation stack (protected routes)
-        ├── screens/                # Login, Signup, Onboarding, Home,
-        │                           # Exercise, SessionSummary
+        ├── screens/                # Login, Signup, Onboarding, Home, Session,
+        │                           # Exercise, SessionSummary, PatientProfile
         ├── services/
         │   └── supabase.js
         ├── store/                  # Zustand stores
         │   ├── useAuthStore.js
-        │   ├── usePatientStore.js  # recommendations + history
+        │   ├── usePatientStore.js  # recommendations + history + mode toggle
+        │   ├── usePatientProfileStore.js # profile fetch + name editing
         │   └── useSessionStore.js  # active session state machine
         └── utils/
-            └── sequenceFormatter.js
+            ├── duration.js         # session/duration label formatting
+            ├── passwordPolicy.js   # signup password rules + validation
+            └── repCounter.js       # CV rep state machine + limb/color helpers
 ```
 
 ## Prerequisites
@@ -200,12 +208,15 @@ While Expo is running:
 ## API Endpoints
 
 - `GET  /health` — Service health check.
-- `POST /patients` — Save patient onboarding profile.
-- `POST /pose/estimate` — Run MediaPipe on a base64-encoded frame and return 33 landmarks + form score.
+- `POST /patients` — Save patient onboarding profile (first/last name, recovery, affected area/side).
+- `WS   /ws/pose` — Realtime pose channel. Client opens one socket per exercise, sends a JWT auth handshake, then streams JPEG frames and receives per-frame landmarks + form score + band colors. Replaces the per-frame HTTP overhead of `/pose/estimate`.
+- `POST /pose/estimate` — One-shot MediaPipe on a base64 frame → 33 landmarks + form score. Legacy single-frame path, kept for non-streaming callers.
 - `POST /predict/form` — Classify a pre-extracted pose sequence (LSTM).
 - `POST /predict/form-from-video` — Upload a video, extract poses, classify form.
-- `GET  /recommendation/{patient_id}` — Trajectory-adapted exercise plan (Patient X loop).
-- `POST /sessions` — Batch-persist a finished session's per-exercise results.
+- `GET  /recommendation/{patient_id}` — Trajectory-adapted exercise plan (Patient X loop). Returns both `functionality` and `strength` variants in one response so the client can toggle modes with no refetch.
+- `POST /sessions` — Batch-persist a finished session's per-exercise results, including the structured per-set `set_results[]` (rep form % / hold completion %) for the therapist fatigue curve.
+
+Protected routes require a valid Supabase JWT in the `Authorization: Bearer ...` header (the `/ws/pose` socket authenticates via its first handshake message instead, to keep the token out of proxy logs).
 
 Public versions live under `https://api.necookie.dev/*`. Interactive docs at `https://api.necookie.dev/docs`.
 
@@ -227,7 +238,7 @@ For a containerized run instead of local Python/Node:
 docker compose up --build
 ```
 
-- Backend → `http://localhost:8001`
+- Backend → `http://localhost:8002` (host 8002 maps to the container's 8000; avoids colliding with a local-Python API on 8001)
 - Frontend (Expo) → `http://localhost:8081`
 
 The backend image uses the CUDA 12.8 PyTorch wheel and requests `gpus: all`. Docker Desktop must have GPU support enabled.
