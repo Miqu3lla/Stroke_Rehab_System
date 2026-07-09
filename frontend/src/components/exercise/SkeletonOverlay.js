@@ -183,10 +183,15 @@ export default function SkeletonOverlay({
   // mirrored front camera, so their clinical RIGHT arm is drawn with
   // MediaPipe's LEFT segments (11/13/15) and vice-versa; "both" lights up
   // both. Kept in sync with the backend score_pose tracked_sides map.
+  // Normalize first (trim + lowercase) so "Right" / "right " match, and
+  // default any unexpected value to clinical right — same rule as the
+  // backend score_pose, so a stray-cased value can't highlight the opposite
+  // arm from the one being scored.
+  const normalizedSide = (affectedSide || 'right').toString().trim().toLowerCase();
   const trackedSegSides =
-    affectedSide === 'both' ? ['LEFT', 'RIGHT']
-      : affectedSide === 'right' ? ['LEFT']
-        : ['RIGHT'];
+    normalizedSide === 'both' ? ['LEFT', 'RIGHT']
+      : normalizedSide === 'left' ? ['RIGHT']
+        : ['LEFT'];   // 'right' or any unexpected value → mirrored-frame left
 
   // Every other exercise (arm_raise, knee_extension, sit_to_stand) is filmed
   // side-on, so only the near limb tracks well — highlight whichever side has

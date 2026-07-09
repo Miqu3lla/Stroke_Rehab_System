@@ -159,18 +159,30 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
     # while they were doing the correct straightening motion.
     is_knee_extension = "knee_extension" in hint_lower or "knee extension" in hint_lower
 
+    # A recognized specific exercise implies its body area even when the
+    # generic keyword lists miss it — e.g. "shoulder_flexion" carries no
+    # "arm" token, so without this it would fall through to the cross-body
+    # fallback and score the wrong joint. Same guard for knee_extension.
+    if is_shoulder_flexion:
+        is_arm, is_leg = True, False
+    if is_knee_extension:
+        is_leg, is_arm = True, False
+
     # Front-facing camera: expo-camera mirrors the frame it sends to the
     # backend, so MediaPipe's LEFT_* landmarks land on the patient's real
     # RIGHT side and vice-versa. Map the clinical affected side to the
     # mirrored-frame landmark side ("L" = LEFT_* indices, "R" = RIGHT_*) so
     # we score the limb the patient is actually moving. "both" tracks both.
-    side = (affected_side or "right").lower()
+    # Normalize first: strip/lowercase so "Right" or "right " match, and
+    # default any unexpected value to clinical right (the API's own default)
+    # rather than silently flipping it to left.
+    side = (affected_side or "right").strip().lower()
     if side == "both":
         tracked_sides = ("L", "R")
-    elif side == "right":
+    elif side == "left":
+        tracked_sides = ("R",)   # clinical left → mirrored-frame right
+    else:                        # "right" or any unexpected value → right
         tracked_sides = ("L",)   # clinical right → mirrored-frame left
-    else:                        # "left" or unknown default
-        tracked_sides = ("R",)   # clinical left  → mirrored-frame right
 
     angles: Dict[str, Any] = {}
     colors: Dict[str, str] = {}
@@ -223,18 +235,22 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
     def _score_tracked(triple_fn, target, green, yellow, sides=None):
         # Score every side in `sides` (defaults to tracked_sides) and keep
         # the WORST (lowest score) so on "both" the weaker limb drives the
-        # color/score/hint the patient sees — a strong side shouldn't mask a
-        # lagging one. Returns (angle, color, score); angle=None + yellow
-        # when no side is visible.
+        # color/score/hint — a strong side shouldn't mask a lagging one. A
+        # requested side with no confident landmarks counts as the worst
+        # (score 0), so "both" genuinely requires BOTH limbs to be tracked
+        # and doesn't pass on one good limb while the other is missing.
+        # Returns (angle, color, score).
         worst = None
         for s in (sides if sides is not None else tracked_sides):
             triple = triple_fn(s)
-            if not triple:
-                continue
-            ang = angle_at_vertex(*triple)
-            cs = color_and_score(ang, target=target, green=green, yellow=yellow)
-            if worst is None or cs["score"] < worst[2]:
-                worst = (ang, cs["color"], cs["score"])
+            if triple:
+                ang = angle_at_vertex(*triple)
+                cs = color_and_score(ang, target=target, green=green, yellow=yellow)
+                candidate = (ang, cs["color"], cs["score"])
+            else:
+                candidate = (None, "#FFC107", 0)  # requested limb not visible → weakest
+            if worst is None or candidate[2] < worst[2]:
+                worst = candidate
         if worst is None:
             return None, "#FFC107", 0
         return worst
