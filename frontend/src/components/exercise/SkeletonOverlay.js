@@ -179,16 +179,41 @@ export default function SkeletonOverlay({
     return { x, y };
   };
 
+  // shoulder_flexion is the one FRONTAL exercise: the patient faces the
+  // mirrored front camera, so their clinical RIGHT arm is drawn with
+  // MediaPipe's LEFT segments (11/13/15) and vice-versa; "both" lights up
+  // both. Kept in sync with the backend score_pose tracked_sides map.
+  // Normalize first (trim + lowercase) so "Right" / "right " match, and
+  // default any unexpected value to clinical right — same rule as the
+  // backend score_pose, so a stray-cased value can't highlight the opposite
+  // arm from the one being scored.
+  const normalizedSide = (affectedSide || 'right').toString().trim().toLowerCase();
+  const trackedSegSides =
+    normalizedSide === 'both' ? ['LEFT', 'RIGHT']
+      : normalizedSide === 'left' ? ['RIGHT']
+        : ['LEFT'];   // 'right' or any unexpected value → mirrored-frame left
+
+  // Every other exercise (arm_raise, knee_extension, sit_to_stand) is filmed
+  // side-on, so only the near limb tracks well — highlight whichever side has
+  // the higher landmark confidence, matching the backend which scores the
+  // most-visible (affected) limb rather than the mirror-mapped one.
+  const minConf = (indices) => Math.min(
+    ...indices.map((i) => smoothedKeypoints[i]?.score ?? smoothedKeypoints[i]?.confidence ?? 0),
+  );
+  const isShoulderFlexion = /shoulder[_ ]?flexion/i.test(exerciseType || '');
+  const visibleArmSide = minConf([11, 13, 15]) >= minConf([12, 14, 16]) ? 'LEFT' : 'RIGHT';
+  const visibleLegSide = minConf([23, 25, 27]) >= minConf([24, 26, 28]) ? 'LEFT' : 'RIGHT';
+  const armSegSides = isShoulderFlexion ? trackedSegSides : [visibleArmSide];
+
   const getLineColor = (i1, i2) => {
     const key = `${i1}-${i2}`;
-    const side = affectedSide === 'left' ? 'LEFT' : 'RIGHT';
 
     if (isArmExercise(exerciseType)) {
-      if (SEGMENT_MAP[`ARM_${side}`].has(key)) {
+      if (armSegSides.some((s) => SEGMENT_MAP[`ARM_${s}`].has(key))) {
         return jointColors?.bicepCurl ?? NEUTRAL;
       }
     } else if (isLegExercise(exerciseType)) {
-      if (SEGMENT_MAP[`LEG_${side}`].has(key)) {
+      if (SEGMENT_MAP[`LEG_${visibleLegSide}`].has(key)) {
         return jointColors?.kneeFlexion ?? NEUTRAL;
       }
     } else {
@@ -234,15 +259,16 @@ export default function SkeletonOverlay({
         if (idx < 11) return null;
         const p = getPoint(idx);
         if (!p) return null;
-        // Pick the most relevant segment color for this joint if it's part of an active bone.
-        const side = affectedSide === 'left' ? 'LEFT' : 'RIGHT';
+        // Pick the most relevant segment color for this joint if it's part of
+        // an active bone. Uses the same armSegSides / visibleLegSide as the
+        // bone lines so the dots and bones highlight the same limb(s).
         const isActiveArm = isArmExercise(exerciseType) && (
-          [11, 13, 15].includes(idx) && side === 'LEFT' ||
-          [12, 14, 16].includes(idx) && side === 'RIGHT'
+          ([11, 13, 15].includes(idx) && armSegSides.includes('LEFT')) ||
+          ([12, 14, 16].includes(idx) && armSegSides.includes('RIGHT'))
         );
         const isActiveLeg = isLegExercise(exerciseType) && (
-          [23, 25, 27].includes(idx) && side === 'LEFT' ||
-          [24, 26, 28].includes(idx) && side === 'RIGHT'
+          ([23, 25, 27].includes(idx) && visibleLegSide === 'LEFT') ||
+          ([24, 26, 28].includes(idx) && visibleLegSide === 'RIGHT')
         );
         const dotColor = isActiveArm
           ? (jointColors?.bicepCurl ?? NEUTRAL)
