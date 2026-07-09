@@ -41,18 +41,19 @@ def joint_triple(keypoints: List[Dict[str, float]], i1: int, i2: int, i3: int, m
 
 
 def arm_raise_hint(angle: Optional[float]) -> str:
-    """Hints for arm_raise — measured by ELBOW angle (shoulder-elbow-wrist).
-    Target 90° = forearm parallel to floor (bicep-curl shape)."""
+    """Hints for arm_raise (seated bicep curl) — measured by ELBOW angle
+    (shoulder-elbow-wrist). Target 55° = hand curled up near the shoulder
+    (the top of the curl). Bands match color_and_score(green=25, yellow=45)."""
     if angle is None:
         return "Step back — your shoulder, elbow, and hand need to be visible"
-    diff = angle - 90
+    diff = angle - 55
     abs_diff = abs(diff)
-    if abs_diff <= 10:
-        return "Great form! Hold this position"
     if abs_diff <= 25:
-        return "Almost there — bend your elbow a little more" if diff > 0 \
-            else "Almost there — straighten your arm a little"
-    return "Bend your elbow to bring your hand up toward your shoulder" if diff > 0 \
+        return "Great form! Hold your hand up by your shoulder"
+    if abs_diff <= 45:
+        return "Almost there — curl your hand up a little more" if diff > 0 \
+            else "Ease your hand down slightly"
+    return "Curl your hand up toward your shoulder" if diff > 0 \
         else "Lower your hand back down"
 
 
@@ -168,21 +169,22 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
     if is_knee_extension:
         is_leg, is_arm = True, False
 
-    # Front-facing camera: expo-camera mirrors the frame it sends to the
-    # backend, so MediaPipe's LEFT_* landmarks land on the patient's real
-    # RIGHT side and vice-versa. Map the clinical affected side to the
-    # mirrored-frame landmark side ("L" = LEFT_* indices, "R" = RIGHT_*) so
-    # we score the limb the patient is actually moving. "both" tracks both.
-    # Normalize first: strip/lowercase so "Right" or "right " match, and
-    # default any unexpected value to clinical right (the API's own default)
-    # rather than silently flipping it to left.
+    # The front camera feeds a MIRRORED frame (the patient's shirt text reads
+    # backwards on screen), so MediaPipe labels the patient's real RIGHT limb
+    # as its LEFT_* landmarks and vice-versa. Map the clinical affected side to
+    # the mirrored MediaPipe side ("L" = LEFT_* 11/13/15/23/25/27, "R" = RIGHT_*
+    # 12/14/16/24/26/28). "both" tracks both. Normalize first: strip/lowercase
+    # so "Right" or "right " match, default any unexpected value to right.
+    #
+    # If testing shows this inverted (lifting the OTHER limb scores), swap the
+    # two single-side lines below — this is the one place the mapping lives.
     side = (affected_side or "right").strip().lower()
     if side == "both":
         tracked_sides = ("L", "R")
     elif side == "left":
-        tracked_sides = ("R",)   # clinical left → mirrored-frame right
+        tracked_sides = ("R",)   # clinical left → MediaPipe RIGHT (mirrored)
     else:                        # "right" or any unexpected value → right
-        tracked_sides = ("L",)   # clinical right → mirrored-frame left
+        tracked_sides = ("L",)   # clinical right → MediaPipe LEFT (mirrored)
 
     angles: Dict[str, Any] = {}
     colors: Dict[str, str] = {}
@@ -255,22 +257,9 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
             return None, "#FFC107", 0
         return worst
 
-    def _most_visible_side(triple_fn):
-        # Side-view exercises (arm_raise, knee_extension, sit_to_stand) show
-        # one limb to the camera; the other is occluded behind it. Pick the
-        # side whose landmarks are more confident — that's the limb facing the
-        # camera (the affected one the patient is demonstrating). Independent
-        # of the frontal-only mirror mapping in tracked_sides.
-        def _conf(s):
-            tri = triple_fn(s)
-            return min((kp.get("score", 0) for kp in tri), default=-1.0) if tri else -1.0
-        return "L" if _conf("L") >= _conf("R") else "R"
-
     if is_arm:
         if is_shoulder_flexion:
-            # shoulder_flexion is the one FRONTAL exercise (patient faces the
-            # camera, raises both arms), so the mirror-mapped affected side
-            # applies. Shoulder joint angle: hip -> shoulder -> elbow.
+            # Shoulder joint angle: hip -> shoulder -> elbow.
             # Target 90° = arm raised to shoulder height, elbow straight.
             angle, color, overall = _score_tracked(
                 lambda s: _arm_triple(s, True), target=90, green=15, yellow=30)
@@ -278,39 +267,31 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
             colors["bicepCurl"] = color
             hint = shoulder_flexion_hint(angle)
         else:
-            # Arm raise (seated bicep curl) is filmed side-on, so only the arm
-            # facing the camera tracks well — score the most-visible arm, the
-            # same way legs are handled. Elbow angle: shoulder -> elbow ->
-            # wrist. Target 90° = forearm parallel to the floor.
-            arm_side = _most_visible_side(lambda s: _arm_triple(s, False))
+            # Arm raise = seated bicep curl: elbow angle (shoulder -> elbow ->
+            # wrist). Target 55° = hand curled up near the shoulder (top of the
+            # curl, per the demo video). The generous band rewards the raised
+            # position and doesn't punish curling higher — the old 90° target
+            # graded only a half-curl and told patients to "straighten" when
+            # they raised their hand properly.
             angle, color, overall = _score_tracked(
-                lambda s: _arm_triple(s, False), target=90, green=10, yellow=25,
-                sides=(arm_side,))
+                lambda s: _arm_triple(s, False), target=55, green=25, yellow=45)
             angles["bicepCurl"] = angle
             colors["bicepCurl"] = color
             hint = arm_raise_hint(angle)
 
     elif is_leg:
-        # Leg exercises are performed side-on to the camera so the sagittal
-        # knee angle sits in the image plane. Only the leg facing the camera
-        # tracks reliably — the far leg is occluded behind it. Score the leg
-        # with the higher landmark confidence: that's the one the patient is
-        # showing the camera (their affected leg). This intentionally
-        # overrides the front-camera mirror mapping (which only makes sense
-        # for frontal arm exercises) — tracking the mirror-mapped *far* leg
-        # was reading a fully-straightened leg as still bent.
-        leg_side = _most_visible_side(_leg_triple)
-        # Knee extension is rewarded at the open/straight end of the joint
-        # range, sit_to_stand at the bent/seated end. Same measurement,
-        # opposite target — without splitting these the extension exercise
-        # scored 0 the moment the patient started straightening correctly.
+        # Track the AFFECTED leg via tracked_sides (right → right leg, left →
+        # left, both → both) so only the affected leg is graded — the patient
+        # extends their affected leg and that's the one that must score.
+        # Knee extension is rewarded at the open/straight end (~170°),
+        # sit_to_stand at the bent/seated end (~90°): same measurement,
+        # opposite target.
         if is_knee_extension:
             target_angle, green_band, yellow_band = 170, 15, 30
         else:
             target_angle, green_band, yellow_band = 90, 15, 30
         angle, color, overall = _score_tracked(
-            _leg_triple, target=target_angle, green=green_band, yellow=yellow_band,
-            sides=(leg_side,))
+            _leg_triple, target=target_angle, green=green_band, yellow=yellow_band)
         angles["kneeFlexion"] = angle
         colors["kneeFlexion"] = color
         hint = knee_extension_hint(angle) if is_knee_extension else leg_hint(angle)
