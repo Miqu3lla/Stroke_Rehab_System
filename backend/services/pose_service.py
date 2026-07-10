@@ -41,18 +41,19 @@ def joint_triple(keypoints: List[Dict[str, float]], i1: int, i2: int, i3: int, m
 
 
 def arm_raise_hint(angle: Optional[float]) -> str:
-    """Hints for arm_raise — measured by ELBOW angle (shoulder-elbow-wrist).
-    Target 90° = forearm parallel to floor (bicep-curl shape)."""
+    """Hints for arm_raise (seated bicep curl) — measured by ELBOW angle
+    (shoulder-elbow-wrist). Target 55° = hand curled up near the shoulder
+    (the top of the curl). Bands match color_and_score(green=25, yellow=45)."""
     if angle is None:
         return "Step back — your shoulder, elbow, and hand need to be visible"
-    diff = angle - 90
+    diff = angle - 55
     abs_diff = abs(diff)
-    if abs_diff <= 10:
-        return "Great form! Hold this position"
     if abs_diff <= 25:
-        return "Almost there — bend your elbow a little more" if diff > 0 \
-            else "Almost there — straighten your arm a little"
-    return "Bend your elbow to bring your hand up toward your shoulder" if diff > 0 \
+        return "Great form! Hold your hand up by your shoulder"
+    if abs_diff <= 45:
+        return "Almost there — curl your hand up a little more" if diff > 0 \
+            else "Ease your hand down slightly"
+    return "Curl your hand up toward your shoulder" if diff > 0 \
         else "Lower your hand back down"
 
 
@@ -159,8 +160,31 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
     # while they were doing the correct straightening motion.
     is_knee_extension = "knee_extension" in hint_lower or "knee extension" in hint_lower
 
-    side = (affected_side or "right").lower()
-    left_side = side == "left"
+    # A recognized specific exercise implies its body area even when the
+    # generic keyword lists miss it — e.g. "shoulder_flexion" carries no
+    # "arm" token, so without this it would fall through to the cross-body
+    # fallback and score the wrong joint. Same guard for knee_extension.
+    if is_shoulder_flexion:
+        is_arm, is_leg = True, False
+    if is_knee_extension:
+        is_leg, is_arm = True, False
+
+    # The front camera feeds a MIRRORED frame (the patient's shirt text reads
+    # backwards on screen), so MediaPipe labels the patient's real RIGHT limb
+    # as its LEFT_* landmarks and vice-versa. Map the clinical affected side to
+    # the mirrored MediaPipe side ("L" = LEFT_* 11/13/15/23/25/27, "R" = RIGHT_*
+    # 12/14/16/24/26/28). "both" tracks both. Normalize first: strip/lowercase
+    # so "Right" or "right " match, default any unexpected value to right.
+    #
+    # If testing shows this inverted (lifting the OTHER limb scores), swap the
+    # two single-side lines below — this is the one place the mapping lives.
+    side = (affected_side or "right").strip().lower()
+    if side == "both":
+        tracked_sides = ("L", "R")
+    elif side == "left":
+        tracked_sides = ("R",)   # clinical left → MediaPipe RIGHT (mirrored)
+    else:                        # "right" or any unexpected value → right
+        tracked_sides = ("L",)   # clinical right → MediaPipe LEFT (mirrored)
 
     angles: Dict[str, Any] = {}
     colors: Dict[str, str] = {}
@@ -192,99 +216,113 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
 
     overall = 0
 
+    # Landmark-triple pickers for a mirrored-frame side ("L"/"R"). tracked_sides
+    # (set above) already maps the clinical affected side onto these.
+    def _arm_triple(s, shoulder_joint):
+        if shoulder_joint:
+            # hip -> shoulder -> elbow (shoulder_flexion)
+            idx = (_LEFT_HIP, _LEFT_SHOULDER, _LEFT_ELBOW) if s == "L" \
+                else (_RIGHT_HIP, _RIGHT_SHOULDER, _RIGHT_ELBOW)
+        else:
+            # shoulder -> elbow -> wrist (arm_raise)
+            idx = (_LEFT_SHOULDER, _LEFT_ELBOW, _LEFT_WRIST) if s == "L" \
+                else (_RIGHT_SHOULDER, _RIGHT_ELBOW, _RIGHT_WRIST)
+        return joint_triple(keypoints, *idx)
+
+    def _leg_triple(s):
+        idx = (_LEFT_HIP, _LEFT_KNEE, _LEFT_ANKLE) if s == "L" \
+            else (_RIGHT_HIP, _RIGHT_KNEE, _RIGHT_ANKLE)
+        return joint_triple(keypoints, *idx)
+
+    def _score_tracked(triple_fn, target, green, yellow, sides=None):
+        # Score every side in `sides` (defaults to tracked_sides) and keep
+        # the WORST (lowest score) so on "both" the weaker limb drives the
+        # color/score/hint — a strong side shouldn't mask a lagging one. A
+        # requested side with no confident landmarks counts as the worst
+        # (score 0), so "both" genuinely requires BOTH limbs to be tracked
+        # and doesn't pass on one good limb while the other is missing.
+        # Returns (angle, color, score).
+        worst = None
+        for s in (sides if sides is not None else tracked_sides):
+            triple = triple_fn(s)
+            if triple:
+                ang = angle_at_vertex(*triple)
+                cs = color_and_score(ang, target=target, green=green, yellow=yellow)
+                candidate = (ang, cs["color"], cs["score"])
+            else:
+                candidate = (None, "#FFC107", 0)  # requested limb not visible → weakest
+            if worst is None or candidate[2] < worst[2]:
+                worst = candidate
+        if worst is None:
+            return None, "#FFC107", 0
+        return worst
+
     if is_arm:
         if is_shoulder_flexion:
-            # Shoulder joint angle: hip -> shoulder -> elbow. Target 90°
-            # = arm raised forward to shoulder height (elbow stays straight).
-            hp, sh, el = (_LEFT_HIP, _LEFT_SHOULDER, _LEFT_ELBOW) if left_side \
-                else (_RIGHT_HIP, _RIGHT_SHOULDER, _RIGHT_ELBOW)
-            triple = joint_triple(keypoints, hp, sh, el)
-            if triple:
-                angle = angle_at_vertex(*triple)
-                angles["bicepCurl"] = angle  # frontend overlay key, reused
-                cs = color_and_score(angle, target=90, green=15, yellow=30)
-                colors["bicepCurl"] = cs["color"]
-                overall = cs["score"]
-            else:
-                angles["bicepCurl"] = None
-                colors["bicepCurl"] = "#FFC107"
-            hint = shoulder_flexion_hint(angles.get("bicepCurl"))
+            # Shoulder joint angle: hip -> shoulder -> elbow.
+            # Target 90° = arm raised to shoulder height, elbow straight.
+            angle, color, overall = _score_tracked(
+                lambda s: _arm_triple(s, True), target=90, green=15, yellow=30)
+            angles["bicepCurl"] = angle  # frontend overlay key, reused
+            colors["bicepCurl"] = color
+            hint = shoulder_flexion_hint(angle)
         else:
-            # Arm raise: elbow angle (shoulder -> elbow -> wrist). Target 90°
-            # = forearm parallel to the floor (bicep-curl shape).
-            sh, el, wr = (_LEFT_SHOULDER, _LEFT_ELBOW, _LEFT_WRIST) if left_side \
-                else (_RIGHT_SHOULDER, _RIGHT_ELBOW, _RIGHT_WRIST)
-            triple = joint_triple(keypoints, sh, el, wr)
-            if triple:
-                angle = angle_at_vertex(*triple)
-                angles["bicepCurl"] = angle
-                cs = color_and_score(angle, target=90, green=10, yellow=25)
-                colors["bicepCurl"] = cs["color"]
-                overall = cs["score"]
-            else:
-                angles["bicepCurl"] = None
-                colors["bicepCurl"] = "#FFC107"
-            hint = arm_raise_hint(angles.get("bicepCurl"))
+            # Arm raise = seated bicep curl: elbow angle (shoulder -> elbow ->
+            # wrist). Target 55° = hand curled up near the shoulder (top of the
+            # curl, per the demo video). The generous band rewards the raised
+            # position and doesn't punish curling higher — the old 90° target
+            # graded only a half-curl and told patients to "straighten" when
+            # they raised their hand properly.
+            angle, color, overall = _score_tracked(
+                lambda s: _arm_triple(s, False), target=55, green=25, yellow=45)
+            angles["bicepCurl"] = angle
+            colors["bicepCurl"] = color
+            hint = arm_raise_hint(angle)
 
     elif is_leg:
-        hp, kn, an = (_LEFT_HIP, _LEFT_KNEE, _LEFT_ANKLE) if left_side else (_RIGHT_HIP, _RIGHT_KNEE, _RIGHT_ANKLE)
-        triple = joint_triple(keypoints, hp, kn, an)
-        # Knee extension is rewarded at the open/straight end of the
-        # joint range, sit_to_stand at the bent/seated end. Same angle
-        # measurement, opposite target — without splitting these the
-        # extension exercise scored 0 the moment the patient started
-        # straightening their leg correctly.
+        # Track the AFFECTED leg via tracked_sides (right → right leg, left →
+        # left, both → both) so only the affected leg is graded — the patient
+        # extends their affected leg and that's the one that must score.
+        # Knee extension is rewarded at the open/straight end (~170°),
+        # sit_to_stand at the bent/seated end (~90°): same measurement,
+        # opposite target.
         if is_knee_extension:
             target_angle, green_band, yellow_band = 170, 15, 30
         else:
             target_angle, green_band, yellow_band = 90, 15, 30
-        if triple:
-            angle = angle_at_vertex(*triple)
-            angles["kneeFlexion"] = angle
-            cs = color_and_score(angle, target=target_angle, green=green_band, yellow=yellow_band)
-            colors["kneeFlexion"] = cs["color"]
-            overall = cs["score"]
-        else:
-            angles["kneeFlexion"] = None
-            colors["kneeFlexion"] = "#FFC107"
-        if is_knee_extension:
-            hint = knee_extension_hint(angles.get("kneeFlexion"))
-        else:
-            hint = leg_hint(angles.get("kneeFlexion"))
+        angle, color, overall = _score_tracked(
+            _leg_triple, target=target_angle, green=green_band, yellow=yellow_band)
+        angles["kneeFlexion"] = angle
+        colors["kneeFlexion"] = color
+        hint = knee_extension_hint(angle) if is_knee_extension else leg_hint(angle)
 
     else:
-        arm_sh, arm_el, arm_wr = (_LEFT_SHOULDER, _LEFT_ELBOW, _LEFT_WRIST) if left_side else (_RIGHT_SHOULDER, _RIGHT_ELBOW, _RIGHT_WRIST)
-        leg_hp, leg_kn, leg_an = (_LEFT_HIP, _LEFT_KNEE, _LEFT_ANKLE) if left_side else (_RIGHT_HIP, _RIGHT_KNEE, _RIGHT_ANKLE)
-        arm_triple = joint_triple(keypoints, arm_sh, arm_el, arm_wr)
-        leg_triple = joint_triple(keypoints, leg_hp, leg_kn, leg_an)
-        arm_score = None
-        leg_score = None
-        if arm_triple:
-            arm_angle = angle_at_vertex(*arm_triple)
+        # Cross-body fallback (neither clearly arm nor leg): score arm + leg
+        # on the tracked side(s) and average the two components.
+        arm_angle, arm_color, arm_score = _score_tracked(
+            lambda s: _arm_triple(s, False), target=90, green=10, yellow=25)
+        leg_angle, leg_color, leg_score = _score_tracked(
+            _leg_triple, target=90, green=15, yellow=30)
+        arm_present = arm_angle is not None
+        leg_present = leg_angle is not None
+        if arm_present:
             angles["bicepCurl"] = arm_angle
-            cs = color_and_score(arm_angle, target=90, green=10, yellow=25)
-            colors["bicepCurl"] = cs["color"]
-            arm_score = cs["score"]
-        if leg_triple:
-            leg_angle = angle_at_vertex(*leg_triple)
+            colors["bicepCurl"] = arm_color
+        if leg_present:
             angles["kneeFlexion"] = leg_angle
-            cs = color_and_score(leg_angle, target=90, green=15, yellow=30)
-            colors["kneeFlexion"] = cs["color"]
-            leg_score = cs["score"]
+            colors["kneeFlexion"] = leg_color
         # Combine arm + leg form scores only (no visibility average).
-        component_scores = [s for s in (arm_score, leg_score) if s is not None]
+        component_scores = [sc for sc, present in
+                            ((arm_score, arm_present), (leg_score, leg_present)) if present]
         overall = round(sum(component_scores) / len(component_scores)) if component_scores else 0
         # Pick the hint from the worst-scoring component so a poor limb
         # isn't hidden behind a better one.
-        if arm_score is not None and leg_score is not None:
-            if arm_score <= leg_score:
-                hint = arm_hint(angles["bicepCurl"])
-            else:
-                hint = leg_hint(angles["kneeFlexion"])
-        elif arm_score is not None:
-            hint = arm_hint(angles["bicepCurl"])
-        elif leg_score is not None:
-            hint = leg_hint(angles["kneeFlexion"])
+        if arm_present and leg_present:
+            hint = arm_hint(arm_angle) if arm_score <= leg_score else leg_hint(leg_angle)
+        elif arm_present:
+            hint = arm_hint(arm_angle)
+        elif leg_present:
+            hint = leg_hint(leg_angle)
         else:
             hint = "Step back — show your full body"
 

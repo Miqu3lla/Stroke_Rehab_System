@@ -20,3 +20,6 @@ backend/models/*.pkl
 # OS files
 .DS_Store
 Thumbs.db
+
+# Editor / tooling
+.claude/

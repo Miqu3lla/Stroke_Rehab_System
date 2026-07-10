@@ -179,16 +179,28 @@ export default function SkeletonOverlay({
     return { x, y };
   };
 
+  // Highlight the AFFECTED limb: affected right → right, left → left, both →
+  // both. Normalize first (trim + lowercase, unknown → clinical right) so it
+  // matches the backend score_pose mapping exactly. The front camera feed is
+  // MIRRORED (shirt text reads backwards), so the patient's clinical RIGHT
+  // limb is drawn with MediaPipe's LEFT segments (11/13/15, 23/25/27) and
+  // vice-versa; "both" lights up both. Swap the two single-side lines below
+  // if testing shows it inverted — kept in sync with backend tracked_sides.
+  const normalizedSide = (affectedSide || 'right').toString().trim().toLowerCase();
+  const trackedSegSides =
+    normalizedSide === 'both' ? ['LEFT', 'RIGHT']
+      : normalizedSide === 'left' ? ['RIGHT']   // clinical left → MediaPipe RIGHT (mirrored)
+        : ['LEFT'];                             // clinical right → MediaPipe LEFT (mirrored)
+
   const getLineColor = (i1, i2) => {
     const key = `${i1}-${i2}`;
-    const side = affectedSide === 'left' ? 'LEFT' : 'RIGHT';
 
     if (isArmExercise(exerciseType)) {
-      if (SEGMENT_MAP[`ARM_${side}`].has(key)) {
+      if (trackedSegSides.some((s) => SEGMENT_MAP[`ARM_${s}`].has(key))) {
         return jointColors?.bicepCurl ?? NEUTRAL;
       }
     } else if (isLegExercise(exerciseType)) {
-      if (SEGMENT_MAP[`LEG_${side}`].has(key)) {
+      if (trackedSegSides.some((s) => SEGMENT_MAP[`LEG_${s}`].has(key))) {
         return jointColors?.kneeFlexion ?? NEUTRAL;
       }
     } else {
@@ -234,15 +246,16 @@ export default function SkeletonOverlay({
         if (idx < 11) return null;
         const p = getPoint(idx);
         if (!p) return null;
-        // Pick the most relevant segment color for this joint if it's part of an active bone.
-        const side = affectedSide === 'left' ? 'LEFT' : 'RIGHT';
+        // Pick the most relevant segment color for this joint if it's part of
+        // an active bone. Uses the same trackedSegSides as the bone lines so
+        // the dots and bones highlight the same (affected) limb(s).
         const isActiveArm = isArmExercise(exerciseType) && (
-          [11, 13, 15].includes(idx) && side === 'LEFT' ||
-          [12, 14, 16].includes(idx) && side === 'RIGHT'
+          ([11, 13, 15].includes(idx) && trackedSegSides.includes('LEFT')) ||
+          ([12, 14, 16].includes(idx) && trackedSegSides.includes('RIGHT'))
         );
         const isActiveLeg = isLegExercise(exerciseType) && (
-          [23, 25, 27].includes(idx) && side === 'LEFT' ||
-          [24, 26, 28].includes(idx) && side === 'RIGHT'
+          ([23, 25, 27].includes(idx) && trackedSegSides.includes('LEFT')) ||
+          ([24, 26, 28].includes(idx) && trackedSegSides.includes('RIGHT'))
         );
         const dotColor = isActiveArm
           ? (jointColors?.bicepCurl ?? NEUTRAL)
