@@ -86,10 +86,21 @@ def _extract_keypoints(frame: Any) -> List[float]:
 
 
 def _prepare_input_tensor(sequence: Sequence[Any], target_len: int = DEFAULT_SEQUENCE_LEN) -> torch.Tensor:
+    """Fix a live pose sequence to exactly target_len frames.
+
+    MUST mirror scripts/train_model.py::_resample_to_length. Long sequences are
+    resampled UNIFORMLY across their full span rather than truncated to the
+    tail: the model is trained on whole movements, so feeding it only the last
+    ~2.7 seconds at inference would show it the patient resting after the rep
+    instead of the rep itself. Changing one side without the other silently
+    degrades live accuracy, so keep these two in sync.
+    """
     keypoint_frames = [_extract_keypoints(frame) for frame in sequence]
+
     if len(keypoint_frames) > target_len:
-        keypoint_frames = keypoint_frames[-target_len:]
-    if len(keypoint_frames) < target_len:
+        step = (len(keypoint_frames) - 1) / (target_len - 1) if target_len > 1 else 0
+        keypoint_frames = [keypoint_frames[round(i * step)] for i in range(target_len)]
+    elif len(keypoint_frames) < target_len:
         pad = [[0.0] * KEYPOINT_DIM for _ in range(target_len - len(keypoint_frames))]
         keypoint_frames = pad + keypoint_frames
 
