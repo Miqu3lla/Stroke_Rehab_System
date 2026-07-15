@@ -21,6 +21,56 @@ from core.mediapipe_vision import extract_sequence_from_video
 
 INPUT_SIZE = 99
 SEQUENCE_LEN = 40
+LANDMARK_COUNT = 33
+
+# MediaPipe Pose left/right landmark pairs, used by _flip_clip.
+#
+# Why flip augmentation exists here: the live path (mediapipe_vision.
+# estimate_pose_from_image_bytes) mirrors every frame with cv2.flip so the
+# on-screen skeleton matches the phone's selfie preview, but training videos
+# are NOT mirrored. MediaPipe names landmarks from what it sees, so in a
+# mirrored frame a patient's real right arm is reported as the LEFT arm.
+# The model would therefore learn a movement in one set of landmark slots and
+# receive it in the opposite slots at inference. Training on both orientations
+# removes that mismatch (and doubles the training set).
+#
+# A mirror is NOT just x -> -x on the same index: landmarks are labelled
+# anatomically, so the left/right indices must swap too. Index 0 (nose) is
+# central and unpaired.
+_LR_LANDMARK_PAIRS = [
+    (1, 4), (2, 5), (3, 6),        # eyes (inner / center / outer)
+    (7, 8),                        # ears
+    (9, 10),                       # mouth corners
+    (11, 12), (13, 14), (15, 16),  # shoulder / elbow / wrist
+    (17, 18), (19, 20), (21, 22),  # pinky / index / thumb
+    (23, 24), (25, 26), (27, 28),  # hip / knee / ankle
+    (29, 30), (31, 32),            # heel / foot index
+]
+
+
+def _build_flip_permutation() -> np.ndarray:
+    perm = list(range(LANDMARK_COUNT))
+    for a, b in _LR_LANDMARK_PAIRS:
+        perm[a], perm[b] = perm[b], perm[a]
+    return np.asarray(perm, dtype=np.int64)
+
+
+_FLIP_PERMUTATION = _build_flip_permutation()
+
+
+def _flip_clip(clip: np.ndarray) -> np.ndarray:
+    """Horizontally mirror one [T, 99] hip-centered clip.
+
+    Keypoints are hip-centered upstream (hip midpoint at the origin), so
+    negating x reflects the pose about the body's own centerline. Reordering
+    the landmark axis then swaps the anatomical left/right labels. y (vertical)
+    and z (depth) are untouched - a left/right mirror changes neither. All-zero
+    frames (failed detections) stay zero under both steps.
+    """
+    frames = clip.reshape(clip.shape[0], LANDMARK_COUNT, 3).copy()
+    frames[..., 0] *= -1.0                 # mirror about the hip center
+    frames = frames[:, _FLIP_PERMUTATION]  # swap left/right landmark labels
+    return frames.reshape(clip.shape[0], INPUT_SIZE)
 # Bumped from 256 to 1024 — the LSTM is tiny (~100K params) so 16GB
 # VRAM has room to spare and a larger batch keeps the GPU busier
 # between data loads. Override with --batch-size if you ever go OOM.
@@ -191,6 +241,7 @@ def _load_video_dataset_loader(
     batch_size: int,
     num_workers: int,
     pin_memory: bool,
+    augment_flip: bool = False,
 ) -> DataLoader:
     video_files = [
         path
@@ -237,6 +288,16 @@ def _load_video_dataset_loader(
             num_workers=num_workers,
             pin_memory=pin_memory,
         )
+
+    if augment_flip:
+        # Append a mirrored copy of every clip with the SAME label: a correct
+        # rep performed with the other arm is still a correct rep. Train split
+        # only - augmenting val/test would inflate their scores and stop them
+        # measuring generalization honestly.
+        original_count = len(frames)
+        frames = frames + [_flip_clip(clip) for clip in frames]
+        labels = labels + list(labels)
+        print(f"  flip augmentation: {original_count} -> {len(frames)} samples")
 
     x = torch.tensor(np.stack(frames), dtype=torch.float32)
     y = torch.tensor(labels, dtype=torch.long)
@@ -393,6 +454,7 @@ def train_lstm(
     compile_model: bool = True,
     val_split: float = 0.2,
     early_stopping_patience: int = 3,
+    augment_flip: bool = True,
 ) -> None:
     """
     Train a baseline LSTM classifier with validation, checkpointing, and early stopping.
@@ -420,6 +482,7 @@ def train_lstm(
             batch_size=batch_size,
             num_workers=num_workers if device.type == "cuda" else 0,
             pin_memory=device.type == "cuda",
+            augment_flip=augment_flip,
         )
         val_loader = _load_video_dataset_loader(
             val_source,
@@ -678,6 +741,16 @@ if __name__ == "__main__":
         default=3,
         help="Early stopping patience (epochs with no improvement before stopping)",
     )
+    parser.add_argument(
+        "--no-flip-augment",
+        action="store_true",
+        help=(
+            "Disable horizontal-flip augmentation of the train split. Flipping is "
+            "on by default: the live app mirrors its frames but training videos "
+            "are not mirrored, so training on both orientations is what keeps "
+            "inference consistent with training (and doubles the train set)."
+        ),
+    )
     args = parser.parse_args()
 
     script_dir = Path(__file__).resolve().parent
@@ -693,4 +766,5 @@ if __name__ == "__main__":
         compile_model=not args.no_compile,
         val_split=args.val_split,
         early_stopping_patience=args.early_stop_patience,
+        augment_flip=not args.no_flip_augment,
     )
