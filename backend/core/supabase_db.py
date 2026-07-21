@@ -466,6 +466,10 @@ def fetch_patient_history(patient_id: str, limit: int = 50) -> list:
         "(recommendation->>'exercise_name') AS exercise_name, "
         "(recommendation->>'ended_via') AS ended_via, "
         "COALESCE((recommendation->>'duration_seconds')::int, 0) AS duration_seconds, "
+        # Strength load logged this session. -1 sentinel = no weight logged
+        # (Functionality/legacy rows) so the recommender can tell "unloaded
+        # 0 kg" apart from "not a Strength session".
+        "COALESCE((recommendation->>'weight_kg')::float, -1) AS weight_kg, "
         "(recommendation->>'session_id') AS session_id, "
         "created_at "
         "FROM public.recommendation_logs "
@@ -510,6 +514,7 @@ def fetch_patient_history(patient_id: str, limit: int = 50) -> list:
                 "(recommendation->>'exercise_name') AS exercise_name, "
                 "(recommendation->>'ended_via') AS ended_via, "
                 "COALESCE((recommendation->>'duration_seconds')::int, 0) AS duration_seconds, "
+                "COALESCE((recommendation->>'weight_kg')::float, -1) AS weight_kg, "
                 "(recommendation->>'session_id') AS session_id, "
                 "created_at "
                 "FROM public.recommendation_logs "
@@ -554,6 +559,10 @@ def fetch_patient_history(patient_id: str, limit: int = 50) -> list:
                         "exercise_name": rec.get("exercise_name"),
                         "ended_via": rec.get("ended_via"),
                         "duration_seconds": int(rec.get("duration_seconds") or 0),
+                        # None here (not -1) — the SQL paths use -1 as their
+                        # "no weight" sentinel; the REST path passes the raw
+                        # value through and trajectory treats None as unlogged.
+                        "weight_kg": rec.get("weight_kg"),
                         "session_id": rec.get("session_id"),
                         "created_at": row.get("created_at"),
                     })
