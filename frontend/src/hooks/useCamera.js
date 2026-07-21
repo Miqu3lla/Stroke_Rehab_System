@@ -44,6 +44,15 @@ const HOLD_FORM_BROKEN_LIMIT_MS = 30 * 1000;
 const HOLD_DEFAULT_SECONDS = 300;
 const HOLD_MIN_SECONDS = 60;
 
+// Upper bound on the per-frame delta fed to the hold accumulators. The pose
+// WS runs at ~8-15 FPS (~66-125ms/frame). If it stalls — watchdog retry, a
+// brief disconnect, or the app backgrounded — the next frame's raw wall-clock
+// delta could be several seconds and would be credited in FULL toward a hold
+// the patient may not have actually sustained (a single delayed green frame
+// could complete a 6s per-rep hold). Clamp the delta so a stall contributes
+// at most one generous frame's worth of hold credit.
+const MAX_FRAME_DT_MS = 500;
+
 // Default sets payload when an exercise is missing the sets[] field —
 // shouldn't happen in production (recommender always returns sets), but
 // keeps the hook safe against older response shapes during the deploy
@@ -467,7 +476,9 @@ const useCamera = (exercise, { onComplete } = {}) => {
       // hold-per-rep AND hold-set tracking) integrates this dt instead of
       // assuming a fixed rate. First frame of a set has no prior dt → 0.
       const now = Date.now();
-      const dt = lastFrameTimeRef.current ? Math.max(0, now - lastFrameTimeRef.current) : 0;
+      const dt = lastFrameTimeRef.current
+        ? Math.min(MAX_FRAME_DT_MS, Math.max(0, now - lastFrameTimeRef.current))
+        : 0;
       lastFrameTimeRef.current = now;
 
       // Advance the rep counter for rep-format sets. Hold sets ignore

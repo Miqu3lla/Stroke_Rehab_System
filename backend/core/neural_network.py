@@ -1,3 +1,4 @@
+import logging
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
@@ -6,6 +7,8 @@ import torch
 from torch import nn
 
 from core.mediapipe_vision import _normalize_keypoints_to_hip_center
+
+logger = logging.getLogger("uvicorn.error")
 
 KEYPOINT_DIM = 99
 MIN_SEQUENCE_FRAMES = 20
@@ -149,8 +152,11 @@ def warmup_model() -> None:
     try:
         dummy = [{"keypoints": [0.0] * KEYPOINT_DIM} for _ in range(DEFAULT_SEQUENCE_LEN)]
         classify_form_sequence("warmup", dummy)
-    except Exception:
-        pass
+    except Exception as exc:
+        # Non-fatal: inference falls back to the rule-based path, but log the
+        # cause (missing weights, CUDA OOM, corrupted file) so a silently
+        # degraded classifier is diagnosable instead of invisible.
+        logger.warning("LSTM warmup failed; classification will use rule-based fallback: %s", exc)
 
 
 def classify_form_sequence(exercise_type: str, sequence: Iterable[Any]) -> Dict[str, Any]:

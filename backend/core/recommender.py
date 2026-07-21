@@ -213,6 +213,10 @@ _STRENGTH_START_KG = 0.5
 _STRENGTH_INCREMENT_KG = 0.5
 _STRENGTH_IMPROVEMENT_THRESHOLD = 0.20
 _STRENGTH_WEIGHTED_AREAS = {"arms"}
+# Safety ceiling on the auto-suggested load. Form data alone should never
+# advise a stroke patient toward a heavy weight; they can still dial in more
+# by hand on the in-session stepper if their therapist approves.
+_STRENGTH_MAX_KG = 10.0
 
 # Shared baseline window: the first N attempts on an exercise define the
 # "where they started" reference for both hold/weight progression.
@@ -282,10 +286,18 @@ def _sets_total_seconds(sets: List[Dict[str, Any]]) -> int:
 def _suggested_weight_kg(stats: Optional[Dict[str, Any]]) -> float:
     """Suggest the next Strength load (kg) for an exercise from its history.
 
-    Starts at the unloaded baseline. Once the patient has a full baseline
-    window plus at least one later attempt, and their recent average form
-    improved by >= _STRENGTH_IMPROVEMENT_THRESHOLD over that baseline, bump
-    the last logged weight by one increment; otherwise hold it steady.
+    Builds on the weight the patient last actually used, and adds ONE
+    increment only when their most recent window of form scores improved over
+    the window immediately before it — a rolling comparison, capped at
+    _STRENGTH_MAX_KG.
+
+    Why rolling and not "vs the first-N baseline": a frozen baseline re-fires
+    the bump on EVERY session for as long as the patient stays above it, so a
+    patient who improved once and then held steady would have their weight
+    ratcheted up without end. Comparing consecutive windows instead grants one
+    step per genuine improvement and then stops once they plateau at the new
+    load (their post-bump scores become the new prior window). Continued real
+    improvement still progresses the weight session over session, as intended.
     """
     if not stats:
         return _STRENGTH_START_KG
@@ -294,15 +306,18 @@ def _suggested_weight_kg(stats: Optional[Dict[str, Any]]) -> float:
     last_weight = float(last_weight) if last_weight is not None else _STRENGTH_START_KG
 
     scores = stats.get("scores_oldest_first") or []
-    if len(scores) < BASELINE_WINDOW + 1:
-        return round(last_weight, 1)
+    # Need a full window at the current level PLUS the preceding window to
+    # measure fresh improvement.
+    if len(scores) < 2 * BASELINE_WINDOW:
+        return round(min(last_weight, _STRENGTH_MAX_KG), 1)
 
-    baseline_mean = sum(scores[:BASELINE_WINDOW]) / BASELINE_WINDOW
-    recent = scores[BASELINE_WINDOW:]
+    prior = scores[-2 * BASELINE_WINDOW:-BASELINE_WINDOW]
+    recent = scores[-BASELINE_WINDOW:]
+    prior_mean = sum(prior) / len(prior)
     recent_mean = sum(recent) / len(recent)
-    if baseline_mean > 0 and (recent_mean - baseline_mean) / baseline_mean >= _STRENGTH_IMPROVEMENT_THRESHOLD:
-        return round(last_weight + _STRENGTH_INCREMENT_KG, 1)
-    return round(last_weight, 1)
+    if prior_mean > 0 and (recent_mean - prior_mean) / prior_mean >= _STRENGTH_IMPROVEMENT_THRESHOLD:
+        return round(min(last_weight + _STRENGTH_INCREMENT_KG, _STRENGTH_MAX_KG), 1)
+    return round(min(last_weight, _STRENGTH_MAX_KG), 1)
 
 
 def _progression_level(stats: Optional[Dict[str, Any]]) -> int:
