@@ -3,12 +3,13 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
 from core.auth import assert_patient_match, verify_jwt
 from core.mediapipe_vision import extract_sequence_from_video
 from core.neural_network import classify_form_sequence
 from core.exercise_catalog import is_lstm_supported
+from core.rate_limit import limiter
 from core.supabase_db import save_form_prediction
 from schemas.prediction import FormRequest
 
@@ -17,7 +18,8 @@ router = APIRouter()
 
 
 @router.post("/predict/form")
-def predict_form(payload: FormRequest, claims: Dict[str, Any] = Depends(verify_jwt)) -> dict:
+@limiter.limit("30/minute")  # LSTM inference — one call per finished exercise in normal use
+def predict_form(request: Request, payload: FormRequest, claims: Dict[str, Any] = Depends(verify_jwt)) -> dict:
     assert_patient_match(claims, payload.patient_id)
     # For exercise_types the LSTM was never trained on, skip and return a
     # 'skipped' marker rather than polluting form_predictions with
@@ -64,7 +66,9 @@ def predict_form(payload: FormRequest, claims: Dict[str, Any] = Depends(verify_j
 
 
 @router.post("/predict/form-from-video")
+@limiter.limit("10/minute")  # heavy: full-video MediaPipe extraction + LSTM
 async def predict_form_from_video(
+    request: Request,
     patient_id: str = Form(...),
     exercise_type: str = Form(...),
     video: UploadFile = File(...),

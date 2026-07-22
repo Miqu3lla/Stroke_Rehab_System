@@ -5,10 +5,11 @@ import threading
 from typing import Any, Dict
 
 import jwt  # PyJWT
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 
 from core.auth import verify_jwt
 from core.mediapipe_vision import create_realtime_pose, estimate_pose_from_image_bytes
+from core.rate_limit import limiter
 from schemas.pose import PoseEstimateRequest, MAX_DECODED_IMAGE_BYTES
 from services.pose_service import score_pose
 
@@ -36,7 +37,9 @@ _WS_AUTH_TIMEOUT_SECONDS = 10.0
 
 
 @router.post("/pose/estimate")
+@limiter.limit("90/minute")  # legacy single-frame MediaPipe path (realtime uses /ws/pose)
 def estimate_pose(
+    request: Request,
     payload: PoseEstimateRequest,
     _claims: Dict[str, Any] = Depends(verify_jwt),
 ) -> dict:
