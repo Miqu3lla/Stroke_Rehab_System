@@ -14,20 +14,62 @@ const STATE_WAITING_FOR_TOP = 'waiting_for_top';
 const STATE_AT_TOP = 'at_top';
 
 export default class RepCounter {
-  constructor(targetReps = 12) {
+  // holdMsPerRep > 0 switches the counter into Functionality (tolerance)
+  // mode: a rep only counts once the patient SUSTAINS the green band for
+  // that long, instead of counting the instant they reach it. 0 (the
+  // default) keeps the original Strength/plain-rep behavior.
+  constructor(targetReps = 12, holdMsPerRep = 0) {
     this.targetReps = Math.max(1, Math.floor(Number(targetReps) || 12));
+    this.holdMsPerRep = Math.max(0, Number(holdMsPerRep) || 0);
     this.repsCompleted = 0;
     this.state = STATE_INITIAL;
+    // Cumulative green time toward the CURRENT rep (Functionality only).
+    // Resets to 0 whenever the patient drops out of green before the hold
+    // completes, so a rep requires one continuous hold, not scattered
+    // green moments.
+    this.currentHoldMs = 0;
   }
 
-  // Updates the state machine with the active color signal for the current frame.
-  update(color) {
+  // Updates the state machine with the active color for the current frame.
+  // dtMs is the elapsed time since the previous frame — only used in
+  // hold-per-rep (Functionality) mode; ignored otherwise.
+  update(color, dtMs = 0) {
     if (this.repsCompleted >= this.targetReps) return this.snapshot();
     if (!color) return this.snapshot();
 
     const inGreen = color === COLOR_GREEN;
     const beyondYellow = color === COLOR_RED;
 
+    if (this.holdMsPerRep > 0) {
+      // ── Functionality: hold-per-rep ──────────────────────────────────
+      if (this.state === STATE_INITIAL) {
+        // Require the patient to start OUT of green so the first hold is a
+        // deliberate move into position, not a pre-existing pose.
+        if (!inGreen) this.state = STATE_WAITING_FOR_TOP;
+      } else if (this.state === STATE_WAITING_FOR_TOP) {
+        if (inGreen) {
+          this.currentHoldMs += Math.max(0, dtMs);
+          if (this.currentHoldMs >= this.holdMsPerRep) {
+            this.repsCompleted += 1;
+            this.currentHoldMs = 0;
+            this.state = STATE_AT_TOP;
+          }
+        } else {
+          // Dropped out of the band before completing the hold — the rep
+          // must be re-earned with a fresh continuous hold.
+          this.currentHoldMs = 0;
+        }
+      } else if (this.state === STATE_AT_TOP) {
+        // Must leave the band before the next rep's hold can begin.
+        if (beyondYellow) {
+          this.state = STATE_WAITING_FOR_TOP;
+          this.currentHoldMs = 0;
+        }
+      }
+      return this.snapshot();
+    }
+
+    // ── Strength / plain reps: count on entering green ─────────────────
     if (this.state === STATE_INITIAL) {
       // Transition to waiting when user first leaves the correct form band
       if (!inGreen) this.state = STATE_WAITING_FOR_TOP;
@@ -51,6 +93,10 @@ export default class RepCounter {
       targetReps: this.targetReps,
       setComplete: this.repsCompleted >= this.targetReps,
       state: this.state,
+      // Functionality HUD: seconds held toward the current rep, and the
+      // required hold. Both 0 in plain-rep mode.
+      holdMsPerRep: this.holdMsPerRep,
+      currentHoldMs: this.currentHoldMs,
     };
   }
 }

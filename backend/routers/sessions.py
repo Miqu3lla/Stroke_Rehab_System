@@ -57,12 +57,34 @@ def _normalize_set_results(raw: Any) -> List[Dict[str, Any]]:
                 target_reps = max(1, int(item.get("target_reps") or 12))
             except (ValueError, TypeError):
                 target_reps = 12
+
+            # Functionality tolerance holds: how long each rep had to be
+            # held. None on Strength sets. Kept so the therapist dashboard
+            # can tell a held rep from a plain one.
+            hold_per_rep = item.get("hold_seconds_per_rep")
+            if hold_per_rep is not None:
+                try:
+                    hold_per_rep = max(0, int(hold_per_rep))
+                except (ValueError, TypeError):
+                    hold_per_rep = None
+
+            # Strength load actually used on this set (patient-entered kg).
+            # None on Functionality sets. Non-negative; unloaded is 0.
+            weight_kg = item.get("weight_kg")
+            if weight_kg is not None:
+                try:
+                    weight_kg = max(0.0, round(float(weight_kg), 1))
+                except (ValueError, TypeError):
+                    weight_kg = None
+
             cleaned_by_index[set_index] = {
                 "set_index": set_index,
                 "format": "reps",
                 "score": score,
                 "reps_completed": reps_completed,
                 "target_reps": target_reps,
+                "hold_seconds_per_rep": hold_per_rep,
+                "weight_kg": weight_kg,
                 "ended_via": ended_via,
             }
         else:
@@ -165,6 +187,18 @@ def save_session(payload: dict, claims: Dict[str, Any] = Depends(verify_jwt)) ->
                 raw_set_results = result.get("set_results") or []
                 set_results = _normalize_set_results(raw_set_results)
                 set_count = len(set_results)
+
+                # Session-level Strength load: the heaviest weight the patient
+                # actually used across the sets. Stored at the top of the
+                # JSONB (like duration_seconds) so fetch_patient_history can
+                # read it without projecting into the set_results array, and
+                # so the recommender can progress the load next session. None
+                # when no set logged a weight (i.e. a Functionality session).
+                _set_weights = [
+                    s["weight_kg"] for s in set_results
+                    if s.get("weight_kg") is not None
+                ]
+                weight_kg = max(_set_weights) if _set_weights else None
                 hold_score = result.get("hold_score")
                 if hold_score is not None:
                     try:
@@ -199,6 +233,7 @@ def save_session(payload: dict, claims: Dict[str, Any] = Depends(verify_jwt)) ->
                     "set_results": set_results,
                     "set_count": set_count,
                     "hold_score": hold_score,
+                    "weight_kg": weight_kg,
                     "mode": mode,
                 }
 

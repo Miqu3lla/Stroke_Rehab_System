@@ -14,8 +14,15 @@ export default function BeforeYouStart({ exercise, onBegin }) {
   // [+ 5-min hold]") — kept in sync via the shared helper so a wording
   // change here doesn't drift from the card the patient just tapped.
   const setsLabel = formatExerciseSession(exercise) || 'Exercise';
-  const hasHold = Array.isArray(exercise?.sets)
-    && exercise.sets.some((s) => s.format === 'hold');
+  // Mode-specific coaching line. Functionality = hold each rep (tolerance);
+  // Strength = reps with a patient-entered weight the app suggests.
+  const isStrength = (exercise?.mode || '') === 'strength';
+  const holdPerRep = exercise?.hold_seconds_per_rep
+    ?? exercise?.sets?.find((s) => s?.hold_seconds_per_rep)?.hold_seconds_per_rep;
+  const holdMax = exercise?.hold_seconds_max
+    ?? exercise?.sets?.find((s) => s?.hold_seconds_max)?.hold_seconds_max;
+  const suggestedWeight = exercise?.suggested_weight_kg
+    ?? exercise?.sets?.find((s) => s?.target_weight_kg != null)?.target_weight_kg;
 
   return (
     <View className="flex-1 justify-center bg-[#0f1116] p-6">
@@ -35,9 +42,16 @@ export default function BeforeYouStart({ exercise, onBegin }) {
         <Text className="text-[#c3c9dd] text-[13px] mb-1.5 leading-[18px]">• Stand 1–2 metres from the camera</Text>
         <Text className="text-[#c3c9dd] text-[13px] mb-1.5 leading-[18px]">• Make sure your full upper body is visible</Text>
         <Text className="text-[#c3c9dd] text-[13px] mb-1.5 leading-[18px]">• You'll get a short break between each set</Text>
-        {hasHold && (
-          <Text className="text-[#c3c9dd] text-[13px] mb-1.5 leading-[18px]">• Hold finisher comes last — hold as long as you can</Text>
-        )}
+        {!isStrength && holdPerRep ? (
+          <Text className="text-[#c3c9dd] text-[13px] mb-1.5 leading-[18px]">
+            • Hold each rep {holdPerRep}{holdMax ? `–${holdMax}` : ''}s in the green band before it counts
+          </Text>
+        ) : null}
+        {isStrength && suggestedWeight != null ? (
+          <Text className="text-[#c3c9dd] text-[13px] mb-1.5 leading-[18px]">
+            • Suggested weight: {suggestedWeight} kg — set the weight you actually use with the +/− buttons
+          </Text>
+        ) : null}
         <Text className="text-[#c3c9dd] text-[13px] mb-1.5 leading-[18px]">• Follow the colour of the skeleton lines:</Text>
 
         {COLOR_LEGEND.map(({ color, label }) => (

@@ -34,6 +34,9 @@ export default function CameraComponent({ exercise, onComplete }) {
     repProgress,
     holdProgress,
     completedSetResults,
+    isStrengthMode,
+    currentWeightKg,
+    setCurrentWeightKg,
     isModelReady,
     modelError,
     startExercise,
@@ -43,6 +46,13 @@ export default function CameraComponent({ exercise, onComplete }) {
     formatTime,
     handleCameraLayout,
   } = useCamera(exercise, { onComplete });
+
+  // Strength load stepper: patient enters the kg they're actually using.
+  // 0.5 kg steps, floored at 0 (unloaded). Applies to the current set and
+  // carries forward as the default for the next.
+  const WEIGHT_STEP_KG = Number(exercise?.weight_increment_kg) || 0.5;
+  const adjustWeight = (delta) =>
+    setCurrentWeightKg((w) => Math.max(0, Math.round((Number(w || 0) + delta) * 10) / 10));
 
   if (!permission) {
     return <View />;
@@ -133,6 +143,37 @@ export default function CameraComponent({ exercise, onComplete }) {
                 </Text>
               )}
             </View>
+
+            {/* Functionality tolerance cue: each rep is held before it counts. */}
+            {!isStrengthMode && currentSet?.hold_seconds_per_rep ? (
+              <Text className="text-[#9fe0a6] text-center text-[13px] mt-1 font-semibold">
+                Hold each rep {currentSet.hold_seconds_per_rep}
+                {currentSet.hold_seconds_max ? `–${currentSet.hold_seconds_max}` : ''}s
+              </Text>
+            ) : null}
+
+            {/* Strength load stepper: only for exercises that carry a
+                weight slot (upper-limb). Leg Strength work is reps-only. */}
+            {isStrengthMode && currentSet?.target_weight_kg != null ? (
+              <View className="flex-row items-center justify-center gap-4 mt-2">
+                <TouchableOpacity
+                  className="w-10 h-10 rounded-full bg-white/15 items-center justify-center"
+                  onPress={() => adjustWeight(-WEIGHT_STEP_KG)}
+                >
+                  <Text className="text-white text-2xl font-black">−</Text>
+                </TouchableOpacity>
+                <View className="items-center min-w-[92px]">
+                  <Text className="text-white text-xl font-black">{currentWeightKg} kg</Text>
+                  <Text className="text-[#d2d6e3] text-[11px] font-medium">Weight used</Text>
+                </View>
+                <TouchableOpacity
+                  className="w-10 h-10 rounded-full bg-white/15 items-center justify-center"
+                  onPress={() => adjustWeight(WEIGHT_STEP_KG)}
+                >
+                  <Text className="text-white text-2xl font-black">+</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
 
             <PostureFeedback
               exercise={exercise}

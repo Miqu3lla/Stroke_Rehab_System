@@ -1,6 +1,8 @@
 // Helpers to format exercise prescription details for display.
 
-// Formats the primary exercise label (e.g., "3 sets × 12 reps + 5-min hold").
+// Formats the primary exercise label. The suffix reflects the mode:
+//   Functionality → "3 sets × 12 reps · hold 6–12s each"
+//   Strength      → "3 sets × 12 reps · 2.5 kg"
 // Falls back to duration format if no sets are defined.
 export function formatExerciseSession(exercise) {
   const sets = exercise?.sets;
@@ -10,20 +12,21 @@ export function formatExerciseSession(exercise) {
   }
 
   const repSets = sets.filter((s) => s.format === 'reps');
-  const holdSets = sets.filter((s) => s.format === 'hold');
+  if (repSets.length === 0) return formatExerciseDuration(exercise);
 
-  const parts = [];
-  if (repSets.length > 0) {
-    const reps = repSets[0]?.target_reps || 12;
-    parts.push(`${repSets.length} sets × ${reps} reps`);
+  const reps = repSets[0]?.target_reps || 12;
+  let label = `${repSets.length} sets × ${reps} reps`;
+
+  // Mode-specific suffix, read from the first rep set (all sets share it).
+  const holdPerRep = repSets[0]?.hold_seconds_per_rep;
+  const holdMax = repSets[0]?.hold_seconds_max;
+  const weightKg = repSets[0]?.target_weight_kg;
+  if (holdPerRep) {
+    label += ` · hold ${holdPerRep}${holdMax ? `–${holdMax}` : ''}s each`;
+  } else if (weightKg != null && Number(weightKg) > 0) {
+    label += ` · ${weightKg} kg`;
   }
-  if (holdSets.length > 0) {
-    const seconds = holdSets[0]?.hold_seconds || 0;
-    const minutes = Math.round(seconds / 60);
-    parts.push(`${minutes}-min hold`);
-  }
-  if (parts.length === 0) return formatExerciseDuration(exercise);
-  return parts.join(' + ');
+  return label;
 }
 
 // Formats the exercise duration as a readable time estimate (e.g., "2 min", "45s", "2 min 30s").
