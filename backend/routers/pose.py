@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, WebSoc
 from core.auth import verify_jwt
 from core.mediapipe_vision import create_realtime_pose, estimate_pose_from_image_bytes
 from core.rate_limit import limiter
+from core.session_video import SessionClipRecorder, store_clip_async
 from schemas.pose import PoseEstimateRequest, MAX_DECODED_IMAGE_BYTES
 from services.pose_service import score_pose
 
@@ -143,7 +144,10 @@ async def pose_ws(websocket: WebSocket) -> None:
       2. Server accepts the upgrade.
       3. Client sends an auth JSON message:
             {"type": "auth", "token": "<jwt>",
-             "exercise_type": "...", "affected_side": "left|right|both"}
+             "exercise_type": "...", "affected_side": "left|right|both",
+             "patient_id": "<uuid>", "session_id": "<session key>"}
+         patient_id + session_id are optional — when present, the backend
+         records a short evidence clip from this stream (core/session_video).
       4. Server validates JWT (within _WS_AUTH_TIMEOUT_SECONDS) and
          replies {"type": "auth_ok"}. On failure: close 4401.
       5. Client streams JPEG bytes as binary frames; server replies
@@ -202,6 +206,18 @@ async def pose_ws(websocket: WebSocket) -> None:
     pose_instance = create_realtime_pose()
     pose_lock = threading.Lock()
 
+    # Evidence clip recorder (Option A). Buffers the first ~10s of frames
+    # where the patient is visible — their first set — then encodes +
+    # uploads on a background thread. No-op unless the client supplied a
+    # patient_id + session_id in the auth message.
+    recorder = SessionClipRecorder(
+        patient_id=str(auth_msg.get("patient_id") or ""),
+        session_id=str(auth_msg.get("session_id") or ""),
+        # Prefer the clean slug (e.g. "shoulder_flexion"); exercise_type
+        # here is the long scoring hint, which makes an ugly filename.
+        exercise_type=str(auth_msg.get("exercise_slug") or exercise_type),
+    )
+
     # ── Step 3: frame loop ─────────────────────────────────────────────
     try:
         while True:
@@ -242,6 +258,15 @@ async def pose_ws(websocket: WebSocket) -> None:
             image_width = result["image_width"]
             image_height = result["image_height"]
 
+            # Buffer this frame for the evidence clip. The clip only OPENS
+            # once a pose is detected (so it doesn't start on blank "step
+            # back" frames), but once open it keeps every frame — including
+            # brief pose drop-outs — so the video stays continuous rather
+            # than stuttering on occlusions. add_frame() returns True the
+            # moment the capture window closes → store it off-thread.
+            if recorder.add_frame(data, bool(keypoints)):
+                store_clip_async(recorder)
+
             if not keypoints:
                 await websocket.send_json({
                     "score": 0,
@@ -277,6 +302,14 @@ async def pose_ws(websocket: WebSocket) -> None:
             pass
         return
     finally:
+        # Flush a short evidence clip if the exercise ended before the
+        # capture window filled (patient finished a quick set / dropped
+        # the socket). Skips cleanly when nothing was buffered or the
+        # clip already stored mid-stream.
+        if recorder.enabled and not recorder.done and recorder.has_frames():
+            recorder.finalize()
+            store_clip_async(recorder)
+
         # Tear down the per-connection MediaPipe Pose instance so its
         # C++ graph is freed promptly.
         try:

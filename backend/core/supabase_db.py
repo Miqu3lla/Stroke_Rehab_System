@@ -32,6 +32,19 @@ _UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F
 # as parameters.
 _SAFE_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+# Client-generated session correlation key. Not a DB uuid, so it gets its
+# own gate before it can be spliced into the docker-exec psql path.
+_SAFE_SESSION_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+# The Cloudflare tunnel in front of Supabase blocks requests whose
+# User-Agent looks non-browser (403 / CF error 1010). Every request we
+# send through the tunnel must carry a browser-like UA — REST calls and
+# Storage uploads alike.
+_BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+)
+
 
 def _is_valid_uuid(value: Any) -> bool:
     return isinstance(value, str) and bool(_UUID_RE.match(value))
@@ -117,7 +130,7 @@ def _headers() -> Dict[str, str]:
     """Return headers required for Supabase REST requests (service role)."""
     key = _get_service_role_key()
     return {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "User-Agent": _BROWSER_USER_AGENT,
         "apikey": key,
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
@@ -597,3 +610,197 @@ def get_patient_by_id(patient_id: str) -> Optional[Dict[str, Any]]:
             return data[0] if data else None
     except Exception:
         return None
+
+
+# ── Session evidence video (Storage + session_videos table) ─────────────
+# Backing the Option-A clip capture in core/session_video.py. Uploads go
+# to the Supabase Storage REST API (separate from PostgREST); the index
+# rows use the same docker/psycopg2/REST fallback chain as everything
+# else in this module.
+
+
+def _storage_base_url() -> str:
+    return f"{_get_supabase_url().rstrip('/')}/storage/v1"
+
+
+def upload_to_storage(bucket: str, path: str, data: bytes, content_type: str) -> Dict[str, Any]:
+    """Upload bytes to a Supabase Storage bucket (service role, upsert).
+
+    Requires SUPABASE_URL + service key. `x-upsert` overwrites an existing
+    object at the same path so re-running an exercise replaces its clip
+    rather than erroring.
+    """
+    if not _configured():
+        return {"stored": False, "reason": "supabase_not_configured"}
+
+    key = _get_service_role_key()
+    url = f"{_storage_base_url()}/object/{bucket}/{parse.quote(path, safe='/')}"
+    headers = {
+        "User-Agent": _BROWSER_USER_AGENT,
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": content_type,
+        "x-upsert": "true",
+    }
+    req = request.Request(url, data=data, headers=headers, method="POST")
+    try:
+        with request.urlopen(req, timeout=30) as response:
+            return {"stored": True, "status_code": response.status}
+    except error.HTTPError as exc:
+        return {
+            "stored": False,
+            "status_code": exc.code,
+            "error": exc.read().decode("utf-8", errors="ignore") or exc.reason,
+        }
+    except Exception as exc:
+        return {"stored": False, "error": str(exc)}
+
+
+def delete_storage_object(bucket: str, path: str) -> bool:
+    """Delete one object from a Storage bucket. Returns True on success."""
+    if not _configured():
+        return False
+    key = _get_service_role_key()
+    url = f"{_storage_base_url()}/object/{bucket}/{parse.quote(path, safe='/')}"
+    headers = {
+        "User-Agent": _BROWSER_USER_AGENT,
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+    }
+    req = request.Request(url, headers=headers, method="DELETE")
+    try:
+        with request.urlopen(req, timeout=15) as response:
+            return 200 <= response.status < 300
+    except Exception:
+        return False
+
+
+def insert_session_video(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Persist one evidence-clip index row to `public.session_videos`.
+
+    Expected keys: patient_id, session_id, exercise_type, storage_path,
+    duration_seconds.
+    """
+    return _post("session_videos", payload)
+
+
+def list_other_session_video_paths(patient_id: str, session_id: str) -> list:
+    """storage_path values for this patient's clips from OTHER sessions —
+    i.e. the ones the retention purge should delete. Empty on any gate
+    failure so a bad id can never widen the delete set."""
+    if not _is_valid_uuid(patient_id) or not _SAFE_SESSION_RE.match(session_id or ""):
+        return []
+
+    # psycopg2 (parameterised) — preferred, no injection surface.
+    if psycopg2 is not None and _postgres_configured():
+        try:
+            config = _get_postgres_config()
+            with psycopg2.connect(
+                host=config["host"], port=config["port"], dbname=config["dbname"],
+                user=config["user"], password=config["password"],
+            ) as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT storage_path FROM public.session_videos "
+                        "WHERE patient_id = %s AND session_id <> %s",
+                        (patient_id, session_id),
+                    )
+                    return [row[0] for row in cursor.fetchall() if row and row[0]]
+        except Exception:
+            pass
+
+    # docker exec — both values are gated above, safe to splice.
+    if shutil.which("docker") is not None:
+        container_name = os.getenv("SUPABASE_DOCKER_CONTAINER", "supabase-db")
+        config = _get_postgres_config()
+        sql = (
+            "SELECT string_agg(storage_path, E'\\n') FROM public.session_videos "
+            f"WHERE patient_id = '{patient_id}' AND session_id <> '{session_id}'"
+        )
+        command = [
+            "docker", "exec", "-e", f"PGPASSWORD={config['password']}",
+            container_name, "psql", "-U", config["user"], "-d", config["dbname"],
+            "-tA", "-c", sql,
+        ]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=8)
+            if result.returncode == 0:
+                output = result.stdout.strip()
+                if output:
+                    return [line.strip() for line in output.splitlines() if line.strip()]
+        except subprocess.TimeoutExpired:
+            pass
+
+    # REST fallback.
+    if _configured():
+        url = (
+            _rest_url("session_videos")
+            + f"?patient_id=eq.{parse.quote(patient_id, safe='')}"
+            + f"&session_id=neq.{parse.quote(session_id, safe='')}"
+            + "&select=storage_path"
+        )
+        req = request.Request(url, headers=_headers(), method="GET")
+        try:
+            with request.urlopen(req, timeout=10) as response:
+                body = response.read().decode("utf-8")
+                rows = json.loads(body) if body else []
+                return [r.get("storage_path") for r in rows if r.get("storage_path")]
+        except Exception:
+            pass
+
+    return []
+
+
+def delete_other_session_video_rows(patient_id: str, session_id: str) -> None:
+    """Delete this patient's session_videos rows from OTHER sessions."""
+    if not _is_valid_uuid(patient_id) or not _SAFE_SESSION_RE.match(session_id or ""):
+        return
+
+    if psycopg2 is not None and _postgres_configured():
+        try:
+            config = _get_postgres_config()
+            with psycopg2.connect(
+                host=config["host"], port=config["port"], dbname=config["dbname"],
+                user=config["user"], password=config["password"],
+            ) as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        "DELETE FROM public.session_videos "
+                        "WHERE patient_id = %s AND session_id <> %s",
+                        (patient_id, session_id),
+                    )
+                    conn.commit()
+                    return
+        except Exception:
+            pass
+
+    if shutil.which("docker") is not None:
+        container_name = os.getenv("SUPABASE_DOCKER_CONTAINER", "supabase-db")
+        config = _get_postgres_config()
+        sql = (
+            "DELETE FROM public.session_videos "
+            f"WHERE patient_id = '{patient_id}' AND session_id <> '{session_id}'"
+        )
+        command = [
+            "docker", "exec", "-e", f"PGPASSWORD={config['password']}",
+            container_name, "psql", "-U", config["user"], "-d", config["dbname"],
+            "-tA", "-c", sql,
+        ]
+        try:
+            subprocess.run(command, capture_output=True, text=True, check=False, timeout=8)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+
+    if _configured():
+        url = (
+            _rest_url("session_videos")
+            + f"?patient_id=eq.{parse.quote(patient_id, safe='')}"
+            + f"&session_id=neq.{parse.quote(session_id, safe='')}"
+        )
+        req = request.Request(url, headers=_headers(), method="DELETE")
+        try:
+            with request.urlopen(req, timeout=10):
+                return
+        except Exception:
+            pass
