@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { instance as api } from '../lib/api';
 import { isLstmSupported } from '../constants/exerciseTypes';
 import { supabase } from '../services/supabase';
+import useSessionStore from '../store/useSessionStore';
 
 /**
  * Pose detection over a persistent WebSocket: one /ws/pose connection per
@@ -50,6 +51,7 @@ const usePoseDetection = () => {
     affectedSide = 'right',
     onResult = null,
     onClose = null,
+    exerciseSlug = '',
   ) => {
     onResultRef.current = onResult;
     onCloseRef.current = onClose;
@@ -58,6 +60,12 @@ const usePoseDetection = () => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
+      // For the session-evidence clip: the backend records the first ~10s
+      // of this exercise's frames and files it under (patient, session).
+      // Both are best-effort — if either is missing the backend just skips
+      // recording and pose scoring is unaffected.
+      const patientId = session?.user?.id || '';
+      const sessionId = useSessionStore.getState()?.session?.sessionId || '';
       if (!token) {
         setModelError('Not authenticated — please log in again');
         setIsModelReady(false);
@@ -97,6 +105,12 @@ const usePoseDetection = () => {
               token,
               exercise_type: exerciseType || '',
               affected_side: affectedSide || 'right',
+              patient_id: patientId,
+              session_id: sessionId,
+              // Clean exercise slug (e.g. "shoulder_flexion") for the
+              // evidence clip filename — exercise_type above is the long
+              // scoring hint, which makes an ugly path.
+              exercise_slug: exerciseSlug || '',
             }));
           } catch (err) {
             setModelError('Failed to send auth message');
