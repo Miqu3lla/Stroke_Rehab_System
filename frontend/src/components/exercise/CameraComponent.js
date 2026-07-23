@@ -15,12 +15,8 @@ import BreakScreen from './BreakScreen';
 export default function CameraComponent({ exercise, onComplete }) {
   const [permission, requestPermission] = useCameraPermissions();
 
-  // Android streams frames via full still captures (takePictureAsync), which
-  // are slow at full sensor resolution and stutter the preview. Pinning a
-  // small pictureSize cuts per-frame capture/encode time dramatically. iOS
-  // doesn't need this (its still pipeline is fast and doesn't disturb the
-  // preview), so we only query + pin on Android. Null until the camera is
-  // ready and we've picked a size.
+  // Small capture size for Android so each frame is grabbed cheaply instead
+  // of at full sensor resolution. Null until the camera picks one.
   const [pictureSize, setPictureSize] = useState(null);
 
   const {
@@ -55,16 +51,14 @@ export default function CameraComponent({ exercise, onComplete }) {
     handleCameraLayout,
   } = useCamera(exercise, { onComplete });
 
-  // Once the camera is ready, ask for the supported picture sizes and pick
-  // the smallest one that's still >= ~640px wide — enough detail for pose
-  // inference, but far cheaper to capture than the multi-MP default. Android
-  // only: iOS's still pipeline is already fast and doesn't stutter the
-  // preview. Sizes come back as "WIDTHxHEIGHT" strings.
+  // Android only: pick the smallest supported capture size >= 640px wide so
+  // frames are cheap to grab. iOS is already fast, so we leave it alone.
   const handleCameraReady = useCallback(async () => {
     if (Platform.OS !== 'android') return;
     try {
       const sizes = await cameraRef.current?.getAvailablePictureSizesAsync?.();
       if (!Array.isArray(sizes) || sizes.length === 0) return;
+      // Sizes are "WIDTHxHEIGHT" strings; sort by area, smallest first.
       const parsed = sizes
         .map((s) => {
           const [w, h] = String(s).split('x').map(Number);
@@ -72,12 +66,10 @@ export default function CameraComponent({ exercise, onComplete }) {
         })
         .filter((p) => Number.isFinite(p.w) && Number.isFinite(p.h))
         .sort((a, b) => a.w * a.h - b.w * b.h);
-      // Smallest size with width >= 640, else the largest available (the
-      // last entry after sorting) as a fallback.
       const pick = parsed.find((p) => p.w >= 640) || parsed[parsed.length - 1];
       if (pick) setPictureSize(pick.size);
     } catch (_) {
-      // Non-fatal — without a pinned size the camera uses its default.
+      // Non-fatal — camera just uses its default size.
     }
   }, [cameraRef]);
 
