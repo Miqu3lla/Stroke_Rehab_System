@@ -13,3 +13,5 @@ supabase==2.4.4
 psycopg2-binary==2.9.9
 PyJWT[crypto]==2.10.1
 slowapi==0.1.10
+imageio==2.34.2
+imageio-ffmpeg==0.5.1

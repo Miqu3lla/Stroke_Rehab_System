@@ -2,7 +2,7 @@ import asyncio
 import base64
 import os
 import threading
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import jwt  # PyJWT
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, WebSoc
 from core.auth import verify_jwt
 from core.mediapipe_vision import create_realtime_pose, estimate_pose_from_image_bytes
 from core.rate_limit import limiter
+from core.session_video import SessionClipRecorder, store_clip_async
 from schemas.pose import PoseEstimateRequest, MAX_DECODED_IMAGE_BYTES
 from services.pose_service import score_pose
 
@@ -93,30 +94,29 @@ def estimate_pose(
     }
 
 
-def _decode_ws_token(token: str) -> bool:
+def _decode_ws_token(token: str) -> Optional[Dict[str, Any]]:
     """Validate a Supabase JWT supplied via the WS auth message.
 
-    Returns True when the token decodes cleanly. We don't return the
-    claims because the realtime channel is patient-scoped at the URL
-    level (one connection per session) and we never act on the subject
-    inside the frame loop — only authentication matters here.
+    Returns the decoded claims on success, None on failure. The caller
+    uses the verified `sub` claim as the patient_id for evidence-clip
+    capture — never a client-supplied field — so one connection can't
+    store to or delete another patient's clips.
     """
     if not token:
-        return False
+        return None
     secret = os.getenv("SUPABASE_JWT_SECRET", "").strip()
     if not secret:
-        return False
+        return None
     try:
-        jwt.decode(
+        return jwt.decode(
             token,
             secret,
             algorithms=_JWT_ALGORITHMS,
             audience=_JWT_AUDIENCE,
             options={"require": ["exp", "sub"]},
         )
-        return True
     except jwt.InvalidTokenError:
-        return False
+        return None
 
 
 def _run_pose_with_lock(pose_instance: Any, lock: threading.Lock, data: bytes) -> Dict[str, Any]:
@@ -143,7 +143,12 @@ async def pose_ws(websocket: WebSocket) -> None:
       2. Server accepts the upgrade.
       3. Client sends an auth JSON message:
             {"type": "auth", "token": "<jwt>",
-             "exercise_type": "...", "affected_side": "left|right|both"}
+             "exercise_type": "...", "affected_side": "left|right|both",
+             "session_id": "<session key>", "exercise_slug": "..."}
+         When session_id is present the backend records a short evidence
+         clip from this stream (core/session_video). The patient_id it
+         files the clip under comes from the VERIFIED token subject, not
+         any client-supplied field.
       4. Server validates JWT (within _WS_AUTH_TIMEOUT_SECONDS) and
          replies {"type": "auth_ok"}. On failure: close 4401.
       5. Client streams JPEG bytes as binary frames; server replies
@@ -190,9 +195,14 @@ async def pose_ws(websocket: WebSocket) -> None:
     if not isinstance(auth_msg, dict) or auth_msg.get("type") != "auth":
         await websocket.close(code=_WS_CLOSE_UNAUTHORIZED)
         return
-    if not _decode_ws_token(str(auth_msg.get("token") or "")):
+    claims = _decode_ws_token(str(auth_msg.get("token") or ""))
+    if not claims:
         await websocket.close(code=_WS_CLOSE_UNAUTHORIZED)
         return
+    # patient_id comes from the VERIFIED token subject, never the client's
+    # auth-message field. Trusting the client field would let an
+    # authenticated user record to — or purge — another patient's clips.
+    authed_patient_id = str(claims.get("sub") or "")
 
     exercise_type = str(auth_msg.get("exercise_type") or "")
     affected_side = str(auth_msg.get("affected_side") or "right")
@@ -201,6 +211,18 @@ async def pose_ws(websocket: WebSocket) -> None:
     # ── Step 2: per-connection MediaPipe instance ──────────────────────
     pose_instance = create_realtime_pose()
     pose_lock = threading.Lock()
+
+    # Evidence clip recorder (Option A). Buffers the first ~10s of frames
+    # where the patient is visible — their first set — then encodes +
+    # uploads on a background thread. No-op unless the client supplied a
+    # patient_id + session_id in the auth message.
+    recorder = SessionClipRecorder(
+        patient_id=authed_patient_id,
+        session_id=str(auth_msg.get("session_id") or ""),
+        # Prefer the clean slug (e.g. "shoulder_flexion"); exercise_type
+        # here is the long scoring hint, which makes an ugly filename.
+        exercise_type=str(auth_msg.get("exercise_slug") or exercise_type),
+    )
 
     # ── Step 3: frame loop ─────────────────────────────────────────────
     try:
@@ -242,6 +264,15 @@ async def pose_ws(websocket: WebSocket) -> None:
             image_width = result["image_width"]
             image_height = result["image_height"]
 
+            # Buffer this frame for the evidence clip. The clip only OPENS
+            # once a pose is detected (so it doesn't start on blank "step
+            # back" frames), but once open it keeps every frame — including
+            # brief pose drop-outs — so the video stays continuous rather
+            # than stuttering on occlusions. add_frame() returns True the
+            # moment the capture window closes → store it off-thread.
+            if recorder.add_frame(data, bool(keypoints)):
+                store_clip_async(recorder)
+
             if not keypoints:
                 await websocket.send_json({
                     "score": 0,
@@ -277,6 +308,14 @@ async def pose_ws(websocket: WebSocket) -> None:
             pass
         return
     finally:
+        # Flush a short evidence clip if the exercise ended before the
+        # capture window filled (patient finished a quick set / dropped
+        # the socket). Skips cleanly when nothing was buffered or the
+        # clip already stored mid-stream.
+        if recorder.enabled and not recorder.done and recorder.has_frames():
+            recorder.finalize()
+            store_clip_async(recorder)
+
         # Tear down the per-connection MediaPipe Pose instance so its
         # C++ graph is freed promptly.
         try:

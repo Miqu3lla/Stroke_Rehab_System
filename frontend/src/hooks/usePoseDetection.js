@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { instance as api } from '../lib/api';
 import { isLstmSupported } from '../constants/exerciseTypes';
 import { supabase } from '../services/supabase';
+import useSessionStore from '../store/useSessionStore';
 
 /**
  * Pose detection over a persistent WebSocket: one /ws/pose connection per
@@ -11,7 +12,25 @@ import { supabase } from '../services/supabase';
  * send an {type:"auth", ...} message first, and wait for "auth_ok" before
  * the frame loop starts. The whole handshake is bounded by HANDSHAKE_TIMEOUT_MS.
  *
+<<<<<<< HEAD
  * classifyFormSequence still uses HTTP — it's a one-shot call at session end.
+=======
+ * Auth protocol (since 2026-06-04, after CodeRabbit feedback):
+ *   1. Open WS to /ws/pose with NO token in the URL — query-string tokens
+ *      end up in reverse-proxy logs and would leak the bearer.
+ *   2. On open, send {"type": "auth", "token", "exercise_type",
+ *      "affected_side", "patient_id", "session_id"} as the first message.
+ *      patient_id + session_id let the backend file the session-evidence
+ *      clip it records from this stream (see core/session_video.py).
+ *   3. Wait for {"type": "auth_ok"} from the server before we consider
+ *      the connection live and let the frame loop start.
+ *   4. The whole handshake (TCP connect + auth round-trip) is bounded by
+ *      HANDSHAKE_TIMEOUT_MS — without it a stuck CONNECTING socket would
+ *      leave the UI on "Preparing pose detection…" forever.
+ *
+ * The end-of-session LSTM call (classifyFormSequence) still uses HTTP
+ * because it's one-shot and benefits from the standard auth interceptor.
+>>>>>>> e443c43b8df49f89b4540eac842f1db692686e80
  */
 
 // Max wait for the handshake + auth_ok before we give up (avoids a hung UI).
@@ -50,6 +69,7 @@ const usePoseDetection = () => {
     affectedSide = 'right',
     onResult = null,
     onClose = null,
+    exerciseSlug = '',
   ) => {
     onResultRef.current = onResult;
     onCloseRef.current = onClose;
@@ -58,6 +78,12 @@ const usePoseDetection = () => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
+      // For the session-evidence clip: the backend records the first ~10s
+      // of this exercise's frames and files it under (patient, session).
+      // Both are best-effort — if either is missing the backend just skips
+      // recording and pose scoring is unaffected.
+      const patientId = session?.user?.id || '';
+      const sessionId = useSessionStore.getState()?.session?.sessionId || '';
       if (!token) {
         setModelError('Not authenticated — please log in again');
         setIsModelReady(false);
@@ -97,6 +123,12 @@ const usePoseDetection = () => {
               token,
               exercise_type: exerciseType || '',
               affected_side: affectedSide || 'right',
+              patient_id: patientId,
+              session_id: sessionId,
+              // Clean exercise slug (e.g. "shoulder_flexion") for the
+              // evidence clip filename — exercise_type above is the long
+              // scoring hint, which makes an ugly path.
+              exercise_slug: exerciseSlug || '',
             }));
           } catch (err) {
             setModelError('Failed to send auth message');
