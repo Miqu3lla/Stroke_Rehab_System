@@ -31,6 +31,13 @@ CREATE TABLE IF NOT EXISTS public.session_videos (
 CREATE INDEX IF NOT EXISTS session_videos_patient_session_idx
     ON public.session_videos (patient_id, session_id);
 
+-- One row per exercise per session. The backend upserts on this key so a
+-- re-record (e.g. a WS reconnect for the same exercise) UPDATES the row
+-- instead of duplicating it — matching the x-upsert overwrite of the
+-- Storage object at the same path.
+CREATE UNIQUE INDEX IF NOT EXISTS session_videos_patient_session_exercise_key
+    ON public.session_videos (patient_id, session_id, exercise_type);
+
 -- Private bucket — clips are only reachable via short-lived signed URLs
 -- the PT dashboard mints with the service role. public=false keeps them
 -- off any anonymous public URL.
