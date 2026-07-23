@@ -780,6 +780,7 @@ const useCamera = (exercise, { onComplete } = {}) => {
           affectedSide,
           stableHandlePoseResult,
           handlePoseClose,
+          exercise?.exercise_type || '',
         );
         if (!ready) {
           setFeedbackText('Pose detection unavailable — exercise without skeleton');
