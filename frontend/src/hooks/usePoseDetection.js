@@ -12,9 +12,6 @@ import useSessionStore from '../store/useSessionStore';
  * send an {type:"auth", ...} message first, and wait for "auth_ok" before
  * the frame loop starts. The whole handshake is bounded by HANDSHAKE_TIMEOUT_MS.
  *
-<<<<<<< HEAD
- * classifyFormSequence still uses HTTP — it's a one-shot call at session end.
-=======
  * Auth protocol (since 2026-06-04, after CodeRabbit feedback):
  *   1. Open WS to /ws/pose with NO token in the URL — query-string tokens
  *      end up in reverse-proxy logs and would leak the bearer.
@@ -30,7 +27,6 @@ import useSessionStore from '../store/useSessionStore';
  *
  * The end-of-session LSTM call (classifyFormSequence) still uses HTTP
  * because it's one-shot and benefits from the standard auth interceptor.
->>>>>>> e443c43b8df49f89b4540eac842f1db692686e80
  */
 
 // Max wait for the handshake + auth_ok before we give up (avoids a hung UI).
@@ -50,6 +46,10 @@ const usePoseDetection = () => {
   const onCloseRef = useRef(null);
   // True once auth_ok has landed; pose results before this are a protocol error.
   const authedRef = useRef(false);
+  // Bumped on every start/stop/unmount. Handlers captured by an older socket
+  // compare against it and bail, so a late close/error/message from a replaced
+  // connection can't flip state or fire the new connection's callbacks.
+  const connectionIdRef = useRef(0);
 
   // Build the wss:// URL from the axios baseURL (same host as the HTTP API).
   // No token in the query string — auth happens in the first message.
@@ -63,7 +63,10 @@ const usePoseDetection = () => {
 
   // Opens the pose WebSocket. Resolves true on a successful auth_ok handshake,
   // false on any connection/auth/timeout failure. onResult fires once per pose
-  // message (after auth_ok); onClose fires if the socket drops.
+  // message (after auth_ok). onClose fires ONLY when a socket that completed
+  // the auth_ok handshake later drops — handshake failures (auth rejected,
+  // timeout, connection error) are reported solely through the resolved false,
+  // so callers never see both signals for the same attempt.
   const startDetection = useCallback(async (
     exerciseType = '',
     affectedSide = 'right',
@@ -74,6 +77,12 @@ const usePoseDetection = () => {
     onResultRef.current = onResult;
     onCloseRef.current = onClose;
     authedRef.current = false;
+    // This attempt's identity. Every handler below checks it before touching
+    // shared state, so an in-flight socket from a previous call goes silent
+    // the moment startDetection/stopDetection is called again.
+    const connId = connectionIdRef.current + 1;
+    connectionIdRef.current = connId;
+    const isCurrent = () => connectionIdRef.current === connId;
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -91,6 +100,10 @@ const usePoseDetection = () => {
         return false;
       }
 
+      // getSession() above is async — a newer attempt may have started while
+      // we waited, in which case this one is already obsolete.
+      if (!isCurrent()) return false;
+
       const ws = new WebSocket(buildWsUrl());
       // Forward-compatible: any future binary server messages arrive as
       // ArrayBuffer instead of Blob. Server currently sends only JSON text.
@@ -99,6 +112,9 @@ const usePoseDetection = () => {
 
       return await new Promise((resolve) => {
         let settled = false;
+        // Auth state for THIS socket only. authedRef mirrors it (sendFrameBase64
+        // reads it) but is written only while this connection is current.
+        let authed = false;
         const finish = (ok) => {
           if (settled) return;
           settled = true;
@@ -108,9 +124,11 @@ const usePoseDetection = () => {
 
         // Bail if the handshake stalls (e.g. server hung) instead of awaiting forever.
         const timeoutHandle = setTimeout(() => {
-          setModelError('Pose tracking handshake timed out');
-          setIsModelReady(false);
-          setIsDetecting(false);
+          if (isCurrent()) {
+            setModelError('Pose tracking handshake timed out');
+            setIsModelReady(false);
+            setIsDetecting(false);
+          }
           try { ws.close(); } catch (_) { /* already closed */ }
           finish(false);
         }, HANDSHAKE_TIMEOUT_MS);
@@ -131,20 +149,25 @@ const usePoseDetection = () => {
               exercise_slug: exerciseSlug || '',
             }));
           } catch (err) {
-            setModelError('Failed to send auth message');
+            if (isCurrent()) setModelError('Failed to send auth message');
             try { ws.close(); } catch (_) { /* already closed */ }
             finish(false);
           }
         };
 
         ws.onerror = () => {
-          setModelError('Pose tracking connection error');
-          setIsModelReady(false);
-          setIsDetecting(false);
+          if (isCurrent()) {
+            setModelError('Pose tracking connection error');
+            setIsModelReady(false);
+            setIsDetecting(false);
+          }
           finish(false);
         };
 
         ws.onmessage = (event) => {
+          // A superseded socket may still deliver buffered frames; drop them
+          // rather than feeding them to the current exercise's callback.
+          if (!isCurrent()) return;
           let data;
           try {
             const raw = typeof event.data === 'string'
@@ -157,8 +180,9 @@ const usePoseDetection = () => {
           }
 
           // Auth phase — the first message must be auth_ok, else bail.
-          if (!authedRef.current) {
+          if (!authed) {
             if (data?.type === 'auth_ok') {
+              authed = true;
               authedRef.current = true;
               setIsDetecting(true);
               setIsModelReady(true);
@@ -178,6 +202,12 @@ const usePoseDetection = () => {
         };
 
         ws.onclose = (event) => {
+          // Stale socket: it's already been replaced or stopped, so its close
+          // says nothing about the live connection.
+          if (!isCurrent()) {
+            finish(false);
+            return;
+          }
           setIsDetecting(false);
           setIsModelReady(false);
           if (event?.code === 4401) {
@@ -185,7 +215,7 @@ const usePoseDetection = () => {
           }
           // Tell useCamera to stop capturing. Skip if we never authed —
           // startDetection's promise handles that case.
-          if (authedRef.current) {
+          if (authed) {
             onCloseRef.current?.(event);
           }
           // Resolves the handshake promise if it hadn't settled yet.
@@ -202,6 +232,8 @@ const usePoseDetection = () => {
 
   // Closes the socket and clears callbacks. Safe to call multiple times.
   const stopDetection = useCallback(() => {
+    // Retire the current connection id so its handlers go silent.
+    connectionIdRef.current += 1;
     setIsDetecting(false);
     setIsModelReady(false);
     onResultRef.current = null;
@@ -293,6 +325,13 @@ const usePoseDetection = () => {
   // Close the socket on unmount so swapping exercises doesn't leak connections.
   useEffect(() => {
     return () => {
+      // Same retirement as stopDetection: drop the callbacks and invalidate
+      // the connection id so nothing the socket emits on its way out reaches
+      // an unmounted consumer.
+      connectionIdRef.current += 1;
+      onResultRef.current = null;
+      onCloseRef.current = null;
+      authedRef.current = false;
       const ws = wsRef.current;
       if (ws) {
         wsRef.current = null;
