@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { instance as api } from '../lib/api';
 import { isLstmSupported } from '../constants/exerciseTypes';
 import { supabase } from '../services/supabase';
+import useSessionStore from '../store/useSessionStore';
 
 /**
  * Hook to handle pose detection by communicating with the backend.
@@ -16,7 +17,9 @@ import { supabase } from '../services/supabase';
  *   1. Open WS to /ws/pose with NO token in the URL — query-string tokens
  *      end up in reverse-proxy logs and would leak the bearer.
  *   2. On open, send {"type": "auth", "token", "exercise_type",
- *      "affected_side"} as the first message.
+ *      "affected_side", "patient_id", "session_id"} as the first message.
+ *      patient_id + session_id let the backend file the session-evidence
+ *      clip it records from this stream (see core/session_video.py).
  *   3. Wait for {"type": "auth_ok"} from the server before we consider
  *      the connection live and let the frame loop start.
  *   4. The whole handshake (TCP connect + auth round-trip) is bounded by
@@ -74,6 +77,7 @@ const usePoseDetection = () => {
     affectedSide = 'right',
     onResult = null,
     onClose = null,
+    exerciseSlug = '',
   ) => {
     onResultRef.current = onResult;
     onCloseRef.current = onClose;
@@ -82,6 +86,12 @@ const usePoseDetection = () => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
+      // For the session-evidence clip: the backend records the first ~10s
+      // of this exercise's frames and files it under (patient, session).
+      // Both are best-effort — if either is missing the backend just skips
+      // recording and pose scoring is unaffected.
+      const patientId = session?.user?.id || '';
+      const sessionId = useSessionStore.getState()?.session?.sessionId || '';
       if (!token) {
         setModelError('Not authenticated — please log in again');
         setIsModelReady(false);
@@ -125,6 +135,12 @@ const usePoseDetection = () => {
               token,
               exercise_type: exerciseType || '',
               affected_side: affectedSide || 'right',
+              patient_id: patientId,
+              session_id: sessionId,
+              // Clean exercise slug (e.g. "shoulder_flexion") for the
+              // evidence clip filename — exercise_type above is the long
+              // scoring hint, which makes an ugly path.
+              exercise_slug: exerciseSlug || '',
             }));
           } catch (err) {
             setModelError('Failed to send auth message');
