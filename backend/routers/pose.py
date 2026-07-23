@@ -2,7 +2,7 @@ import asyncio
 import base64
 import os
 import threading
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import jwt  # PyJWT
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
@@ -94,30 +94,29 @@ def estimate_pose(
     }
 
 
-def _decode_ws_token(token: str) -> bool:
+def _decode_ws_token(token: str) -> Optional[Dict[str, Any]]:
     """Validate a Supabase JWT supplied via the WS auth message.
 
-    Returns True when the token decodes cleanly. We don't return the
-    claims because the realtime channel is patient-scoped at the URL
-    level (one connection per session) and we never act on the subject
-    inside the frame loop — only authentication matters here.
+    Returns the decoded claims on success, None on failure. The caller
+    uses the verified `sub` claim as the patient_id for evidence-clip
+    capture — never a client-supplied field — so one connection can't
+    store to or delete another patient's clips.
     """
     if not token:
-        return False
+        return None
     secret = os.getenv("SUPABASE_JWT_SECRET", "").strip()
     if not secret:
-        return False
+        return None
     try:
-        jwt.decode(
+        return jwt.decode(
             token,
             secret,
             algorithms=_JWT_ALGORITHMS,
             audience=_JWT_AUDIENCE,
             options={"require": ["exp", "sub"]},
         )
-        return True
     except jwt.InvalidTokenError:
-        return False
+        return None
 
 
 def _run_pose_with_lock(pose_instance: Any, lock: threading.Lock, data: bytes) -> Dict[str, Any]:
@@ -145,9 +144,11 @@ async def pose_ws(websocket: WebSocket) -> None:
       3. Client sends an auth JSON message:
             {"type": "auth", "token": "<jwt>",
              "exercise_type": "...", "affected_side": "left|right|both",
-             "patient_id": "<uuid>", "session_id": "<session key>"}
-         patient_id + session_id are optional — when present, the backend
-         records a short evidence clip from this stream (core/session_video).
+             "session_id": "<session key>", "exercise_slug": "..."}
+         When session_id is present the backend records a short evidence
+         clip from this stream (core/session_video). The patient_id it
+         files the clip under comes from the VERIFIED token subject, not
+         any client-supplied field.
       4. Server validates JWT (within _WS_AUTH_TIMEOUT_SECONDS) and
          replies {"type": "auth_ok"}. On failure: close 4401.
       5. Client streams JPEG bytes as binary frames; server replies
@@ -194,9 +195,14 @@ async def pose_ws(websocket: WebSocket) -> None:
     if not isinstance(auth_msg, dict) or auth_msg.get("type") != "auth":
         await websocket.close(code=_WS_CLOSE_UNAUTHORIZED)
         return
-    if not _decode_ws_token(str(auth_msg.get("token") or "")):
+    claims = _decode_ws_token(str(auth_msg.get("token") or ""))
+    if not claims:
         await websocket.close(code=_WS_CLOSE_UNAUTHORIZED)
         return
+    # patient_id comes from the VERIFIED token subject, never the client's
+    # auth-message field. Trusting the client field would let an
+    # authenticated user record to — or purge — another patient's clips.
+    authed_patient_id = str(claims.get("sub") or "")
 
     exercise_type = str(auth_msg.get("exercise_type") or "")
     affected_side = str(auth_msg.get("affected_side") or "right")
@@ -211,7 +217,7 @@ async def pose_ws(websocket: WebSocket) -> None:
     # uploads on a background thread. No-op unless the client supplied a
     # patient_id + session_id in the auth message.
     recorder = SessionClipRecorder(
-        patient_id=str(auth_msg.get("patient_id") or ""),
+        patient_id=authed_patient_id,
         session_id=str(auth_msg.get("session_id") or ""),
         # Prefer the clean slug (e.g. "shoulder_flexion"); exercise_type
         # here is the long scoring hint, which makes an ugly filename.

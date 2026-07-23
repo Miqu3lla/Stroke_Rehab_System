@@ -676,12 +676,110 @@ def delete_storage_object(bucket: str, path: str) -> bool:
 
 
 def insert_session_video(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Persist one evidence-clip index row to `public.session_videos`.
+    """Upsert one evidence-clip index row into `public.session_videos`.
 
     Expected keys: patient_id, session_id, exercise_type, storage_path,
     duration_seconds.
+
+    UPSERT on (patient_id, session_id, exercise_type): the Storage object
+    is uploaded with x-upsert (same path overwrites), so re-recording the
+    same exercise in a session — e.g. a WS reconnect — must UPDATE the
+    existing row rather than leave a duplicate pointing at the same file
+    with a stale duration/created_at. Requires the unique index from
+    db/session_videos.sql.
     """
-    return _post("session_videos", payload)
+    patient_id = payload.get("patient_id")
+    session_id = payload.get("session_id")
+    exercise_type = payload.get("exercise_type") or ""
+    storage_path = payload.get("storage_path") or ""
+    try:
+        duration_seconds = float(payload.get("duration_seconds") or 0)
+    except (ValueError, TypeError):
+        duration_seconds = 0.0
+
+    if not _is_valid_uuid(patient_id) or not _SAFE_SESSION_RE.match(session_id or ""):
+        return {"stored": False, "reason": "invalid_ids"}
+
+    values = (patient_id, session_id, exercise_type, storage_path, duration_seconds)
+
+    # psycopg2 (parameterised) — preferred, no injection surface.
+    if psycopg2 is not None and _postgres_configured():
+        conn = None
+        try:
+            config = _get_postgres_config()
+            conn = psycopg2.connect(
+                host=config["host"], port=config["port"], dbname=config["dbname"],
+                user=config["user"], password=config["password"],
+            )
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO public.session_videos "
+                    "(patient_id, session_id, exercise_type, storage_path, duration_seconds) "
+                    "VALUES (%s, %s, %s, %s, %s) "
+                    "ON CONFLICT (patient_id, session_id, exercise_type) DO UPDATE SET "
+                    "storage_path = EXCLUDED.storage_path, "
+                    "duration_seconds = EXCLUDED.duration_seconds, "
+                    "created_at = now()",
+                    values,
+                )
+                conn.commit()
+                return {"stored": True, "status_code": 201}
+        except Exception as exc:
+            return {"stored": False, "error": str(exc)}
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    # docker exec — patient_id/session_id are gated above; the free-text
+    # values go through _quote_sql_value so they're safely escaped.
+    if shutil.which("docker") is not None:
+        container_name = os.getenv("SUPABASE_DOCKER_CONTAINER", "supabase-db")
+        config = _get_postgres_config()
+        cols = "(patient_id, session_id, exercise_type, storage_path, duration_seconds)"
+        vals_sql = ", ".join(_quote_sql_value(v) for v in values)
+        sql = (
+            f"INSERT INTO public.session_videos {cols} VALUES ({vals_sql}) "
+            "ON CONFLICT (patient_id, session_id, exercise_type) DO UPDATE SET "
+            "storage_path = EXCLUDED.storage_path, "
+            "duration_seconds = EXCLUDED.duration_seconds, "
+            "created_at = now()"
+        )
+        command = [
+            "docker", "exec", "-e", f"PGPASSWORD={config['password']}",
+            container_name, "psql", "-U", config["user"], "-d", config["dbname"],
+            "-tA", "-c", sql,
+        ]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=8)
+            if result.returncode == 0:
+                return {"stored": True, "status_code": 201}
+            return {"stored": False, "error": result.stderr.strip() or result.stdout.strip()}
+        except subprocess.TimeoutExpired:
+            return {"stored": False, "error": "docker_timeout"}
+
+    # REST fallback — PostgREST upsert via merge-duplicates on the unique key.
+    if _configured():
+        headers = dict(_headers())
+        headers["Prefer"] = "resolution=merge-duplicates"
+        url = _rest_url("session_videos") + "?on_conflict=patient_id,session_id,exercise_type"
+        body = json.dumps({
+            "patient_id": patient_id,
+            "session_id": session_id,
+            "exercise_type": exercise_type,
+            "storage_path": storage_path,
+            "duration_seconds": duration_seconds,
+        }).encode("utf-8")
+        req = request.Request(url, data=body, headers=headers, method="POST")
+        try:
+            with request.urlopen(req, timeout=10) as response:
+                return {"stored": True, "status_code": response.status}
+        except Exception as exc:
+            return {"stored": False, "error": str(exc)}
+
+    return {"stored": False, "reason": "no_backend_available"}
 
 
 def list_other_session_video_paths(patient_id: str, session_id: str) -> list:
@@ -692,22 +790,32 @@ def list_other_session_video_paths(patient_id: str, session_id: str) -> list:
         return []
 
     # psycopg2 (parameterised) — preferred, no injection surface.
+    # `with psycopg2.connect(...)` manages the transaction but does NOT
+    # close the connection, so close it explicitly to avoid leaking one
+    # per purge.
     if psycopg2 is not None and _postgres_configured():
+        conn = None
         try:
             config = _get_postgres_config()
-            with psycopg2.connect(
+            conn = psycopg2.connect(
                 host=config["host"], port=config["port"], dbname=config["dbname"],
                 user=config["user"], password=config["password"],
-            ) as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute(
-                        "SELECT storage_path FROM public.session_videos "
-                        "WHERE patient_id = %s AND session_id <> %s",
-                        (patient_id, session_id),
-                    )
-                    return [row[0] for row in cursor.fetchall() if row and row[0]]
+            )
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "SELECT storage_path FROM public.session_videos "
+                    "WHERE patient_id = %s AND session_id <> %s",
+                    (patient_id, session_id),
+                )
+                return [row[0] for row in cursor.fetchall() if row and row[0]]
         except Exception:
             pass
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     # docker exec — both values are gated above, safe to splice.
     if shutil.which("docker") is not None:
@@ -756,23 +864,33 @@ def delete_other_session_video_rows(patient_id: str, session_id: str) -> None:
     if not _is_valid_uuid(patient_id) or not _SAFE_SESSION_RE.match(session_id or ""):
         return
 
+    # `with psycopg2.connect(...)` commits/rolls back but does not close
+    # the socket — close it explicitly so the purge doesn't leak a
+    # connection each time.
     if psycopg2 is not None and _postgres_configured():
+        conn = None
         try:
             config = _get_postgres_config()
-            with psycopg2.connect(
+            conn = psycopg2.connect(
                 host=config["host"], port=config["port"], dbname=config["dbname"],
                 user=config["user"], password=config["password"],
-            ) as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute(
-                        "DELETE FROM public.session_videos "
-                        "WHERE patient_id = %s AND session_id <> %s",
-                        (patient_id, session_id),
-                    )
-                    conn.commit()
-                    return
+            )
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "DELETE FROM public.session_videos "
+                    "WHERE patient_id = %s AND session_id <> %s",
+                    (patient_id, session_id),
+                )
+                conn.commit()
+                return
         except Exception:
             pass
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     if shutil.which("docker") is not None:
         container_name = os.getenv("SUPABASE_DOCKER_CONTAINER", "supabase-db")
