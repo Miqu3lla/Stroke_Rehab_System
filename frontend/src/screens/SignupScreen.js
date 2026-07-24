@@ -1,15 +1,18 @@
-import { View, Text, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import { View, Text, Platform } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import SignupCard from '../components/Auth/SignupCard.js';
 
 const SignupScreen = ({ navigation }) => {
   return (
     <SafeAreaProvider className="flex-1 bg-[#FAFAFA]">
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        className="flex-1"
+      <KeyboardAwareScrollView 
+        contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', padding: 24 }}
+        enableOnAndroid={true}
+        extraScrollHeight={20}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
       >
-        <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', padding: 24 }}>
           
           <View className="items-center mb-10 mt-10">
             <Text className="text-5xl font-bold text-gray-900 mb-4">TheraMotion</Text>
@@ -23,8 +26,7 @@ const SignupScreen = ({ navigation }) => {
 
           <SignupCard navigation={navigation} />
 
-        </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardAwareScrollView>
     </SafeAreaProvider>
   );
 };

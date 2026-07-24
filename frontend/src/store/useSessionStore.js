@@ -90,10 +90,24 @@ const useSessionStore = create((set, get) => ({
             ended_via: r.ended_via || 'finish',
           };
           if (format === 'reps') {
+            // Functionality carries hold_seconds_per_rep (tolerance holds);
+            // Strength carries weight_kg (patient-entered load). Each is null
+            // in the other mode — pass through so the backend can persist and
+            // the recommender can progress the load next session.
+            const holdPerRep = r.hold_seconds_per_rep;
+            const weightKg = r.weight_kg;
             return {
               ...base,
               reps_completed: Math.max(0, Math.floor(Number(r.reps_completed) || 0)),
               target_reps: Math.max(1, Math.floor(Number(r.target_reps) || 12)),
+              hold_seconds_per_rep:
+                holdPerRep === null || holdPerRep === undefined
+                  ? null
+                  : Math.max(0, Math.floor(Number(holdPerRep) || 0)),
+              weight_kg:
+                weightKg === null || weightKg === undefined
+                  ? null
+                  : Math.max(0, Number(weightKg) || 0),
             };
           }
           return {

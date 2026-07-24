@@ -44,6 +44,15 @@ const HOLD_FORM_BROKEN_LIMIT_MS = 30 * 1000;
 const HOLD_DEFAULT_SECONDS = 300;
 const HOLD_MIN_SECONDS = 60;
 
+// Upper bound on the per-frame delta fed to the hold accumulators. The pose
+// WS runs at ~8-15 FPS (~66-125ms/frame). If it stalls — watchdog retry, a
+// brief disconnect, or the app backgrounded — the next frame's raw wall-clock
+// delta could be several seconds and would be credited in FULL toward a hold
+// the patient may not have actually sustained (a single delayed green frame
+// could complete a 6s per-rep hold). Clamp the delta so a stall contributes
+// at most one generous frame's worth of hold credit.
+const MAX_FRAME_DT_MS = 500;
+
 // Default sets payload when an exercise is missing the sets[] field —
 // shouldn't happen in production (recommender always returns sets), but
 // keeps the hook safe against older response shapes during the deploy
@@ -116,6 +125,19 @@ const useCamera = (exercise, { onComplete } = {}) => {
   // }
   const [completedSetResults, setCompletedSetResults] = useState([]);
 
+  // ── Strength load (kg) ────────────────────────────────────────────
+  // The camera can't measure weight, so Strength mode carries a
+  // patient-entered load. Seeded from the recommender's suggested weight
+  // (sets[0].target_weight_kg), adjustable via the UI stepper before/
+  // between sets, and recorded into each Strength set's result so the
+  // recommender can progress it next session. Lazy initializer runs once
+  // per exercise (the hook remounts on key=exercise.id).
+  const [currentWeightKg, setCurrentWeightKg] = useState(() => {
+    const s0 = Array.isArray(exercise?.sets) ? exercise.sets[0] : null;
+    const w = Number(s0?.target_weight_kg ?? exercise?.suggested_weight_kg);
+    return Number.isFinite(w) && w >= 0 ? w : 0;
+  });
+
   // ── Pose overlay state ────────────────────────────────────────────
   const [jointColors, setJointColors] = useState({});
   const [keypoints, setKeypoints] = useState([]);
@@ -164,6 +186,8 @@ const useCamera = (exercise, { onComplete } = {}) => {
   const currentSet = sets[currentSetIndex] || sets[0];
   const setTotalSeconds = _capForSet(currentSet);
   const affectedSide = (exercise?.affected_side || 'right').toLowerCase();
+  // Strength mode records a kg load per set; Functionality does not.
+  const isStrengthMode = (exercise?.mode || '') === 'strength';
 
   // Hint string used to determine which color band to read for rep
   // counting AND used by the backend's exercise classifier. Same heuristic
@@ -275,6 +299,8 @@ const useCamera = (exercise, { onComplete } = {}) => {
           score: computeAvgScore(setScoreBufferRef.current),
           reps_completed: repCounterRef.current.repsCompleted,
           target_reps: currentSet?.target_reps || 12,
+          hold_seconds_per_rep: currentSet?.hold_seconds_per_rep ?? null,
+          weight_kg: currentSet?.target_weight_kg != null ? currentWeightKg : null,
           ended_via: endedVia,
         };
       }
@@ -342,6 +368,8 @@ const useCamera = (exercise, { onComplete } = {}) => {
     computeAvgScore,
     classifyFormSequence,
     exercise,
+    isStrengthMode,
+    currentWeightKg,
   ]);
 
   // Captures one frame from the camera and ships it down the WS as
@@ -443,24 +471,33 @@ const useCamera = (exercise, { onComplete } = {}) => {
       }
       setJointColors(colors);
 
+      // Time since the previous processed frame. The WS arrives at a
+      // jittery 8-15 FPS, so every per-frame accumulator (functionality
+      // hold-per-rep AND hold-set tracking) integrates this dt instead of
+      // assuming a fixed rate. First frame of a set has no prior dt → 0.
+      const now = Date.now();
+      const dt = lastFrameTimeRef.current
+        ? Math.min(MAX_FRAME_DT_MS, Math.max(0, now - lastFrameTimeRef.current))
+        : 0;
+      lastFrameTimeRef.current = now;
+
       // Advance the rep counter for rep-format sets. Hold sets ignore
-      // RepCounter entirely (handled by timer-only in Phase C; Phase D
-      // will add form-broken-too-long tracking).
+      // RepCounter entirely (handled by the timer + form-broken tracking).
       //
       // Hint resolution order (rep sets):
-      //   1. Run repAwareHint against the *new* state — overrides the
-      //      backend's "Hold your arm at shoulder height" wording when
-      //      the patient has just counted a rep (they should be
-      //      returning to start, not holding).
-      //   2. If no override applies, the WS hint stands (ascent
-      //      guidance is correct mid-set).
+      //   1. Functionality hold-per-rep in progress → show the live
+      //      "hold Ns of Ms" countdown so the patient knows to keep still.
+      //   2. Otherwise repAwareHint overrides the backend wording when a
+      //      rep just counted (return to start, not hold).
+      //   3. Else the WS hint stands (ascent guidance is correct mid-set).
       if (currentSet?.format === 'reps') {
         const activeColor = pickActiveColor(colors, exerciseHint);
-        const snapshot = repCounterRef.current.update(activeColor);
+        const snapshot = repCounterRef.current.update(activeColor, dt);
         // 8-15Hz rerenders cost: only flush if something user-visible
         // changed. The rep state machine churns AT_TOP↔WAITING_FOR_TOP
         // many times per rep — only the counted-reps and the
-        // state-name matter to the HUD.
+        // state-name matter to the HUD. (currentHoldMs is surfaced via
+        // feedbackText instead, so it stays out of this diff.)
         setRepProgress((prev) =>
           prev.repsCompleted === snapshot.repsCompleted
             && prev.state === snapshot.state
@@ -470,7 +507,17 @@ const useCamera = (exercise, { onComplete } = {}) => {
             : snapshot
         );
 
-        const hintForRep = repAwareHint(snapshot, activeColor, result.hint);
+        let hintForRep;
+        if (snapshot.holdMsPerRep > 0
+            && activeColor === COLOR_GREEN
+            && snapshot.state === 'waiting_for_top'
+            && snapshot.currentHoldMs > 0) {
+          const heldS = Math.floor(snapshot.currentHoldMs / 1000);
+          const targetS = Math.round(snapshot.holdMsPerRep / 1000);
+          hintForRep = `Hold it — ${heldS}s of ${targetS}s`;
+        } else {
+          hintForRep = repAwareHint(snapshot, activeColor, result.hint);
+        }
         if (hintForRep) setFeedbackText(hintForRep);
 
         if (snapshot.setComplete) {
@@ -481,13 +528,6 @@ const useCamera = (exercise, { onComplete } = {}) => {
           return;
         }
       } else if (currentSet?.format === 'hold') {
-        // Phase D hold tracking. Integrate dt between frames so the
-        // hold counter is accurate even when the WS frame rate jitters.
-        // First frame of the set has no prior dt — bill it as 0.
-        const now = Date.now();
-        const dt = lastFrameTimeRef.current ? Math.max(0, now - lastFrameTimeRef.current) : 0;
-        lastFrameTimeRef.current = now;
-
         const activeColor = pickActiveColor(colors, exerciseHint);
         const isInForm = activeColor === COLOR_GREEN;
 
@@ -586,7 +626,11 @@ const useCamera = (exercise, { onComplete } = {}) => {
   const beginSetTimers = useCallback((nextSet) => {
     const targetReps = nextSet?.target_reps || 12;
     const targetSeconds = _capForSet(nextSet);
-    repCounterRef.current = new RepCounter(targetReps);
+    // Functionality sets carry hold_seconds_per_rep → the RepCounter only
+    // counts a rep after that sustained green hold. Strength/plain sets pass
+    // 0 and count on entry, as before.
+    const holdMsPerRep = Number(nextSet?.hold_seconds_per_rep || 0) * 1000;
+    repCounterRef.current = new RepCounter(targetReps, holdMsPerRep);
     setScoreBufferRef.current = [];
     holdInFormMsRef.current = 0;
     brokenMsRef.current = 0;
@@ -656,6 +700,8 @@ const useCamera = (exercise, { onComplete } = {}) => {
         score,
         reps_completed: repCounterRef.current.repsCompleted,
         target_reps: currentSet?.target_reps || 12,
+        hold_seconds_per_rep: currentSet?.hold_seconds_per_rep ?? null,
+        weight_kg: currentSet?.target_weight_kg != null ? currentWeightKg : null,
         ended_via: endedVia,
       };
     }
@@ -677,7 +723,7 @@ const useCamera = (exercise, { onComplete } = {}) => {
     // Save this set's result and pop the BreakScreen.
     setCompletedSetResults((prev) => [...prev, setResult]);
     setIsBetweenSets(true);
-  }, [computeAvgScore, currentSet, currentSetIndex, sets.length, finishExercise]);
+  }, [computeAvgScore, currentSet, currentSetIndex, sets.length, finishExercise, isStrengthMode, currentWeightKg]);
 
   // Keep the ref pointing at the latest finishCurrentSet so the
   // handlePoseResult closure always calls the current version.
@@ -734,6 +780,7 @@ const useCamera = (exercise, { onComplete } = {}) => {
           affectedSide,
           stableHandlePoseResult,
           handlePoseClose,
+          exercise?.exercise_type || '',
         );
         if (!ready) {
           setFeedbackText('Pose detection unavailable — exercise without skeleton');
@@ -796,6 +843,10 @@ const useCamera = (exercise, { onComplete } = {}) => {
     repProgress,
     holdProgress,
     completedSetResults,
+    //strength load (kg)
+    isStrengthMode,
+    currentWeightKg,
+    setCurrentWeightKg,
     //pose overlay
     jointColors,
     keypoints,

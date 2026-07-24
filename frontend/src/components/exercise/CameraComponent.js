@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useState, useCallback } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import useCamera from '../../hooks/useCamera';
 import SkeletonOverlay from './SkeletonOverlay';
@@ -14,6 +14,10 @@ import BreakScreen from './BreakScreen';
 // when the patient taps "End Early" anywhere mid-exercise).
 export default function CameraComponent({ exercise, onComplete }) {
   const [permission, requestPermission] = useCameraPermissions();
+
+  // Small capture size for Android so each frame is grabbed cheaply instead
+  // of at full sensor resolution. Null until the camera picks one.
+  const [pictureSize, setPictureSize] = useState(null);
 
   const {
     cameraRef,
@@ -34,6 +38,9 @@ export default function CameraComponent({ exercise, onComplete }) {
     repProgress,
     holdProgress,
     completedSetResults,
+    isStrengthMode,
+    currentWeightKg,
+    setCurrentWeightKg,
     isModelReady,
     modelError,
     startExercise,
@@ -43,6 +50,35 @@ export default function CameraComponent({ exercise, onComplete }) {
     formatTime,
     handleCameraLayout,
   } = useCamera(exercise, { onComplete });
+
+  // Android only: pick the smallest supported capture size >= 640px wide so
+  // frames are cheap to grab. iOS is already fast, so we leave it alone.
+  const handleCameraReady = useCallback(async () => {
+    if (Platform.OS !== 'android') return;
+    try {
+      const sizes = await cameraRef.current?.getAvailablePictureSizesAsync?.();
+      if (!Array.isArray(sizes) || sizes.length === 0) return;
+      // Sizes are "WIDTHxHEIGHT" strings; sort by area, smallest first.
+      const parsed = sizes
+        .map((s) => {
+          const [w, h] = String(s).split('x').map(Number);
+          return { size: s, w, h };
+        })
+        .filter((p) => Number.isFinite(p.w) && Number.isFinite(p.h))
+        .sort((a, b) => a.w * a.h - b.w * b.h);
+      const pick = parsed.find((p) => p.w >= 640) || parsed[parsed.length - 1];
+      if (pick) setPictureSize(pick.size);
+    } catch (_) {
+      // Non-fatal — camera just uses its default size.
+    }
+  }, [cameraRef]);
+
+  // Strength load stepper: patient enters the kg they're actually using.
+  // 0.5 kg steps, floored at 0 (unloaded). Applies to the current set and
+  // carries forward as the default for the next.
+  const WEIGHT_STEP_KG = Number(exercise?.weight_increment_kg) || 0.5;
+  const adjustWeight = (delta) =>
+    setCurrentWeightKg((w) => Math.max(0, Math.round((Number(w || 0) + delta) * 10) / 10));
 
   if (!permission) {
     return <View />;
@@ -82,6 +118,10 @@ export default function CameraComponent({ exercise, onComplete }) {
         ref={cameraRef}
         style={{ flex: 1 }}
         facing="front"
+        animateShutter={false}
+        mute
+        pictureSize={pictureSize || undefined}
+        onCameraReady={handleCameraReady}
         onLayout={handleCameraLayout}
       />
 
@@ -133,6 +173,37 @@ export default function CameraComponent({ exercise, onComplete }) {
                 </Text>
               )}
             </View>
+
+            {/* Functionality tolerance cue: each rep is held before it counts. */}
+            {!isStrengthMode && currentSet?.hold_seconds_per_rep ? (
+              <Text className="text-[#9fe0a6] text-center text-[13px] mt-1 font-semibold">
+                Hold each rep {currentSet.hold_seconds_per_rep}
+                {currentSet.hold_seconds_max ? `–${currentSet.hold_seconds_max}` : ''}s
+              </Text>
+            ) : null}
+
+            {/* Strength load stepper: only for exercises that carry a
+                weight slot (upper-limb). Leg Strength work is reps-only. */}
+            {isStrengthMode && currentSet?.target_weight_kg != null ? (
+              <View className="flex-row items-center justify-center gap-4 mt-2">
+                <TouchableOpacity
+                  className="w-10 h-10 rounded-full bg-white/15 items-center justify-center"
+                  onPress={() => adjustWeight(-WEIGHT_STEP_KG)}
+                >
+                  <Text className="text-white text-2xl font-black">−</Text>
+                </TouchableOpacity>
+                <View className="items-center min-w-[92px]">
+                  <Text className="text-white text-xl font-black">{currentWeightKg} kg</Text>
+                  <Text className="text-[#d2d6e3] text-[11px] font-medium">Weight used</Text>
+                </View>
+                <TouchableOpacity
+                  className="w-10 h-10 rounded-full bg-white/15 items-center justify-center"
+                  onPress={() => adjustWeight(WEIGHT_STEP_KG)}
+                >
+                  <Text className="text-white text-2xl font-black">+</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
 
             <PostureFeedback
               exercise={exercise}

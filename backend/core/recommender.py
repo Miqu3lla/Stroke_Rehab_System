@@ -176,67 +176,148 @@ def _sessions_per_week_from_action(action: str) -> int:
     return {"downgrade": 2, "maintain": 3, "upgrade": 4}.get(action, 3)
 
 
-# ── Sets-and-modes feature constants (Phase A, 2026-06-04) ─────────────
-# 3 sets × 12 reps is the rep baseline both modes share. The hold
-# finisher is appended to Strength mode once the patient has unlocked
-# it via _progression_level. SET_CAP_SECONDS is the per-set 2-minute
-# hard cap enforced by the camera loop (Phase C); it doubles here as
-# the "worst case time per set" used to project total exercise length
-# for the recommendation card.
+# ── Sets-and-modes feature constants ───────────────────────────────────
+# Redefined 2026-07 per the therapist's spec. Both modes are 3 sets × 12
+# reps; what differs is the load type:
+#
+#   Functionality — "hold and reps": each rep is held 6-12s in the target
+#     band before it counts, then counted by reps. Emphasis is TOLERANCE
+#     (sustained control), not load.
+#   Strength — "by reps only and by kilograms": plain reps performed with
+#     external weight, and the prescribed weight PROGRESSES as the patient
+#     improves.
+#
+# This inverts the earlier design (which put a hold finisher in Strength);
+# holds now belong to Functionality, and weight belongs to Strength.
 _SETS_REPS_PER_SET = 12
 _SETS_REP_COUNT = 3
-_SET_CAP_SECONDS = 120
-_HOLD_SECONDS = 300  # 5-min stretch goal; patient ends early on fatigue
+_REP_SET_CAP_SECONDS = 120  # per-set hard cap for plain rep sets (Strength)
+
+# Functionality holds. A rep counts once the patient sustains the green
+# band for _FUNC_HOLD_SECONDS_PER_REP; _FUNC_HOLD_SECONDS_MAX is the
+# encouraged upper bound shown to the patient. The per-set cap is higher
+# than a plain rep set because each rep now carries a multi-second hold.
+_FUNC_HOLD_SECONDS_PER_REP = 6
+_FUNC_HOLD_SECONDS_MAX = 12
+_FUNC_SET_CAP_SECONDS = 180
+
+# Strength load. The camera cannot measure kilograms, so weight is
+# patient-entered; the recommender only SUGGESTS the next value. Start at a
+# light hand weight, and bump by one increment once the exercise's recent
+# average form has improved by _STRENGTH_IMPROVEMENT_THRESHOLD over the
+# patient's baseline (therapist: "if patients improve ~20-25% ... increment
+# a little"). Weight applies ONLY to upper-limb exercises — you load a bicep
+# curl / arm raise with a hand weight, not a knee extension — so leg Strength
+# work stays reps-only (see _STRENGTH_WEIGHTED_AREAS).
+_STRENGTH_START_KG = 0.5
+_STRENGTH_INCREMENT_KG = 0.5
+_STRENGTH_IMPROVEMENT_THRESHOLD = 0.20
+_STRENGTH_WEIGHTED_AREAS = {"arms"}
+# Safety ceiling on the auto-suggested load. Form data alone should never
+# advise a stroke patient toward a heavy weight; they can still dial in more
+# by hand on the in-session stepper if their therapist approves.
+_STRENGTH_MAX_KG = 10.0
+
+# Shared baseline window: the first N attempts on an exercise define the
+# "where they started" reference for both hold/weight progression.
+BASELINE_WINDOW = 3
 
 
-def _build_sets(mode: str, progression_level: int) -> List[Dict[str, Any]]:
-    """Build the sets[] array for one exercise card given mode + progression.
+def _build_sets(
+    mode: str,
+    suggested_weight_kg: Optional[float] = None,
+    supports_weight: bool = True,
+) -> List[Dict[str, Any]]:
+    """Build the sets[] array for one exercise card.
 
-    Composition rules:
-        Functionality (any progression):   3 rep sets
-        Strength, level 0 (locked):        3 rep sets (same as functionality)
-        Strength, level 1 (unlocked):      3 rep sets + 1 hold finisher
+    Both modes are 3 sets × 12 reps (format 'reps'); the mode-specific
+    fields differ:
+        Functionality → hold_seconds_per_rep / hold_seconds_max (tolerance holds)
+        Strength      → target_weight_kg (external load, patient-entered)
 
-    Each set entry carries enough for the frontend to render a card and
-    drive the per-set execution loop (Phase C). `score` is None at
-    prescription time and gets filled in after the patient completes
-    each set (Phase E).
+    `supports_weight` gates the Strength load: it's True for upper-limb
+    exercises (hand weights) and False for leg exercises, which stay
+    reps-only (target_weight_kg = None). `score` is None at prescription
+    time and is filled in after each set completes.
     """
     sets: List[Dict[str, Any]] = []
     for i in range(_SETS_REP_COUNT):
-        sets.append({
+        entry: Dict[str, Any] = {
             "set_index": i,
             "format": "reps",
             "target_reps": _SETS_REPS_PER_SET,
-            "hold_seconds": None,
             "score": None,
-        })
-    if mode == "strength" and progression_level >= 1:
-        sets.append({
-            "set_index": len(sets),
-            "format": "hold",
-            "target_reps": None,
-            "hold_seconds": _HOLD_SECONDS,
-            "score": None,
-        })
+        }
+        if mode == "strength":
+            entry["hold_seconds_per_rep"] = None
+            entry["hold_seconds_max"] = None
+            if supports_weight:
+                entry["target_weight_kg"] = (
+                    _STRENGTH_START_KG if suggested_weight_kg is None
+                    else round(float(suggested_weight_kg), 1)
+                )
+            else:
+                entry["target_weight_kg"] = None
+        else:  # functionality (default)
+            entry["hold_seconds_per_rep"] = _FUNC_HOLD_SECONDS_PER_REP
+            entry["hold_seconds_max"] = _FUNC_HOLD_SECONDS_MAX
+            entry["target_weight_kg"] = None
+        sets.append(entry)
     return sets
 
 
 def _sets_total_seconds(sets: List[Dict[str, Any]]) -> int:
     """Worst-case total duration for an exercise based on its set list.
 
-    Rep sets bill at the camera-loop 2-minute hard cap; hold sets bill
-    at their `hold_seconds` ceiling. Used for the recommendation card's
-    "this exercise takes up to N minutes" label — the actual timer is
-    per-set and lives in the frontend (Phase C).
+    Functionality rep sets (with per-rep holds) bill at the higher hold
+    cap; plain Strength rep sets bill at the standard rep cap. Used for the
+    recommendation card's "up to N minutes" label — the real timer is
+    per-set and lives in the frontend.
     """
     total = 0
     for s in sets:
-        if s.get("format") == "reps":
-            total += _SET_CAP_SECONDS
-        elif s.get("format") == "hold":
-            total += int(s.get("hold_seconds") or 0)
+        if s.get("hold_seconds_per_rep"):
+            total += _FUNC_SET_CAP_SECONDS
+        else:
+            total += _REP_SET_CAP_SECONDS
     return total
+
+
+def _suggested_weight_kg(stats: Optional[Dict[str, Any]]) -> float:
+    """Suggest the next Strength load (kg) for an exercise from its history.
+
+    Builds on the weight the patient last actually used, and adds ONE
+    increment only when their most recent window of form scores improved over
+    the window immediately before it — a rolling comparison, capped at
+    _STRENGTH_MAX_KG.
+
+    Why rolling and not "vs the first-N baseline": a frozen baseline re-fires
+    the bump on EVERY session for as long as the patient stays above it, so a
+    patient who improved once and then held steady would have their weight
+    ratcheted up without end. Comparing consecutive windows instead grants one
+    step per genuine improvement and then stops once they plateau at the new
+    load (their post-bump scores become the new prior window). Continued real
+    improvement still progresses the weight session over session, as intended.
+    """
+    if not stats:
+        return _STRENGTH_START_KG
+
+    last_weight = stats.get("last_weight_kg")
+    last_weight = float(last_weight) if last_weight is not None else _STRENGTH_START_KG
+
+    scores = stats.get("scores_oldest_first") or []
+    # Need a full window at the current level PLUS the preceding window to
+    # measure fresh improvement.
+    if len(scores) < 2 * BASELINE_WINDOW:
+        return round(min(last_weight, _STRENGTH_MAX_KG), 1)
+
+    prior = scores[-2 * BASELINE_WINDOW:-BASELINE_WINDOW]
+    recent = scores[-BASELINE_WINDOW:]
+    prior_mean = sum(prior) / len(prior)
+    recent_mean = sum(recent) / len(recent)
+    if prior_mean > 0 and (recent_mean - prior_mean) / prior_mean >= _STRENGTH_IMPROVEMENT_THRESHOLD:
+        return round(min(last_weight + _STRENGTH_INCREMENT_KG, _STRENGTH_MAX_KG), 1)
+    return round(min(last_weight, _STRENGTH_MAX_KG), 1)
 
 
 def _progression_level(stats: Optional[Dict[str, Any]]) -> int:
@@ -382,6 +463,20 @@ def recommend_session_v2(
         stats = trajectory_result["per_exercise"].get(ex["id"])
         progression_level = 0 if is_acute else _progression_level(stats)
 
+        # Strength load only applies to upper-limb exercises — you load a
+        # bicep curl / arm raise with a hand weight, not a knee extension.
+        # Leg exercises stay reps-only in Strength mode.
+        supports_weight = (ex.get("body_area") or "").strip().lower() in _STRENGTH_WEIGHTED_AREAS
+
+        # Strength load suggestion. Acute patients never get a load bump —
+        # hold whatever they last used (or the light baseline if none).
+        # Everyone else progresses on sustained form improvement.
+        if is_acute:
+            _last_w = stats.get("last_weight_kg") if stats else None
+            suggested_weight = float(_last_w) if _last_w is not None else _STRENGTH_START_KG
+        else:
+            suggested_weight = _suggested_weight_kg(stats)
+
         if stats and stats.get("latest_score") is not None:
             latest = stats["latest_score"]
             mean = stats.get("mean_score") or latest
@@ -421,31 +516,44 @@ def recommend_session_v2(
             },
         }
 
-        # Functionality variant — always rep-only, ignores progression
-        # (holds are a Strength-mode feature exclusively).
-        func_sets = _build_sets("functionality", progression_level)
+        # Functionality variant — tolerance holds: each rep held 6-12s in
+        # the target band before it counts.
+        func_sets = _build_sets("functionality")
         func_total = _sets_total_seconds(func_sets)
         functionality_exercises.append({
             **base_card,
             "mode": "functionality",
             "sets": func_sets,
             "set_count": len(func_sets),
+            "hold_seconds_per_rep": _FUNC_HOLD_SECONDS_PER_REP,
+            "hold_seconds_max": _FUNC_HOLD_SECONDS_MAX,
             "duration_seconds": func_total,
             "duration_minutes": max(1, int(round(func_total / 60))),
         })
 
-        # Strength variant — same rep baseline; appends the 5-min hold
-        # finisher once the patient has unlocked it on this exercise.
-        str_sets = _build_sets("strength", progression_level)
+        # Strength variant — plain reps, loaded with a hand weight for
+        # upper-limb exercises only. The suggested weight is what the app
+        # pre-fills; the patient edits it to the weight they actually used,
+        # which becomes next session's baseline. Leg exercises omit the
+        # weight fields entirely (reps-only).
+        str_sets = _build_sets(
+            "strength",
+            suggested_weight_kg=suggested_weight,
+            supports_weight=supports_weight,
+        )
         str_total = _sets_total_seconds(str_sets)
-        strength_exercises.append({
+        strength_card = {
             **base_card,
             "mode": "strength",
             "sets": str_sets,
             "set_count": len(str_sets),
             "duration_seconds": str_total,
             "duration_minutes": max(1, int(round(str_total / 60))),
-        })
+        }
+        if supports_weight:
+            strength_card["suggested_weight_kg"] = round(float(suggested_weight), 1)
+            strength_card["weight_increment_kg"] = _STRENGTH_INCREMENT_KG
+        strength_exercises.append(strength_card)
 
     return {
         "patient_id": patient_id,

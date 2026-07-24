@@ -90,6 +90,21 @@ def _analyze_per_exercise(history: List[Dict[str, Any]]) -> Dict[str, Dict[str, 
         end_early = sum(1 for r in rows if (r.get("ended_via") or "") == "end_early")
         slope = _linear_slope(scores[-5:])  # last 5 of this exercise
 
+        # Most recent Strength weight logged for this exercise, so the
+        # recommender can progress the load from where the patient last was.
+        # `rows` is newest-first. A missing weight is None (REST path) or a
+        # -1 sentinel (SQL COALESCE) — both mean "no weight logged" and are
+        # skipped so Functionality sessions never seed a Strength weight.
+        last_weight_kg = None
+        for r in rows:
+            w = r.get("weight_kg")
+            if w is None:
+                continue
+            w = _safe_float(w)
+            if w >= 0:
+                last_weight_kg = w
+                break
+
         # Don't assign a directional trend until this specific exercise
         # has enough sessions of its own. Without this guard, a single
         # session on each of three different exercises would each look
@@ -118,6 +133,7 @@ def _analyze_per_exercise(history: List[Dict[str, Any]]) -> Dict[str, Dict[str, 
             "trend": trend,
             "end_early_count": end_early,
             "end_early_ratio": round(end_early / len(rows), 3) if rows else 0.0,
+            "last_weight_kg": last_weight_kg,
         }
     return result
 

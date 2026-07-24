@@ -1,3 +1,4 @@
+import logging
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
@@ -6,6 +7,8 @@ import torch
 from torch import nn
 
 from core.mediapipe_vision import _normalize_keypoints_to_hip_center
+
+logger = logging.getLogger("uvicorn.error")
 
 KEYPOINT_DIM = 99
 MIN_SEQUENCE_FRAMES = 20
@@ -86,10 +89,21 @@ def _extract_keypoints(frame: Any) -> List[float]:
 
 
 def _prepare_input_tensor(sequence: Sequence[Any], target_len: int = DEFAULT_SEQUENCE_LEN) -> torch.Tensor:
+    """Fix a live pose sequence to exactly target_len frames.
+
+    MUST mirror scripts/train_model.py::_resample_to_length. Long sequences are
+    resampled UNIFORMLY across their full span rather than truncated to the
+    tail: the model is trained on whole movements, so feeding it only the last
+    ~2.7 seconds at inference would show it the patient resting after the rep
+    instead of the rep itself. Changing one side without the other silently
+    degrades live accuracy, so keep these two in sync.
+    """
     keypoint_frames = [_extract_keypoints(frame) for frame in sequence]
+
     if len(keypoint_frames) > target_len:
-        keypoint_frames = keypoint_frames[-target_len:]
-    if len(keypoint_frames) < target_len:
+        step = (len(keypoint_frames) - 1) / (target_len - 1) if target_len > 1 else 0
+        keypoint_frames = [keypoint_frames[round(i * step)] for i in range(target_len)]
+    elif len(keypoint_frames) < target_len:
         pad = [[0.0] * KEYPOINT_DIM for _ in range(target_len - len(keypoint_frames))]
         keypoint_frames = pad + keypoint_frames
 
@@ -119,16 +133,30 @@ def _load_model(model_path: Path = DEFAULT_MODEL_PATH) -> Dict[str, Any]:
     model.to(device)
     model.eval()
 
-    compiled = False
-    if device.type == "cuda" and hasattr(torch, "compile"):
-        try:
-            model = torch.compile(model, mode="reduce-overhead")
-            compiled = True
-        except Exception:
-            compiled = False
-
-    _MODEL_CACHE.update({"model": model, "loaded": True, "source": source, "compiled": compiled})
+    # NOTE: torch.compile is deliberately NOT used here. This model is tiny
+    # (~100K params) so eager inference is already sub-millisecond, while
+    # torch.compile pays a one-time compilation cost of many seconds on the
+    # FIRST request after startup — which was overrunning the mobile client's
+    # 15s timeout and making the end-of-exercise verdict silently fail. Warm
+    # eager inference (see warmup_model) keeps every request fast with no
+    # cold-start cliff.
+    _MODEL_CACHE.update({"model": model, "loaded": True, "source": source, "compiled": False})
     return _MODEL_CACHE
+
+
+def warmup_model() -> None:
+    """Load weights and run one throwaway inference so the first real request
+    doesn't pay model-load + CUDA-init latency. Safe to call at startup in a
+    background thread; any failure is swallowed (inference falls back to the
+    rule-based path exactly as before)."""
+    try:
+        dummy = [{"keypoints": [0.0] * KEYPOINT_DIM} for _ in range(DEFAULT_SEQUENCE_LEN)]
+        classify_form_sequence("warmup", dummy)
+    except Exception as exc:
+        # Non-fatal: inference falls back to the rule-based path, but log the
+        # cause (missing weights, CUDA OOM, corrupted file) so a silently
+        # degraded classifier is diagnosable instead of invisible.
+        logger.warning("LSTM warmup failed; classification will use rule-based fallback: %s", exc)
 
 
 def classify_form_sequence(exercise_type: str, sequence: Iterable[Any]) -> Dict[str, Any]:
