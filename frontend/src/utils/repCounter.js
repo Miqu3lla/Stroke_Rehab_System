@@ -120,8 +120,11 @@ export function repAwareHint(snapshot, activeColor, fallbackHint) {
 }
 
 // Checks if the exercise name targets arms.
+// "mouth" matches hand_to_mouth (elbow-flexion arm exercise) — its display
+// name "Hand to Mouth" and slug both lack any other arm keyword, so without
+// this the skeleton overlay wouldn't color the affected arm for it.
 export const isArmExercise = (name) =>
-  /bicep|arm|reach|upper|curl|shoulder|elbow|wrist/i.test(name || '');
+  /bicep|arm|reach|upper|curl|shoulder|elbow|wrist|mouth/i.test(name || '');
 
 // Checks if the exercise name targets legs.
 export const isLegExercise = (name) =>

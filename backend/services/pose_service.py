@@ -73,6 +73,24 @@ def shoulder_flexion_hint(angle: Optional[float]) -> str:
         else "Raise your arm forward and up to shoulder height"
 
 
+def hand_to_mouth_hint(angle: Optional[float]) -> str:
+    """Hints for hand_to_mouth — measured by ELBOW angle (shoulder-elbow-wrist).
+    The patient brings their hand up to their mouth (a feeding/reach motion),
+    so the top of the movement is deep elbow flexion. Target 40° = hand up at
+    the mouth. Bands match color_and_score(green=20, yellow=40)."""
+    if angle is None:
+        return "Step back — your shoulder, elbow, and hand need to be visible"
+    diff = angle - 40
+    abs_diff = abs(diff)
+    if abs_diff <= 20:
+        return "Great form! Hold your hand up at your mouth"
+    if abs_diff <= 40:
+        return "Almost there — bring your hand up closer to your mouth" if diff > 0 \
+            else "Ease your hand down slightly"
+    return "Bring your hand up toward your mouth" if diff > 0 \
+        else "Lower your hand back down"
+
+
 # Backwards-compat alias used by the cross-body ("both") branch where we
 # don't know the specific exercise — defaults to arm-raise interpretation.
 arm_hint = arm_raise_hint
@@ -152,6 +170,10 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
     # are different. Shoulder flexion = raising the whole arm at the
     # shoulder; arm raise = bending the elbow toward the shoulder.
     is_shoulder_flexion = "shoulder_flexion" in hint_lower or "shoulder flexion" in hint_lower
+    # hand_to_mouth: bring the hand up to the mouth. Same body area as the
+    # other arm exercises but scored on the elbow with a deeper target than
+    # shoulder flexion (which scores the shoulder joint).
+    is_hand_to_mouth = "hand_to_mouth" in hint_lower or "hand to mouth" in hint_lower
     # Distinguish knee_extension from sit_to_stand — same body area, but
     # target angles point in opposite directions. Seated knee extension
     # = lift the foot to OPEN the knee (target ~170°); sit_to_stand =
@@ -165,6 +187,8 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
     # "arm" token, so without this it would fall through to the cross-body
     # fallback and score the wrong joint. Same guard for knee_extension.
     if is_shoulder_flexion:
+        is_arm, is_leg = True, False
+    if is_hand_to_mouth:
         is_arm, is_leg = True, False
     if is_knee_extension:
         is_leg, is_arm = True, False
@@ -266,6 +290,15 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
             angles["bicepCurl"] = angle  # frontend overlay key, reused
             colors["bicepCurl"] = color
             hint = shoulder_flexion_hint(angle)
+        elif is_hand_to_mouth:
+            # Elbow angle (shoulder -> elbow -> wrist). Target 40° = hand
+            # brought up to the mouth (deep flexion). Generous bands reward
+            # the raised-to-mouth position without punishing a deeper reach.
+            angle, color, overall = _score_tracked(
+                lambda s: _arm_triple(s, False), target=40, green=20, yellow=40)
+            angles["bicepCurl"] = angle
+            colors["bicepCurl"] = color
+            hint = hand_to_mouth_hint(angle)
         else:
             # Arm raise = seated bicep curl: elbow angle (shoulder -> elbow ->
             # wrist). Target 55° = hand curled up near the shoulder (top of the

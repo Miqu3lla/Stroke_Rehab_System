@@ -13,10 +13,18 @@ logger = logging.getLogger("uvicorn.error")
 KEYPOINT_DIM = 99
 MIN_SEQUENCE_FRAMES = 20
 DEFAULT_SEQUENCE_LEN = 40
-DEFAULT_MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "lstm_weights.pth"
+MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
+# Global fallback checkpoint, used only when no per-exercise model exists.
+DEFAULT_MODEL_PATH = MODELS_DIR / "lstm_weights.pth"
 
 
 class StrokeLSTMClassifier(nn.Module):
+    # ARCHITECTURE MUST MATCH scripts/train_model.py::StrokeLSTMClassifier
+    # EXACTLY, including the head layer ordering. It previously carried an
+    # extra nn.Dropout in the head that training did not, which shifted the
+    # final Linear from head.2 to head.3 — so load_state_dict(strict=False)
+    # silently dropped the trained output layer and ran inference on a
+    # randomly-initialized classifier. Keep the two definitions identical.
     def __init__(self, input_size: int = KEYPOINT_DIM, hidden_size: int = 128, num_layers: int = 2):
         super().__init__()
         self.lstm = nn.LSTM(
@@ -29,7 +37,6 @@ class StrokeLSTMClassifier(nn.Module):
         self.head = nn.Sequential(
             nn.Linear(hidden_size, 64),
             nn.ReLU(),
-            nn.Dropout(0.2),
             nn.Linear(64, 2),
         )
 
@@ -39,12 +46,16 @@ class StrokeLSTMClassifier(nn.Module):
         return self.head(last_hidden)
 
 
-_MODEL_CACHE: Dict[str, Any] = {
-    "model": None,
-    "loaded": False,
-    "source": "rule_based",
-    "compiled": False,
-}
+# One entry per exercise_type slug (plus "__global__" for the fallback
+# checkpoint). Each value: {"model": nn.Module|None, "source": str,
+# "has_weights": bool}. Populated lazily by _load_model_for().
+_MODEL_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+def _slug(exercise_type: str) -> str:
+    """Normalize an exercise_type to its model-file slug, e.g.
+    'Shoulder Flexion' / 'shoulder_flexion' -> 'shoulder_flexion'."""
+    return "_".join((exercise_type or "").strip().lower().split())
 
 
 def _get_device() -> torch.device:
@@ -111,47 +122,83 @@ def _prepare_input_tensor(sequence: Sequence[Any], target_len: int = DEFAULT_SEQ
     return tensor
 
 
-def _load_model(model_path: Path = DEFAULT_MODEL_PATH) -> Dict[str, Any]:
-    if _MODEL_CACHE["loaded"]:
-        return _MODEL_CACHE
-
-    model = StrokeLSTMClassifier()
+def _load_checkpoint(path: Path) -> Any:
+    """Load a per-exercise or global model from `path`, or None if it can't
+    be loaded cleanly. strict=True on purpose: a key mismatch means the
+    saved architecture drifted from this one, and silently partial-loading
+    (the old strict=False) would run inference on random weights."""
+    if not (path.exists() and path.stat().st_size > 0):
+        return None
     device = _get_device()
+    try:
+        model = StrokeLSTMClassifier()
+        state = torch.load(path, map_location=device)
+        if isinstance(state, dict) and "state_dict" in state:
+            state = state["state_dict"]
+        model.load_state_dict(state, strict=True)
+        model.to(device)
+        model.eval()
+        return model
+    except Exception as exc:
+        logger.warning("Failed to load LSTM checkpoint %s: %s", path.name, exc)
+        return None
+
+
+def _load_model_for(exercise_type: str) -> Dict[str, Any]:
+    """Return the cached {model, source, has_weights} for an exercise_type,
+    loading it on first use.
+
+    Resolution order: the exercise's own per-exercise model
+    (models/lstm_<slug>.pth) → the global fallback (models/lstm_weights.pth)
+    → no model (has_weights=False, caller returns a rule-based verdict
+    rather than trusting an untrained net).
+
+    torch.compile is deliberately NOT used: these models are tiny so eager
+    inference is sub-millisecond, while compile pays a multi-second
+    first-request cost that overran the mobile client's timeout.
+    """
+    slug = _slug(exercise_type)
+    if slug in _MODEL_CACHE:
+        return _MODEL_CACHE[slug]
+
     _configure_cuda_runtime()
-    source = "rule_based"
 
-    if model_path.exists() and model_path.stat().st_size > 0:
-        try:
-            state = torch.load(model_path, map_location=device)
-            if isinstance(state, dict) and "state_dict" in state:
-                state = state["state_dict"]
-            model.load_state_dict(state, strict=False)
-            source = "lstm_weights"
-        except Exception:
-            source = "rule_based"
+    model = _load_checkpoint(MODELS_DIR / f"lstm_{slug}.pth")
+    if model is not None:
+        entry = {"model": model, "source": f"lstm_{slug}", "has_weights": True}
+        _MODEL_CACHE[slug] = entry
+        return entry
 
-    model.to(device)
-    model.eval()
-
-    # NOTE: torch.compile is deliberately NOT used here. This model is tiny
-    # (~100K params) so eager inference is already sub-millisecond, while
-    # torch.compile pays a one-time compilation cost of many seconds on the
-    # FIRST request after startup — which was overrunning the mobile client's
-    # 15s timeout and making the end-of-exercise verdict silently fail. Warm
-    # eager inference (see warmup_model) keeps every request fast with no
-    # cold-start cliff.
-    _MODEL_CACHE.update({"model": model, "loaded": True, "source": source, "compiled": False})
-    return _MODEL_CACHE
+    # Fall back to the shared global checkpoint (cached under a shared key so
+    # every exercise without its own model reuses the one instance).
+    if "__global__" not in _MODEL_CACHE:
+        global_model = _load_checkpoint(DEFAULT_MODEL_PATH)
+        _MODEL_CACHE["__global__"] = (
+            {"model": global_model, "source": "lstm_weights_global", "has_weights": True}
+            if global_model is not None
+            else {"model": StrokeLSTMClassifier().to(_get_device()).eval(),
+                  "source": "rule_based", "has_weights": False}
+        )
+    entry = _MODEL_CACHE["__global__"]
+    _MODEL_CACHE[slug] = entry
+    return entry
 
 
 def warmup_model() -> None:
-    """Load weights and run one throwaway inference so the first real request
-    doesn't pay model-load + CUDA-init latency. Safe to call at startup in a
-    background thread; any failure is swallowed (inference falls back to the
-    rule-based path exactly as before)."""
+    """Load every per-exercise model and run one throwaway inference each so
+    the first real request doesn't pay model-load + CUDA-init latency. Safe
+    to call at startup in a background thread; any failure is swallowed
+    (inference falls back to the rule-based path exactly as before)."""
     try:
         dummy = [{"keypoints": [0.0] * KEYPOINT_DIM} for _ in range(DEFAULT_SEQUENCE_LEN)]
-        classify_form_sequence("warmup", dummy)
+        slugs = sorted(
+            p.stem[len("lstm_"):]
+            for p in MODELS_DIR.glob("lstm_*.pth")
+            if p.stem != "lstm_weights"
+        )
+        # Warm each per-exercise model; "warmup" alone warms the global path.
+        for slug in (slugs or ["warmup"]):
+            classify_form_sequence(slug, dummy)
     except Exception as exc:
         # Non-fatal: inference falls back to the rule-based path, but log the
         # cause (missing weights, CUDA OOM, corrupted file) so a silently
@@ -186,7 +233,18 @@ def classify_form_sequence(exercise_type: str, sequence: Iterable[Any]) -> Dict[
             "model_source": "rule_based",
         }
 
-    cache = _load_model()
+    cache = _load_model_for(exercise_type)
+    # No trained weights for this exercise (and no global fallback): don't
+    # trust an untrained net — return a rule-based verdict instead.
+    if not cache.get("has_weights"):
+        return {
+            "label": "incorrect",
+            "confidence": 0.55,
+            "frame_count": len(sequence),
+            "exercise_type": exercise_type,
+            "device": str(_get_device()),
+            "model_source": "rule_based",
+        }
     model = cache["model"]
     device = _get_device()
     input_tensor = _prepare_input_tensor(sequence).to(device, non_blocking=device.type == "cuda")
