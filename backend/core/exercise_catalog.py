@@ -7,7 +7,7 @@ the catalog is small (3 exercises) and ranking is judgment-call-y.
 Promote to a DB column when the catalog grows.
 
 Ranking convention (lower = easier, higher = harder):
-    arms: shoulder_flexion (1) → arm_raise (2)
+    arms: shoulder_flexion (1) → hand_to_mouth (2)
     legs: sit_to_stand (1)
 
 Each catalog entry exposes a `difficulty_level` integer plus a
@@ -39,10 +39,10 @@ DIFFICULTY_OVERLAY: Dict[str, Dict[str, Any]] = {
         "base_duration_minutes": 2,
         "focus": "shoulder mobility & form correction",
     },
-    "arm_raise": {
+    "hand_to_mouth": {
         "difficulty_level": 2,
         "base_duration_minutes": 2,
-        "focus": "upper-limb strength & coordination",
+        "focus": "upper-limb reach & coordination",
     },
     "knee_extension": {
         "difficulty_level": 1,
@@ -65,13 +65,25 @@ DEFAULT_OVERLAY = {
 
 # Exercises the LSTM (StrokeLSTMClassifier in core/neural_network.py) was
 # trained on. The training dataset under datasets/Ready_Dataset has
-# Correct/Incorrect classes only for these three exercise_types. Sending
-# a sequence for any other exercise_type to the LSTM produces an
-# out-of-distribution prediction — better to skip the call and rely on
-# the live joint-angle score instead.
+# Correct/Incorrect clips for these exercise_types. Sending a sequence
+# for any other exercise_type to the LSTM produces an out-of-distribution
+# prediction — better to skip the call and rely on the live joint-angle
+# score instead.
+#
+# 2026-07-30: retrained after the therapist swapped arm_raise for the new
+# hand_to_mouth exercise (arm_raise was too similar to shoulder_flexion).
+# Moved to per-exercise models (one specialized classifier per movement;
+# see core/neural_network.py). Held-out test accuracy after the swap:
+#   shoulder_flexion 73% (per-exercise), hand_to_mouth 71% (per-exercise),
+#   sit_to_stand 87% (global fallback model).
+# knee_extension is DROPPED here: both the global and per-exercise models
+# score ~46% with TP=0 — they never identify a correct knee extension, a
+# consistent data problem, so its clips fall back to the live joint-angle
+# score instead of a misleading LSTM verdict. Re-add once the knee data is
+# reviewed and a model clears ~70%.
 LSTM_SUPPORTED_EXERCISE_TYPES = frozenset({
-    "arm_raise",
-    "knee_extension",
+    "shoulder_flexion",
+    "hand_to_mouth",
     "sit_to_stand",
 })
 

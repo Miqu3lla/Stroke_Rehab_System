@@ -5,6 +5,7 @@ import useCamera from '../../hooks/useCamera';
 import SkeletonOverlay from './SkeletonOverlay';
 import BeforeYouStart from './BeforeYouStart';
 import BreakScreen from './BreakScreen';
+import { isLegExercise } from '../../utils/repCounter';
 
 // CameraComponent runs a single exercise from the session playlist.
 // Phase C (2026-06-04) restructured it around sets — the camera and
@@ -287,14 +288,18 @@ const PostureFeedback = ({ exercise, keypoints, isModelReady, feedbackText, curr
     exercise?.affected_area || '',
   ].join(' ').toLowerCase();
 
-  const isLegExercise = /leg|knee|lower|squat|gait|step/i.test(exerciseHint);
+  // Shared with the skeleton overlay + rep-color logic (utils/repCounter) so
+  // arm/leg classification has ONE source of truth — a second local regex here
+  // could silently diverge for a future exercise (e.g. posture gate checks
+  // hips while the skeleton colors the arm).
+  const isLeg = isLegExercise(exerciseHint);
 
   const shouldersVisible =
     (keypoints[11]?.score ?? 0) > 0.5 || (keypoints[12]?.score ?? 0) > 0.5;
   const hipsVisible =
     (keypoints[23]?.score ?? 0) > 0.4 || (keypoints[24]?.score ?? 0) > 0.4;
 
-  const tooClose = isModelReady && shouldersVisible && !hipsVisible && isLegExercise;
+  const tooClose = isModelReady && shouldersVisible && !hipsVisible && isLeg;
   const noBody = isModelReady && keypoints.length === 0;
 
   if (tooClose) {
@@ -304,7 +309,7 @@ const PostureFeedback = ({ exercise, keypoints, isModelReady, feedbackText, curr
     return <Text className="text-[#ffe082] text-center text-lg font-bold mt-3">Step back — show your body</Text>;
   }
 
-  const isValidPosture = isLegExercise ? hipsVisible : shouldersVisible;
+  const isValidPosture = isLeg ? hipsVisible : shouldersVisible;
 
   if (feedbackText && isModelReady && isValidPosture) {
     return (
