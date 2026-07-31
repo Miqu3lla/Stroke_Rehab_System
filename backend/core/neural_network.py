@@ -190,13 +190,17 @@ def warmup_model() -> None:
     to call at startup in a background thread; any failure is swallowed
     (inference falls back to the rule-based path exactly as before)."""
     try:
+        # Import lazily to avoid any import cycle at module load.
+        from core.exercise_catalog import LSTM_SUPPORTED_EXERCISE_TYPES
+
         dummy = [{"keypoints": [0.0] * KEYPOINT_DIM} for _ in range(DEFAULT_SEQUENCE_LEN)]
-        slugs = sorted(
-            p.stem[len("lstm_"):]
-            for p in MODELS_DIR.glob("lstm_*.pth")
-            if p.stem != "lstm_weights"
-        )
-        # Warm each per-exercise model; "warmup" alone warms the global path.
+        # Warm ONLY the exercises live requests will actually route to the LSTM.
+        # Callers gate on is_lstm_supported(), so warming every lstm_*.pth on
+        # disk would load weights no request ever uses — dropped/gated
+        # exercises (e.g. a leftover lstm_knee_extension.pth) or stale
+        # checkpoints. A supported exercise with no per-exercise file warms the
+        # global fallback path via classify_form_sequence, so that stays covered.
+        slugs = sorted(LSTM_SUPPORTED_EXERCISE_TYPES)
         for slug in (slugs or ["warmup"]):
             classify_form_sequence(slug, dummy)
     except Exception as exc:
