@@ -13,6 +13,9 @@ backend/**/*.pyc
 backend/models/*.pth
 backend/models/*.pkl
 
+# Datasets (large media — kept local, not tracked)
+datasets/
+
 # Environment files
 .env
 .env.*
