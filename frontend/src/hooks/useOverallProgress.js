@@ -3,14 +3,8 @@ import { useMemo } from 'react';
 // Takes the full history array from the store and computes progress stats.
 // useMemo makes sure we only recalculate when history actually changes.
 //
-// Convention (since 2026-06-04): the dashboard's "Overall Progress" cards
-// summarize the patient's CURRENT performance, not a lifetime average.
-// Earlier we averaged every row in history (~50 sessions), which dragged
-// the visible average ~30 points below what the Recent Activity cards
-// showed for the same day — older low-scoring attempts were poisoning
-// the headline number. We now collapse history to the latest score per
-// exercise (the same dedupe rule Recent Activity uses) so the average
-// and trend match what the patient sees on screen.
+// the dashboard's "Overall Progress" cards
+// summarize the patient's CURRENT performance,
 const useOverallProgress = (history) => {
   return useMemo(() => {
     // No data yet — return safe defaults so the card can show a placeholder
