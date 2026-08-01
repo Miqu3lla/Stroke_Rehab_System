@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import { AppState } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { QueryClientProvider } from '@tanstack/react-query';
 import AppNavigator from './src/navigation';
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import Navbar from './src/components/ui/navbar';
 import "./global.css"
 import { supabase } from './src/services/supabase';
 import useAuthStore from './src/store/useAuthStore';
+import { queryClient } from './src/lib/queryClient';
 
 export default function App() {
   const navigationRef = useNavigationContainerRef();
@@ -73,24 +75,26 @@ export default function App() {
 
   return (
     //AppNavigator is wrapped in NavigationContainer to manage navigation state and linking
-    <SafeAreaProvider>
-      <NavigationContainer
-        ref={navigationRef}
-        onReady={() => {
-          //gets current route when navigation is ready
-          setCurrentRoute(navigationRef.getCurrentRoute()?.name ?? "Dashboard");
-        }}
-        onStateChange={() => {
-          //gets current route when navigation state changes
-          setCurrentRoute(navigationRef.getCurrentRoute()?.name ?? "Dashboard");
-        }}
-      >
-        
-        <Navbar title="TheraMotion" currentRoute={currentRoute} navigationRef={navigationRef}>
-          <AppNavigator />
-        </Navbar>
-      </NavigationContainer>
-    </SafeAreaProvider>
+    <QueryClientProvider client={queryClient}>
+      <SafeAreaProvider>
+        <NavigationContainer
+          ref={navigationRef}
+          onReady={() => {
+            //gets current route when navigation is ready
+            setCurrentRoute(navigationRef.getCurrentRoute()?.name ?? "Dashboard");
+          }}
+          onStateChange={() => {
+            //gets current route when navigation state changes
+            setCurrentRoute(navigationRef.getCurrentRoute()?.name ?? "Dashboard");
+          }}
+        >
+
+          <Navbar title="TheraMotion" currentRoute={currentRoute} navigationRef={navigationRef}>
+            <AppNavigator />
+          </Navbar>
+        </NavigationContainer>
+      </SafeAreaProvider>
+    </QueryClientProvider>
   );
 }
 

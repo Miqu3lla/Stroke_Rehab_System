@@ -34,8 +34,9 @@ const SessionSummaryScreen = ({ route, navigation }) => {
   const handleDone = () => {
     clearSession();
     // Fetch new exercise recommendations based on how well the user just did,
-    // so the dashboard is up-to-date when they go back.
-    fetchRecommendation();
+    // so the dashboard is up-to-date when they go back. force:true bypasses
+    // the query cache since the recommendation genuinely changed server-side.
+    fetchRecommendation({ force: true });
     navigation.replace('Dashboard');
   };
 
