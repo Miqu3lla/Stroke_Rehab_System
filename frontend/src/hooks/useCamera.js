@@ -4,18 +4,20 @@ import useVoicePlayback from './useVoicePlayback';
 import usePoseResultHandler from './usePoseResultHandler';
 import RepCounter from '../utils/repCounter';
 
-
+//timer for reps sets
 const REP_SET_CAP_SECONDS = 120;
-
+//for hold sets
 const HOLD_DEFAULT_SECONDS = 300;
 const HOLD_MIN_SECONDS = 60;
 
+//fallback sets if the exercise does not have sets
 const _fallbackSets = () => [
   { set_index: 0, format: 'reps', target_reps: 12, hold_seconds: null },
   { set_index: 1, format: 'reps', target_reps: 12, hold_seconds: null },
   { set_index: 2, format: 'reps', target_reps: 12, hold_seconds: null },
 ];
 
+//timer for hold sets
 const _capForSet = (set) => {
   if (!set) return REP_SET_CAP_SECONDS;
   if (set.format === 'hold') {
@@ -50,13 +52,7 @@ const useCamera = (exercise, { onComplete } = {}) => {
     setComplete: false,
     state: 'initial',
   });
-  // Per-set hold progress, surfaced for the HUD on hold sets. Phase D
-  // tracks two things:
-  //   - secondsInForm: cumulative time the patient held the green band
-  //                    (used to compute the hold's completion %)
-  //   - brokenSeconds: consecutive seconds out of the green band (resets
-  //                    to 0 the moment they re-enter green). When this
-  //                    reaches HOLD_FORM_BROKEN_LIMIT_MS the set auto-ends.
+  // Per-set hold progress, surfaced for the HUD on hold sets. 
   // Both are 0 when format='reps'.
   const [holdProgress, setHoldProgress] = useState({
     secondsInForm: 0,
@@ -64,18 +60,7 @@ const useCamera = (exercise, { onComplete } = {}) => {
     targetSeconds: 300,
   });
   // Completed sets' structured results — flushed to the parent on
-  // exercise completion as setResults[]. Phase E (2026-06-04) replaced
-  // the old parallel completedSetScores/completedSetReps arrays with a
-  // single rich-object list so the backend can persist format-aware
-  // data (rep form % vs hold completion %) for the therapist
-  // dashboard's fatigue curve.
-  //
-  // Each entry: {
-  //   set_index, format ('reps' | 'hold'), score,
-  //   reps_completed, target_reps,                  // 'reps' only
-  //   seconds_held, target_seconds,                 // 'hold' only
-  //   ended_via                                     // per-set end reason
-  // }
+  // exercise completion as setResults[].
   const [completedSetResults, setCompletedSetResults] = useState([]);
 
   // ── Strength load (kg) 
@@ -208,16 +193,6 @@ const useCamera = (exercise, { onComplete } = {}) => {
     return Number((total / history.length).toFixed(1));
   }, []);
 
-  // Captures one frame from the camera and ships it down the WS as
-  // binary. Sets the in-flight flag so the next call short-circuits
-  // until the result lands. The watchdog backstops a missing result.
-  //
-  // Retry policy (CodeRabbit review 2026-06-04):
-  //   - 'not_open'    → handshake still in flight → schedule a 200ms retry
-  //   - 'closed'      → socket is gone → STOP the loop
-  //   - 'send_failed' → runtime error → also stop
-  //   - catch block   → transient capture error (orientation, busy
-  //                     camera) → schedule a 200ms retry
   const captureAndSend = useCallback(async () => {
     if (!timerRef.current || !cameraRef.current) return;
     if (inFlightRef.current) return;
@@ -310,11 +285,7 @@ const useCamera = (exercise, { onComplete } = {}) => {
     classifyFormSequence,
   });
 
-  // Begin set N: reset the per-set state, restart the wall-clock
-  // timer, kick the capture loop. Called by startExercise (set 0) and
-  // by startNextSet (subsequent sets). Does NOT touch the WS — that's
-  // owned by startDetection / stopDetection and stays connected across
-  // sets within an exercise.
+  
   const beginSetTimers = useCallback((nextSet) => {
     const targetReps = nextSet?.target_reps || 12;
     const targetSeconds = _capForSet(nextSet);
