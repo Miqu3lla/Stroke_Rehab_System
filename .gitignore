@@ -16,6 +16,9 @@ backend/models/*.pkl
 # Datasets (large media — kept local, not tracked)
 datasets/
 
+# Generated voice-over clips (staging for Storage upload; regenerated offline)
+backend/assets/voice/
+
 # Environment files
 .env
 .env.*
