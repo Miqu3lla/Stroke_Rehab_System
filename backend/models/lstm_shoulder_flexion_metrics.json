@@ -1,0 +1,113 @@
+{
+  "timestamp": "2026-07-31T15:17:27",
+  "exercise": "Shoulder Flexion",
+  "device": "cuda",
+  "gpu": "NVIDIA GeForce RTX 5060 Ti",
+  "hyperparameters": {
+    "epochs_requested": 25,
+    "epochs_run": 9,
+    "batch_size": 16,
+    "learning_rate": 0.001,
+    "optimizer": "Adam",
+    "loss": "CrossEntropyLoss",
+    "sequence_len": 40,
+    "input_size": 99,
+    "hidden_size": 128,
+    "num_layers": 2,
+    "dropout": 0.2,
+    "early_stopping_patience": 3
+  },
+  "dataset": {
+    "train_samples": 98,
+    "val_samples": 10,
+    "train_class_balance": {
+      "correct": 48,
+      "incorrect": 50
+    },
+    "val_class_balance": {
+      "correct": 5,
+      "incorrect": 5
+    }
+  },
+  "best_epoch": 6,
+  "best_val_loss": 0.4201,
+  "history": [
+    {
+      "epoch": 1,
+      "train_loss": 0.6939,
+      "train_accuracy": 51.02,
+      "val_loss": 0.6867,
+      "val_accuracy": 50.0
+    },
+    {
+      "epoch": 2,
+      "train_loss": 0.6883,
+      "train_accuracy": 53.06,
+      "val_loss": 0.6734,
+      "val_accuracy": 70.0
+    },
+    {
+      "epoch": 3,
+      "train_loss": 0.6745,
+      "train_accuracy": 56.12,
+      "val_loss": 0.6686,
+      "val_accuracy": 50.0
+    },
+    {
+      "epoch": 4,
+      "train_loss": 0.646,
+      "train_accuracy": 62.24,
+      "val_loss": 0.611,
+      "val_accuracy": 70.0
+    },
+    {
+      "epoch": 5,
+      "train_loss": 0.4643,
+      "train_accuracy": 80.61,
+      "val_loss": 0.6571,
+      "val_accuracy": 80.0
+    },
+    {
+      "epoch": 6,
+      "train_loss": 0.7642,
+      "train_accuracy": 71.43,
+      "val_loss": 0.4201,
+      "val_accuracy": 80.0
+    },
+    {
+      "epoch": 7,
+      "train_loss": 0.5361,
+      "train_accuracy": 77.55,
+      "val_loss": 0.5488,
+      "val_accuracy": 80.0
+    },
+    {
+      "epoch": 8,
+      "train_loss": 0.4476,
+      "train_accuracy": 80.61,
+      "val_loss": 0.6128,
+      "val_accuracy": 70.0
+    },
+    {
+      "epoch": 9,
+      "train_loss": 0.445,
+      "train_accuracy": 83.67,
+      "val_loss": 0.5359,
+      "val_accuracy": 80.0
+    }
+  ],
+  "test": {
+    "loss": 0.7772327661514282,
+    "accuracy": 72.72727272727273,
+    "precision": 0.6667,
+    "recall": 0.8,
+    "f1": 0.7273,
+    "confusion_matrix": {
+      "true_positive": 4,
+      "true_negative": 4,
+      "false_positive": 2,
+      "false_negative": 1
+    },
+    "num_samples": 11
+  }
+}

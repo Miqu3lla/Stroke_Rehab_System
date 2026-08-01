@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import usePoseDetection from './usePoseDetection';
+import useVoicePlayback from './useVoicePlayback';
 import RepCounter, {
   pickActiveColor,
   repAwareHint,
@@ -200,6 +201,15 @@ const useCamera = (exercise, { onComplete } = {}) => {
   ].join(' ').toLowerCase(), [
     exercise?.exercise_type, exercise?.name, exercise?.body_area, exercise?.focus,
   ]);
+
+  // Voice-over: plays the pre-generated clip for the backend's hint_key.
+  // Edge-triggered + debounced inside the hook; missing clips fall back to
+  // text-only. voicePlayRef keeps handlePoseResult off playHintKey's identity
+  // so the frame handler's deps don't churn.
+  const { playHintKey, muted: voiceMuted, toggleMute: toggleVoiceMute, voiceReady } =
+    useVoicePlayback(exercise?.exercise_type);
+  const voicePlayRef = useRef(null);
+  useEffect(() => { voicePlayRef.current = playHintKey; }, [playHintKey]);
 
   //pose detection backend client
   const {
@@ -470,6 +480,10 @@ const useCamera = (exercise, { onComplete } = {}) => {
         setScoreBufferRef.current.push(score);
       }
       setJointColors(colors);
+
+      // Voice cue for this frame's form state. The hook edge-triggers on
+      // hint_key change (with a cooldown) so this fires every frame cheaply.
+      voicePlayRef.current?.(result.hint_key);
 
       // Time since the previous processed frame. The WS arrives at a
       // jittery 8-15 FPS, so every per-frame accumulator (functionality
@@ -857,6 +871,10 @@ const useCamera = (exercise, { onComplete } = {}) => {
     //pose detection state
     isModelReady,
     modelError,
+    //voice-over
+    voiceMuted,
+    toggleVoiceMute,
+    voiceReady,
     //actions
     startExercise,
     finishCurrentSet,

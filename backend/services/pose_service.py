@@ -40,37 +40,105 @@ def joint_triple(keypoints: List[Dict[str, float]], i1: int, i2: int, i3: int, m
     return a, b, c
 
 
+# ── Single source of truth for spoken/displayed hint text ──────────────────
+# Every hint line, keyed by a STABLE hint_key. The hint functions below return
+# these keys (never raw prose); score_pose resolves the key to text via
+# HINT_TEXT for display and passes the key through to the client for audio.
+# The offline voice generator (scripts/generate_voice.py) imports this table so
+# voice_script.json and the audio filenames are derived from it and cannot
+# drift from the app. Keys are structural: <group>.<state> where, for the
+# symmetric-band exercises, "high"/"low" mean the measured angle is above/below
+# target (diff > 0 / diff < 0) — the prose carries the exercise-specific words.
+HINT_TEXT: Dict[str, str] = {
+    # Visibility gates
+    "gate.upper_body": "Show your upper body — shoulders, elbows, and hands need to be in the camera",
+    "gate.lower_body": "Step back so your hips, knees, and feet are visible",
+    "gate.whole_body": "Move back so your whole body is in the camera",
+    # Arm raise (seated bicep curl) — elbow angle, target 55°
+    "arm_raise.not_visible": "Step back — your shoulder, elbow, and hand need to be visible",
+    "arm_raise.correct": "Great form! Hold your hand up by your shoulder",
+    "arm_raise.yellow_high": "Almost there — curl your hand up a little more",
+    "arm_raise.yellow_low": "Ease your hand down slightly",
+    "arm_raise.red_high": "Curl your hand up toward your shoulder",
+    "arm_raise.red_low": "Lower your hand back down",
+    # Shoulder flexion — shoulder angle, target 90°
+    "shoulder_flexion.not_visible": "Step back — your hip, shoulder, and elbow need to be visible",
+    "shoulder_flexion.correct": "Great form! Hold your arm at shoulder height",
+    "shoulder_flexion.yellow_high": "Almost there — lower your arm a little",
+    "shoulder_flexion.yellow_low": "Almost there — raise your arm a little higher",
+    "shoulder_flexion.red_high": "Lower your arm — keep it level with your shoulder",
+    "shoulder_flexion.red_low": "Raise your arm forward and up to shoulder height",
+    # Hand to mouth — elbow angle, target 40°
+    "hand_to_mouth.not_visible": "Step back — your shoulder, elbow, and hand need to be visible",
+    "hand_to_mouth.correct": "Great form! Hold your hand up at your mouth",
+    "hand_to_mouth.yellow_high": "Almost there — bring your hand up closer to your mouth",
+    "hand_to_mouth.yellow_low": "Ease your hand down slightly",
+    "hand_to_mouth.red_high": "Bring your hand up toward your mouth",
+    "hand_to_mouth.red_low": "Lower your hand back down",
+    # Sit to stand (also the generic leg + cross-body leg fallback) — knee angle, target 90°
+    "sit_to_stand.not_visible": "Step back — your hip, knee, and ankle need to be visible",
+    "sit_to_stand.correct": "Great form! Hold this position",
+    "sit_to_stand.yellow_high": "Almost there — bend your knee a little more",
+    "sit_to_stand.yellow_low": "Almost there — straighten your leg a little",
+    "sit_to_stand.red_high": "Bend your knee further — try sitting lower",
+    "sit_to_stand.red_low": "Stand tall and straighten your leg fully",
+    # Knee extension — knee angle, threshold-based (not symmetric bands)
+    "knee_extension.not_visible": "Sit down — your hip, knee, and ankle need to be visible",
+    "knee_extension.correct": "Great form! Hold your leg out straight",
+    "knee_extension.almost": "Almost there — straighten your knee a little more",
+    "knee_extension.partial": "Lift your foot up — extend your leg out straight",
+    "knee_extension.start": "Sit upright, then lift your foot and straighten your knee out in front of you",
+    # Cross-body fallback
+    "fallback.show_full_body": "Step back — show your full body",
+}
+
+
+def hint_text(key: Optional[str]) -> Optional[str]:
+    """Resolve a hint_key to its display text (None-safe)."""
+    return HINT_TEXT.get(key) if key else None
+
+
 def arm_raise_hint(angle: Optional[float]) -> str:
-    """Hints for arm_raise (seated bicep curl) — measured by ELBOW angle
-    (shoulder-elbow-wrist). Target 55° = hand curled up near the shoulder
-    (the top of the curl). Bands match color_and_score(green=25, yellow=45)."""
+    """hint_key for arm_raise (seated bicep curl) — ELBOW angle
+    (shoulder-elbow-wrist), target 55°, bands green=25/yellow=45."""
     if angle is None:
-        return "Step back — your shoulder, elbow, and hand need to be visible"
+        return "arm_raise.not_visible"
     diff = angle - 55
     abs_diff = abs(diff)
     if abs_diff <= 25:
-        return "Great form! Hold your hand up by your shoulder"
+        return "arm_raise.correct"
     if abs_diff <= 45:
-        return "Almost there — curl your hand up a little more" if diff > 0 \
-            else "Ease your hand down slightly"
-    return "Curl your hand up toward your shoulder" if diff > 0 \
-        else "Lower your hand back down"
+        return "arm_raise.yellow_high" if diff > 0 else "arm_raise.yellow_low"
+    return "arm_raise.red_high" if diff > 0 else "arm_raise.red_low"
 
 
 def shoulder_flexion_hint(angle: Optional[float]) -> str:
-    """Hints for shoulder_flexion — measured by SHOULDER angle (hip-shoulder-elbow).
-    Target 90° = arm raised forward to shoulder height with elbow kept straight."""
+    """hint_key for shoulder_flexion — SHOULDER angle (hip-shoulder-elbow),
+    target 90° = arm at shoulder height with elbow kept straight."""
     if angle is None:
-        return "Step back — your hip, shoulder, and elbow need to be visible"
+        return "shoulder_flexion.not_visible"
     diff = angle - 90
     abs_diff = abs(diff)
     if abs_diff <= 15:
-        return "Great form! Hold your arm at shoulder height"
+        return "shoulder_flexion.correct"
     if abs_diff <= 30:
-        return "Almost there — lower your arm a little" if diff > 0 \
-            else "Almost there — raise your arm a little higher"
-    return "Lower your arm — keep it level with your shoulder" if diff > 0 \
-        else "Raise your arm forward and up to shoulder height"
+        return "shoulder_flexion.yellow_high" if diff > 0 else "shoulder_flexion.yellow_low"
+    return "shoulder_flexion.red_high" if diff > 0 else "shoulder_flexion.red_low"
+
+
+def hand_to_mouth_hint(angle: Optional[float]) -> str:
+    """hint_key for hand_to_mouth — ELBOW angle (shoulder-elbow-wrist),
+    target 40° = hand brought up to the mouth (deep flexion),
+    bands green=20/yellow=40."""
+    if angle is None:
+        return "hand_to_mouth.not_visible"
+    diff = angle - 40
+    abs_diff = abs(diff)
+    if abs_diff <= 20:
+        return "hand_to_mouth.correct"
+    if abs_diff <= 40:
+        return "hand_to_mouth.yellow_high" if diff > 0 else "hand_to_mouth.yellow_low"
+    return "hand_to_mouth.red_high" if diff > 0 else "hand_to_mouth.red_low"
 
 
 # Backwards-compat alias used by the cross-body ("both") branch where we
@@ -79,36 +147,32 @@ arm_hint = arm_raise_hint
 
 
 def leg_hint(angle: Optional[float]) -> str:
-    """Generic leg hint for sit_to_stand and the cross-body fallback —
-    target 90° = seated squat depth where the knee is bent."""
+    """hint_key for sit_to_stand and the cross-body leg fallback —
+    KNEE angle, target 90° = seated squat depth where the knee is bent."""
     if angle is None:
-        return "Step back — your hip, knee, and ankle need to be visible"
+        return "sit_to_stand.not_visible"
     diff = angle - 90
     abs_diff = abs(diff)
     if abs_diff <= 15:
-        return "Great form! Hold this position"
+        return "sit_to_stand.correct"
     if abs_diff <= 30:
-        return "Almost there — bend your knee a little more" if diff > 0 \
-            else "Almost there — straighten your leg a little"
-    return "Bend your knee further — try sitting lower" if diff > 0 \
-        else "Stand tall and straighten your leg fully"
+        return "sit_to_stand.yellow_high" if diff > 0 else "sit_to_stand.yellow_low"
+    return "sit_to_stand.red_high" if diff > 0 else "sit_to_stand.red_low"
 
 
 def knee_extension_hint(angle: Optional[float]) -> str:
-    """Hints for knee_extension — measured by KNEE angle (hip-knee-ankle).
-    Patient sits in a chair and lifts their foot to extend the affected leg
-    straight out, parallel to the floor. Target ~170° = leg fully extended.
-    The seated start position is ~90°, so we want them to OPEN the knee
-    angle (the opposite of a squat), not close it like sit_to_stand does."""
+    """hint_key for knee_extension — KNEE angle (hip-knee-ankle). Patient sits
+    and lifts the foot to extend the affected leg straight out. Target ~170° =
+    fully extended; seated start ~90°, so we cue OPENING the knee."""
     if angle is None:
-        return "Sit down — your hip, knee, and ankle need to be visible"
+        return "knee_extension.not_visible"
     if angle >= 160:
-        return "Great form! Hold your leg out straight"
+        return "knee_extension.correct"
     if angle >= 130:
-        return "Almost there — straighten your knee a little more"
+        return "knee_extension.almost"
     if angle >= 100:
-        return "Lift your foot up — extend your leg out straight"
-    return "Sit upright, then lift your foot and straighten your knee out in front of you"
+        return "knee_extension.partial"
+    return "knee_extension.start"
 
 
 def overall_visibility_score(keypoints: List[Dict[str, float]]) -> int:
@@ -152,6 +216,10 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
     # are different. Shoulder flexion = raising the whole arm at the
     # shoulder; arm raise = bending the elbow toward the shoulder.
     is_shoulder_flexion = "shoulder_flexion" in hint_lower or "shoulder flexion" in hint_lower
+    # hand_to_mouth: bring the hand up to the mouth. Same body area as the
+    # other arm exercises but scored on the elbow with a deeper target than
+    # shoulder flexion (which scores the shoulder joint).
+    is_hand_to_mouth = "hand_to_mouth" in hint_lower or "hand to mouth" in hint_lower
     # Distinguish knee_extension from sit_to_stand — same body area, but
     # target angles point in opposite directions. Seated knee extension
     # = lift the foot to OPEN the knee (target ~170°); sit_to_stand =
@@ -165,6 +233,8 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
     # "arm" token, so without this it would fall through to the cross-body
     # fallback and score the wrong joint. Same guard for knee_extension.
     if is_shoulder_flexion:
+        is_arm, is_leg = True, False
+    if is_hand_to_mouth:
         is_arm, is_leg = True, False
     if is_knee_extension:
         is_leg, is_arm = True, False
@@ -188,7 +258,7 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
 
     angles: Dict[str, Any] = {}
     colors: Dict[str, str] = {}
-    hint: Optional[str] = None
+    hint_key: Optional[str] = None
 
     # Visibility gate is body-area aware. Arm-only exercises pass when the
     # upper body is in frame even if the patient is sitting and the legs
@@ -198,20 +268,21 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
     # precondition — pass it and the score is pure form quality.
     if is_arm and not is_leg:
         gate_indices = _ARM_GATE_LANDMARKS
-        gate_hint = "Show your upper body — shoulders, elbows, and hands need to be in the camera"
+        gate_key = "gate.upper_body"
     elif is_leg and not is_arm:
         gate_indices = _LEG_GATE_LANDMARKS
-        gate_hint = "Step back so your hips, knees, and feet are visible"
+        gate_key = "gate.lower_body"
     else:
         gate_indices = tuple(range(33))
-        gate_hint = "Move back so your whole body is in the camera"
+        gate_key = "gate.whole_body"
 
     if partial_visibility_score(keypoints, gate_indices) < 50:
         return {
             "score": 0,
             "angles": {},
             "colors": {},
-            "hint": gate_hint,
+            "hint": hint_text(gate_key),
+            "hint_key": gate_key,
         }
 
     overall = 0
@@ -265,7 +336,16 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
                 lambda s: _arm_triple(s, True), target=90, green=15, yellow=30)
             angles["bicepCurl"] = angle  # frontend overlay key, reused
             colors["bicepCurl"] = color
-            hint = shoulder_flexion_hint(angle)
+            hint_key = shoulder_flexion_hint(angle)
+        elif is_hand_to_mouth:
+            # Elbow angle (shoulder -> elbow -> wrist). Target 40° = hand
+            # brought up to the mouth (deep flexion). Generous bands reward
+            # the raised-to-mouth position without punishing a deeper reach.
+            angle, color, overall = _score_tracked(
+                lambda s: _arm_triple(s, False), target=40, green=20, yellow=40)
+            angles["bicepCurl"] = angle
+            colors["bicepCurl"] = color
+            hint_key = hand_to_mouth_hint(angle)
         else:
             # Arm raise = seated bicep curl: elbow angle (shoulder -> elbow ->
             # wrist). Target 55° = hand curled up near the shoulder (top of the
@@ -277,7 +357,7 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
                 lambda s: _arm_triple(s, False), target=55, green=25, yellow=45)
             angles["bicepCurl"] = angle
             colors["bicepCurl"] = color
-            hint = arm_raise_hint(angle)
+            hint_key = arm_raise_hint(angle)
 
     elif is_leg:
         # Track the AFFECTED leg via tracked_sides (right → right leg, left →
@@ -294,7 +374,7 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
             _leg_triple, target=target_angle, green=green_band, yellow=yellow_band)
         angles["kneeFlexion"] = angle
         colors["kneeFlexion"] = color
-        hint = knee_extension_hint(angle) if is_knee_extension else leg_hint(angle)
+        hint_key = knee_extension_hint(angle) if is_knee_extension else leg_hint(angle)
 
     else:
         # Cross-body fallback (neither clearly arm nor leg): score arm + leg
@@ -318,15 +398,21 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
         # Pick the hint from the worst-scoring component so a poor limb
         # isn't hidden behind a better one.
         if arm_present and leg_present:
-            hint = arm_hint(arm_angle) if arm_score <= leg_score else leg_hint(leg_angle)
+            hint_key = arm_hint(arm_angle) if arm_score <= leg_score else leg_hint(leg_angle)
         elif arm_present:
-            hint = arm_hint(arm_angle)
+            hint_key = arm_hint(arm_angle)
         elif leg_present:
-            hint = leg_hint(leg_angle)
+            hint_key = leg_hint(leg_angle)
         else:
-            hint = "Step back — show your full body"
+            hint_key = "fallback.show_full_body"
 
-    return {"score": overall, "angles": angles, "colors": colors, "hint": hint}
+    return {
+        "score": overall,
+        "angles": angles,
+        "colors": colors,
+        "hint": hint_text(hint_key),
+        "hint_key": hint_key,
+    }
 
 
 # ── Rep counting (sets-and-modes feature, Phase A, 2026-06-04) ─────────

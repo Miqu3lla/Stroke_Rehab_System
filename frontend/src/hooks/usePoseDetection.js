@@ -12,7 +12,21 @@ import useSessionStore from '../store/useSessionStore';
  * send an {type:"auth", ...} message first, and wait for "auth_ok" before
  * the frame loop starts. The whole handshake is bounded by HANDSHAKE_TIMEOUT_MS.
  *
- * classifyFormSequence still uses HTTP — it's a one-shot call at session end.
+ * Auth protocol (since 2026-06-04, after CodeRabbit feedback):
+ *   1. Open WS to /ws/pose with NO token in the URL — query-string tokens
+ *      end up in reverse-proxy logs and would leak the bearer.
+ *   2. On open, send {"type": "auth", "token", "exercise_type",
+ *      "affected_side", "patient_id", "session_id"} as the first message.
+ *      patient_id + session_id let the backend file the session-evidence
+ *      clip it records from this stream (see core/session_video.py).
+ *   3. Wait for {"type": "auth_ok"} from the server before we consider
+ *      the connection live and let the frame loop start.
+ *   4. The whole handshake (TCP connect + auth round-trip) is bounded by
+ *      HANDSHAKE_TIMEOUT_MS — without it a stuck CONNECTING socket would
+ *      leave the UI on "Preparing pose detection…" forever.
+ *
+ * The end-of-session LSTM call (classifyFormSequence) still uses HTTP
+ * because it's one-shot and benefits from the standard auth interceptor.
  */
 
 // Max wait for the handshake + auth_ok before we give up (avoids a hung UI).
