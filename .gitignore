@@ -23,3 +23,5 @@ Thumbs.db
 
 # Editor / tooling
 .claude/
+
+backend/db/
