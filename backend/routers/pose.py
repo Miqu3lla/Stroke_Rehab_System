@@ -77,6 +77,7 @@ def estimate_pose(
             "angles": {},
             "colors": {},
             "hint": "Step back — show your full body",
+            "hint_key": "fallback.show_full_body",
             "imageWidth": image_width,
             "imageHeight": image_height,
         }
@@ -89,6 +90,7 @@ def estimate_pose(
         "angles": scored["angles"],
         "colors": scored["colors"],
         "hint": scored["hint"],
+        "hint_key": scored.get("hint_key"),
         "imageWidth": image_width,
         "imageHeight": image_height,
     }
@@ -280,6 +282,7 @@ async def pose_ws(websocket: WebSocket) -> None:
                     "angles": {},
                     "colors": {},
                     "hint": "Step back — show your full body",
+                    "hint_key": "fallback.show_full_body",
                     "imageWidth": image_width,
                     "imageHeight": image_height,
                 })
@@ -292,6 +295,7 @@ async def pose_ws(websocket: WebSocket) -> None:
                 "angles": scored["angles"],
                 "colors": scored["colors"],
                 "hint": scored["hint"],
+                "hint_key": scored.get("hint_key"),
                 "imageWidth": image_width,
                 "imageHeight": image_height,
             })
