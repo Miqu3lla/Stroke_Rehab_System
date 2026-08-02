@@ -47,8 +47,22 @@ export default function useVoicePlayback(exerciseType) {
   const mutedRef = useRef(false);
   const lastKeyRef = useRef(null);
   const lastPlayMsRef = useRef(0);
+  const activePlayerRef = useRef(null); // the player currently sounding
+  // Bumped on every accepted cue, mute, and dispose. seekTo() is async, so a
+  // play() queued behind it must verify its generation still matches before
+  // firing — otherwise a newer cue / mute / teardown that happened during the
+  // seek gets talked over.
+  const playGenRef = useRef(0);
 
-  useEffect(() => { mutedRef.current = muted; }, [muted]);
+  useEffect(() => {
+    mutedRef.current = muted;
+    // Muting mid-clip must silence the cue that's ALREADY sounding, not just
+    // suppress the next one.
+    if (muted) {
+      playGenRef.current += 1;   // invalidate any in-flight play continuation
+      try { activePlayerRef.current?.pause(); } catch (_) { /* non-fatal */ }
+    }
+  }, [muted]);
 
   // Configure the audio session once: audible even on the iOS silent switch
   // (it's coaching feedback), and duck — not stop — any music the patient has.
@@ -68,8 +82,10 @@ export default function useVoicePlayback(exerciseType) {
     const players = playersRef.current;
 
     const dispose = () => {
+      playGenRef.current += 1;   // invalidate any in-flight play continuation
       players.forEach((p) => { try { p.remove(); } catch (_) { /* already gone */ } });
       players.clear();
+      activePlayerRef.current = null;   // don't retain a removed player
     };
 
     async function load() {
@@ -115,13 +131,27 @@ export default function useVoicePlayback(exerciseType) {
     if (hintKey === lastKeyRef.current) return;       // only on change
     const now = Date.now();
     if (now - lastPlayMsRef.current < COOLDOWN_MS) return;
-    if (player.playing) return;                       // don't talk over a clip
-    try {
-      player.seekTo(0);
-      player.play();
-      lastKeyRef.current = hintKey;
-      lastPlayMsRef.current = now;
-    } catch (_) { /* playback hiccup is non-fatal */ }
+    // Don't talk over whatever clip is ACTUALLY sounding (from any key).
+    // Checking this new key's own player would miss the PREVIOUS cue — a
+    // different key whose player is still playing — and overlap it.
+    if (activePlayerRef.current?.playing) return;
+    lastKeyRef.current = hintKey;
+    lastPlayMsRef.current = now;
+    activePlayerRef.current = player;
+    const gen = ++playGenRef.current;
+    // expo-audio's seekTo returns a Promise, so a synchronous try/catch can't
+    // catch a seek rejection — chain + .catch() to keep the play path non-fatal.
+    // Re-check the generation, mute, and player identity in the continuation:
+    // between the seek starting and resolving, a newer cue / a mute / a dispose
+    // can intervene, and this queued play() must not fire over any of them.
+    Promise.resolve(player.seekTo(0))
+      .then(() => {
+        if (gen !== playGenRef.current) return;          // superseded cue / mute / dispose
+        if (mutedRef.current) return;                    // muted during the seek
+        if (activePlayerRef.current !== player) return;  // no longer the active clip
+        player.play();
+      })
+      .catch(() => { /* playback hiccup is non-fatal */ });
   }, []);
 
   const toggleMute = useCallback(() => setMuted((m) => !m), []);
