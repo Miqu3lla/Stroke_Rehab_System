@@ -227,20 +227,29 @@ def main() -> int:
             and old_manifest.get(key, {}).get("hash") == h
             and dest.exists()
         )
+        generated = False
         if not up_to_date and not args.dry_run:
             with tempfile.TemporaryDirectory() as td:
                 raw = Path(td) / "raw.wav"
                 _synthesize_wav(text, cfg, raw)
                 _postprocess(raw, dest, cfg)
+            generated = True
             changed.append(key)
             print(f"  ✓ {key}")
         elif not up_to_date and args.dry_run:
             changed.append(key)  # would generate
 
+        # The recorded hash MUST describe the file actually on disk, or a later
+        # run trusts it and skips regeneration. When we (re)generated or the
+        # clip was already current, that's h. But a dry-run that WOULD have
+        # regenerated leaves the old/absent file untouched, so we must keep its
+        # stale hash (not h) — otherwise --dry-run permanently marks the stale
+        # clip up-to-date and it never regenerates without --force.
+        recorded_hash = h if (up_to_date or generated) else old_manifest.get(key, {}).get("hash")
         manifest_clips[key] = {
             "file": fname,
             "text": text,
-            "hash": h,
+            "hash": recorded_hash,
             "voice_id": cfg["voice"]["id"],
             "available": dest.exists(),
         }
