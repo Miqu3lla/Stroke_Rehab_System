@@ -66,7 +66,6 @@ const useCamera = (exercise, { onComplete } = {}) => {
   // ── Strength load (kg) 
   // The camera can't measure weight, so Strength mode carries a
   // patient-entered load. Seeded from the recommender's suggested weight
-  // (sets[0].target_weight_kg), adjustable via the UI stepper before/
   // between sets, and recorded into each Strength set's result so the
   // recommender can progress it next session. Lazy initializer runs once
   // per exercise (the hook remounts on key=exercise.id).
@@ -106,7 +105,7 @@ const useCamera = (exercise, { onComplete } = {}) => {
   // Per-set running score buffer (for computing this set's avg on
   // completion). Cleared on each set transition.
   const setScoreBufferRef = useRef([]);
-  // Phase D hold-tracking accumulators. holdInFormMsRef integrates
+  // holdInFormMsRef integrates
   // frame deltas while the patient is in green; brokenMsRef counts
   // consecutive ms out of green (resets on re-entry). lastFrameTimeRef
   // is the Date.now() of the previous handlePoseResult call — used
