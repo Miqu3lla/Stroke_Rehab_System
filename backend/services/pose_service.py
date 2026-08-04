@@ -2,6 +2,7 @@ import math
 from typing import Any, Dict, List, Optional
 
 # MediaPipe BlazePose landmark indices used by realtime form scoring.
+_NOSE, _MOUTH_LEFT, _MOUTH_RIGHT = 0, 9, 10
 _LEFT_SHOULDER, _LEFT_ELBOW, _LEFT_WRIST, _LEFT_HIP, _LEFT_KNEE, _LEFT_ANKLE = 11, 13, 15, 23, 25, 27
 _RIGHT_SHOULDER, _RIGHT_ELBOW, _RIGHT_WRIST, _RIGHT_HIP, _RIGHT_KNEE, _RIGHT_ANKLE = 12, 14, 16, 24, 26, 28
 
@@ -75,6 +76,9 @@ HINT_TEXT: Dict[str, str] = {
     "hand_to_mouth.yellow_low": "Ease your hand down slightly",
     "hand_to_mouth.red_high": "Bring your hand up toward your mouth",
     "hand_to_mouth.red_low": "Lower your hand back down",
+    # Spatial gate: elbow is bent but the hand isn't actually at the mouth
+    # (e.g. raised in the air / off to the side).
+    "hand_to_mouth.off_target": "Bring your hand to your mouth",
     # Sit to stand (also the generic leg + cross-body leg fallback) — knee angle, target 90°
     "sit_to_stand.not_visible": "Step back — your hip, knee, and ankle need to be visible",
     "sit_to_stand.correct": "Great form! Hold this position",
@@ -200,6 +204,61 @@ def partial_visibility_score(keypoints: List[Dict[str, float]], indices) -> int:
         return 0
     avg = sum(confidences) / len(confidences)
     return round(max(0, min(100, avg * 100)))
+
+
+# ── Hand-to-mouth spatial gate ─────────────────────────────────────────────
+# The elbow angle alone can't tell a real hand-to-mouth (hand folded up to the
+# face) from a raised, bent-elbow "wave" — both flex the elbow, so a wave scored
+# ~96%. So we ALSO require the wrist to actually be in the mouth zone: close to
+# the mouth AND below the nose. Thresholds come from the recorded Correct clips
+# (scripts h2m diagnostic): at peak flexion the wrist sits 0.22-0.58 shoulder-
+# widths from the mouth and always ≥0.31 shoulder-width BELOW the nose, whereas a
+# wave puts the wrist above the nose. Margins added for live-tracking noise and
+# body-proportion variation.
+_H2M_WRIST_MOUTH_MAX_RATIO = 0.75   # correct clips peak at 0.58
+_H2M_WRIST_MIN_BELOW_NOSE = 0.10    # correct clips ≥0.31 below nose; a wave is above it
+_H2M_OFF_TARGET_SCORE = 10          # firmly red when the hand isn't at the mouth
+
+
+def hand_in_mouth_zone(keypoints: List[Dict[str, float]], sides) -> Optional[bool]:
+    """Whether a tracked-side wrist is in the mouth zone (near the mouth AND
+    below the nose).
+
+    Returns True if any tracked side qualifies, False if it's determinable and
+    none do, and None if the face/shoulder landmarks aren't confident enough to
+    judge — in which case the caller SKIPS the gate rather than false-reject
+    (e.g. the hand-at-mouth itself can occlude the face). `sides` are the
+    mirrored-frame side letters ("L"/"R") used throughout this module."""
+    if len(keypoints) <= max(_MOUTH_RIGHT, _RIGHT_WRIST):
+        return None
+    nose = keypoints[_NOSE]
+    ml, mr = keypoints[_MOUTH_LEFT], keypoints[_MOUTH_RIGHT]
+    ls, rs = keypoints[_LEFT_SHOULDER], keypoints[_RIGHT_SHOULDER]
+    # Need a confident nose, mouth, and shoulders to place the zone and set its
+    # scale. The mouth center comes straight from ml/mr, so if those landmarks
+    # aren't reliable (head turned, poor light, or the hand-at-mouth occluding
+    # them) a mis-placed center could wrongly read "far from mouth" and cap a
+    # valid score — so return None to SKIP the gate instead of false-rejecting.
+    if (nose.get("score", 0) < 0.5
+            or min(ml.get("score", 0), mr.get("score", 0)) < 0.5
+            or min(ls.get("score", 0), rs.get("score", 0)) < 0.3):
+        return None
+    shoulder_w = math.hypot(ls["x"] - rs["x"], ls["y"] - rs["y"])
+    if shoulder_w < 1e-3:
+        return None
+    mouth_x = (ml["x"] + mr["x"]) / 2.0
+    mouth_y = (ml["y"] + mr["y"]) / 2.0
+    determinable = False
+    for s in sides:
+        wr = keypoints[_LEFT_WRIST] if s == "L" else keypoints[_RIGHT_WRIST]
+        if wr.get("score", 0) < 0.3:
+            continue
+        determinable = True
+        ratio = math.hypot(wr["x"] - mouth_x, wr["y"] - mouth_y) / shoulder_w
+        below_nose = (nose["y"] - wr["y"]) / shoulder_w   # < 0 ⇒ wrist below nose
+        if ratio <= _H2M_WRIST_MOUTH_MAX_RATIO and below_nose <= -_H2M_WRIST_MIN_BELOW_NOSE:
+            return True
+    return False if determinable else None
 
 
 def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_side: str) -> Dict[str, Any]:
@@ -343,9 +402,18 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
             # the raised-to-mouth position without punishing a deeper reach.
             angle, color, overall = _score_tracked(
                 lambda s: _arm_triple(s, False), target=40, green=20, yellow=40)
+            hint_key = hand_to_mouth_hint(angle)
+            # Spatial hard gate: a bent elbow alone also fits a raised "wave",
+            # so require the wrist to actually be in the mouth zone. When it
+            # isn't, force red + a "bring your hand to your mouth" cue no matter
+            # how good the elbow angle looks. None (can't judge — e.g. the hand
+            # occludes the face) leaves the elbow score untouched.
+            if hand_in_mouth_zone(keypoints, tracked_sides) is False:
+                overall = min(overall, _H2M_OFF_TARGET_SCORE)
+                color = "#F44336"
+                hint_key = "hand_to_mouth.off_target"
             angles["bicepCurl"] = angle
             colors["bicepCurl"] = color
-            hint_key = hand_to_mouth_hint(angle)
         else:
             # Arm raise = seated bicep curl: elbow angle (shoulder -> elbow ->
             # wrist). Target 55° = hand curled up near the shoulder (top of the
