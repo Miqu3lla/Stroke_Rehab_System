@@ -211,7 +211,7 @@ def partial_visibility_score(keypoints: List[Dict[str, float]], indices) -> int:
 # face) from a raised, bent-elbow "wave" — both flex the elbow, so a wave scored
 # ~96%. So we ALSO require the wrist to actually be in the mouth zone: close to
 # the mouth AND below the nose. Thresholds come from the recorded Correct clips
-# (scripts h2m diagnostic): at peak flexion the wrist sits 0.22–0.58 shoulder-
+# (scripts h2m diagnostic): at peak flexion the wrist sits 0.22-0.58 shoulder-
 # widths from the mouth and always ≥0.31 shoulder-width BELOW the nose, whereas a
 # wave puts the wrist above the nose. Margins added for live-tracking noise and
 # body-proportion variation.
@@ -234,8 +234,14 @@ def hand_in_mouth_zone(keypoints: List[Dict[str, float]], sides) -> Optional[boo
     nose = keypoints[_NOSE]
     ml, mr = keypoints[_MOUTH_LEFT], keypoints[_MOUTH_RIGHT]
     ls, rs = keypoints[_LEFT_SHOULDER], keypoints[_RIGHT_SHOULDER]
-    # Need a confident nose + shoulders to place the zone and set its scale.
-    if nose.get("score", 0) < 0.5 or min(ls.get("score", 0), rs.get("score", 0)) < 0.3:
+    # Need a confident nose, mouth, and shoulders to place the zone and set its
+    # scale. The mouth center comes straight from ml/mr, so if those landmarks
+    # aren't reliable (head turned, poor light, or the hand-at-mouth occluding
+    # them) a mis-placed center could wrongly read "far from mouth" and cap a
+    # valid score — so return None to SKIP the gate instead of false-rejecting.
+    if (nose.get("score", 0) < 0.5
+            or min(ml.get("score", 0), mr.get("score", 0)) < 0.5
+            or min(ls.get("score", 0), rs.get("score", 0)) < 0.3):
         return None
     shoulder_w = math.hypot(ls["x"] - rs["x"], ls["y"] - rs["y"])
     if shoulder_w < 1e-3:
