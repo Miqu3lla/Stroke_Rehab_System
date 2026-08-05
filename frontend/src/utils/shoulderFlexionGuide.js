@@ -78,8 +78,15 @@ export default class ShoulderFlexionGuide {
         break;
       case PHASE_RAISING:
         if (this.overhead && !this.elbowBent) {
-          this.phase = PHASE_HOLDING;
-          this.currentHoldMs = 0;
+          if (this.holdMs === 0) {
+            // No per-rep hold — count on reaching the top THIS frame, so a
+            // one-frame overhead pose still registers (entering PHASE_HOLDING
+            // would defer completion to the next result and drop the rep).
+            this._completeRep();
+          } else {
+            this.phase = PHASE_HOLDING;
+            this.currentHoldMs = 0;
+          }
         } else if (this.elbowBent && sh < SHOULDER_LEAVE_READY) {
           this.phase = PHASE_READY; // lowered back into the bent-elbow start
         }
@@ -88,10 +95,7 @@ export default class ShoulderFlexionGuide {
         if (this.overhead && !this.elbowBent) {
           this.currentHoldMs += Math.max(0, dtMs);
           if (this.currentHoldMs >= this.holdMs) {
-            this.repsCompleted += 1;
-            this.currentHoldMs = 0;
-            this.justCompletedRep = true;
-            this.phase = PHASE_NEED_START; // return to the bent start for the next rep
+            this._completeRep();
           }
         } else {
           // Left the straight-overhead position before the hold finished — the
@@ -106,6 +110,16 @@ export default class ShoulderFlexionGuide {
     }
 
     return this.snapshot();
+  }
+
+  // Count a completed rep and send the patient back to the bent-elbow start
+  // for the next one. Shared by the hold-complete (PHASE_HOLDING) and the
+  // no-hold count-on-reach (PHASE_RAISING) paths.
+  _completeRep() {
+    this.repsCompleted += 1;
+    this.currentHoldMs = 0;
+    this.justCompletedRep = true;
+    this.phase = PHASE_NEED_START;
   }
 
   snapshot() {
