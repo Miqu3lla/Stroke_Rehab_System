@@ -28,7 +28,12 @@ export default class ShoulderFlexionGuide {
   constructor(targetReps = 12, holdMsPerRep = 6000) {
     this.targetReps = Math.max(1, Math.floor(Number(targetReps) || 12));
     // Fall back to 6s if the set didn't carry a per-rep hold.
-    this.holdMs = Math.max(1000, Number(holdMsPerRep) || 6000);
+    // Per-rep hold at the top. 0 (plain-rep sets) = count on reaching the
+    // straight-overhead position, matching the generic RepCounter — do NOT
+    // force a hold on sets that didn't ask for one (a 6s×12 forced hold can
+    // blow the set time cap). A positive value is clamped to a sane minimum.
+    const hold = Number(holdMsPerRep);
+    this.holdMs = Number.isFinite(hold) && hold > 0 ? Math.max(1000, hold) : 0;
     this.repsCompleted = 0;
     this.phase = PHASE_NEED_START;
     this.currentHoldMs = 0;
@@ -48,6 +53,11 @@ export default class ShoulderFlexionGuide {
       ? null : shoulderAngle;
     const el = elbowAngle === null || elbowAngle === undefined || Number.isNaN(elbowAngle)
       ? null : elbowAngle;
+    // elbowBent / elbowStraight are KNOWN-only: both false when the elbow angle
+    // is null (wrist out of frame — common at the top of an overhead reach). So
+    // transitions gate on `!elbowStraight` (bent OR unknown) to ENTER the bent
+    // start, and `!elbowBent` (straight OR unknown) to PROCEED overhead — a null
+    // elbow never blocks the flow, it just can't earn the "straighten" nudge.
     this.shoulder = sh;
     this.elbowBent = el !== null && el < ELBOW_BENT_MAX;
     this.elbowStraight = el !== null && el >= ELBOW_STRAIGHT_MIN;
@@ -58,16 +68,16 @@ export default class ShoulderFlexionGuide {
 
     switch (this.phase) {
       case PHASE_NEED_START:
-        // The start pose: elbow bent, hand up at the shoulder, not yet overhead.
-        if (this.elbowBent && !this.overhead) this.phase = PHASE_READY;
+        // Start pose: not overhead, elbow bent (or unknown — not KNOWN straight).
+        if (!this.overhead && !this.elbowStraight) this.phase = PHASE_READY;
         break;
       case PHASE_READY:
-        // Leave once the arm begins to rise, or the elbow starts to extend —
-        // either way the patient is now reaching up, not at the bent start.
-        if (sh >= SHOULDER_LEAVE_READY || !this.elbowBent) this.phase = PHASE_RAISING;
+        // Leave once the arm begins to rise, or the elbow is KNOWN straightened
+        // — either way the patient is reaching up, not at the bent start.
+        if (sh >= SHOULDER_LEAVE_READY || this.elbowStraight) this.phase = PHASE_RAISING;
         break;
       case PHASE_RAISING:
-        if (this.overhead && this.elbowStraight) {
+        if (this.overhead && !this.elbowBent) {
           this.phase = PHASE_HOLDING;
           this.currentHoldMs = 0;
         } else if (this.elbowBent && sh < SHOULDER_LEAVE_READY) {
@@ -75,7 +85,7 @@ export default class ShoulderFlexionGuide {
         }
         break;
       case PHASE_HOLDING:
-        if (this.overhead && this.elbowStraight) {
+        if (this.overhead && !this.elbowBent) {
           this.currentHoldMs += Math.max(0, dtMs);
           if (this.currentHoldMs >= this.holdMs) {
             this.repsCompleted += 1;
@@ -115,8 +125,10 @@ export default class ShoulderFlexionGuide {
       feedbackText = 'Good! Now reach your arm straight up overhead';
       hintKey = 'shoulder_flexion.start';
     } else if (this.phase === PHASE_RAISING) {
-      if (this.overhead && !this.elbowStraight) {
-        // Arm is up but the elbow is still bent — straighten to finish the reach.
+      if (this.overhead && this.elbowBent) {
+        // Arm is up but the elbow is KNOWN bent — straighten to finish the
+        // reach. (A null/unknown elbow at the top doesn't trigger this — it's
+        // allowed through so a hidden wrist can't strand the rep.)
         color = COLOR_YELLOW;
         feedbackText = 'Straighten your elbow — reach all the way up';
         hintKey = 'shoulder_flexion.bend_elbow';
@@ -131,9 +143,14 @@ export default class ShoulderFlexionGuide {
       }
     } else if (this.phase === PHASE_HOLDING) {
       color = COLOR_GREEN; // CP2 — straight arm overhead, the "second green"
-      const heldS = Math.floor(this.currentHoldMs / 1000);
       const targetS = Math.round(this.holdMs / 1000);
-      feedbackText = `Hold it — ${heldS}s of ${targetS}s`;
+      if (targetS > 0) {
+        const heldS = Math.floor(this.currentHoldMs / 1000);
+        feedbackText = `Hold it — ${heldS}s of ${targetS}s`;
+      } else {
+        // No per-rep hold configured — the rep counts on reaching the top.
+        feedbackText = 'Perfect! Arm straight up overhead';
+      }
       hintKey = 'shoulder_flexion.correct';
     }
 

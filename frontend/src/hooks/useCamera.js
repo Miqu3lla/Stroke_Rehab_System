@@ -304,9 +304,12 @@ const useCamera = (exercise, { onComplete } = {}) => {
     // 0 and count on entry, as before.
     const holdMsPerRep = Number(nextSet?.hold_seconds_per_rep || 0) * 1000;
     repCounterRef.current = new RepCounter(targetReps, holdMsPerRep);
-    // Fresh shoulder-flexion guide for the set. Falls back to a 6s hold when
-    // the set didn't specify a per-rep hold, so each checkpoint still holds.
-    sfGuideRef.current = new ShoulderFlexionGuide(targetReps, holdMsPerRep || 6000);
+    // Fresh shoulder-flexion guide for the set. Uses the SAME per-rep hold as
+    // the RepCounter (0 = count on reaching the top, like plain-rep sets; a
+    // Functionality set's hold_seconds_per_rep makes each top a sustained
+    // hold). Passing 0 rather than forcing 6s keeps a 12-rep set inside the
+    // time cap.
+    sfGuideRef.current = new ShoulderFlexionGuide(targetReps, holdMsPerRep);
     setScoreBufferRef.current = [];
     holdInFormMsRef.current = 0;
     brokenMsRef.current = 0;

@@ -124,15 +124,18 @@ def arm_raise_hint(angle: Optional[float]) -> str:
 
 def shoulder_flexion_hint(angle: Optional[float]) -> str:
     """hint_key for shoulder_flexion — SHOULDER angle (hip-shoulder-elbow),
-    target 160° = arm raised forward and up OVERHEAD, elbow kept straight.
-    Drives a step-by-step guide: arm down at the side (< 40°) is the START
-    position, then the patient raises up overhead and holds at the top."""
+    target 160° = arm raised forward and up OVERHEAD. This is the fallback cue
+    for paths without the elbow angle (HTTP /pose/estimate, hold-format sets);
+    the frontend two-checkpoint guide, which also sees the elbow, is the primary
+    driver. Low shoulder angle = arm near the side."""
     if angle is None:
         return "shoulder_flexion.not_visible"
-    # Arm hanging at the side = the ready/start position for a rep. Cue the
-    # raise from here rather than scolding it as "too low".
+    # Arm near the side. Without the elbow angle we can't tell a straight
+    # hang from the bent-elbow start, so cue getting INTO the start position
+    # ("bend your elbow, hand to your shoulder") rather than "now reach up"
+    # (shoulder_flexion.start), which assumes CP1 is already held.
     if angle < 40:
-        return "shoulder_flexion.start"
+        return "shoulder_flexion.get_ready"
     diff = angle - 160
     abs_diff = abs(diff)
     if abs_diff <= 20:
