@@ -62,13 +62,19 @@ HINT_TEXT: Dict[str, str] = {
     "arm_raise.yellow_low": "Ease your hand down slightly",
     "arm_raise.red_high": "Curl your hand up toward your shoulder",
     "arm_raise.red_low": "Lower your hand back down",
-    # Shoulder flexion — shoulder angle, target 90°
+    # Shoulder flexion — two-checkpoint guide: CP1 elbow bent, hand at the
+    # shoulder → CP2 reach the arm straight up overhead → hold. Cues below are
+    # driven by the frontend guide (utils/shoulderFlexionGuide) which reads both
+    # the shoulder angle (elevation) and the elbow angle (extension).
     "shoulder_flexion.not_visible": "Step back — your hip, shoulder, and elbow need to be visible",
-    "shoulder_flexion.correct": "Great form! Hold your arm at shoulder height",
-    "shoulder_flexion.yellow_high": "Almost there — lower your arm a little",
-    "shoulder_flexion.yellow_low": "Almost there — raise your arm a little higher",
-    "shoulder_flexion.red_high": "Lower your arm — keep it level with your shoulder",
-    "shoulder_flexion.red_low": "Raise your arm forward and up to shoulder height",
+    "shoulder_flexion.get_ready": "Bend your elbow and bring your hand up to your shoulder to start",
+    "shoulder_flexion.start": "Good! Now reach your arm straight up overhead",
+    "shoulder_flexion.bend_elbow": "Straighten your elbow — reach all the way up",
+    "shoulder_flexion.correct": "Perfect! Hold your arm straight up overhead",
+    "shoulder_flexion.yellow_high": "Ease your arm down a little",
+    "shoulder_flexion.yellow_low": "Almost there — reach a little higher",
+    "shoulder_flexion.red_high": "Bring your hand back down to your shoulder",
+    "shoulder_flexion.red_low": "Keep reaching — take your arm straight up overhead",
     # Hand to mouth — elbow angle, target 40°
     "hand_to_mouth.not_visible": "Step back — your shoulder, elbow, and hand need to be visible",
     "hand_to_mouth.correct": "Great form! Hold your hand up at your mouth",
@@ -118,14 +124,20 @@ def arm_raise_hint(angle: Optional[float]) -> str:
 
 def shoulder_flexion_hint(angle: Optional[float]) -> str:
     """hint_key for shoulder_flexion — SHOULDER angle (hip-shoulder-elbow),
-    target 90° = arm at shoulder height with elbow kept straight."""
+    target 160° = arm raised forward and up OVERHEAD, elbow kept straight.
+    Drives a step-by-step guide: arm down at the side (< 40°) is the START
+    position, then the patient raises up overhead and holds at the top."""
     if angle is None:
         return "shoulder_flexion.not_visible"
-    diff = angle - 90
+    # Arm hanging at the side = the ready/start position for a rep. Cue the
+    # raise from here rather than scolding it as "too low".
+    if angle < 40:
+        return "shoulder_flexion.start"
+    diff = angle - 160
     abs_diff = abs(diff)
-    if abs_diff <= 15:
+    if abs_diff <= 20:
         return "shoulder_flexion.correct"
-    if abs_diff <= 30:
+    if abs_diff <= 40:
         return "shoulder_flexion.yellow_high" if diff > 0 else "shoulder_flexion.yellow_low"
     return "shoulder_flexion.red_high" if diff > 0 else "shoulder_flexion.red_low"
 
@@ -390,10 +402,24 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
     if is_arm:
         if is_shoulder_flexion:
             # Shoulder joint angle: hip -> shoulder -> elbow.
-            # Target 90° = arm raised to shoulder height, elbow straight.
+            # Target 160° = arm raised forward and up OVERHEAD (above shoulder
+            # height), elbow straight. Green band 140-180° rewards a full
+            # overhead raise; below that the guide cues the patient higher.
             angle, color, overall = _score_tracked(
-                lambda s: _arm_triple(s, True), target=90, green=15, yellow=30)
+                lambda s: _arm_triple(s, True), target=160, green=20, yellow=40)
+            # Elbow extension (shoulder -> elbow -> wrist) so the two-checkpoint
+            # guide can require a STRAIGHT arm — the shoulder angle alone can't
+            # see a bent-elbow "cheat" (arm down/up but elbow folded). Report the
+            # most-bent tracked side (smallest angle) so one bent arm is caught.
+            elbow_angle = None
+            for s in tracked_sides:
+                triple = _arm_triple(s, False)
+                if triple:
+                    ea = angle_at_vertex(*triple)
+                    if ea is not None and (elbow_angle is None or ea < elbow_angle):
+                        elbow_angle = ea
             angles["bicepCurl"] = angle  # frontend overlay key, reused
+            angles["elbowAngle"] = elbow_angle
             colors["bicepCurl"] = color
             hint_key = shoulder_flexion_hint(angle)
         elif is_hand_to_mouth:
