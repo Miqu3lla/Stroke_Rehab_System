@@ -39,6 +39,7 @@ const usePoseResultHandler = ({
   setRepProgress,
   setHoldProgress,
   setFeedbackText,
+  setFeedbackColor,
   setIsExercising,
   // refs shared with useCamera
   watchdogRef,
@@ -49,6 +50,7 @@ const usePoseResultHandler = ({
   setScoreBufferRef,
   lastFrameTimeRef,
   repCounterRef,
+  sfGuideRef,
   holdInFormMsRef,
   brokenMsRef,
   voicePlayRef,
@@ -113,7 +115,12 @@ const usePoseResultHandler = ({
           set_index: currentSetIndex,
           format: 'reps',
           score: computeAvgScore(setScoreBufferRef.current),
-          reps_completed: repCounterRef.current.repsCompleted,
+          // Shoulder flexion counts in sfGuideRef, others in repCounterRef;
+          // only one advances per exercise, so max() picks the live one.
+          reps_completed: Math.max(
+            repCounterRef.current.repsCompleted,
+            sfGuideRef.current.repsCompleted,
+          ),
           target_reps: currentSet?.target_reps || 12,
           hold_seconds_per_rep: currentSet?.hold_seconds_per_rep ?? null,
           weight_kg: currentSet?.target_weight_kg != null ? currentWeightKg : null,
@@ -233,12 +240,6 @@ const usePoseResultHandler = ({
         setCurrentScore(score);
         setScoreBufferRef.current.push(score);
       }
-      setJointColors(colors);
-
-      // Voice cue for this frame's form state. The hook edge-triggers on
-      // hint_key change (with a cooldown) so this fires every frame cheaply.
-      voicePlayRef.current?.(result.hint_key);
-
       // Time since the previous processed frame. The WS arrives at a
       // jittery 8-15 FPS, so every per-frame accumulator (functionality
       // hold-per-rep AND hold-set tracking) integrates this dt instead of
@@ -248,6 +249,55 @@ const usePoseResultHandler = ({
         ? Math.min(MAX_FRAME_DT_MS, Math.max(0, now - lastFrameTimeRef.current))
         : 0;
       lastFrameTimeRef.current = now;
+
+      // ── Shoulder flexion: two-checkpoint guided flow ───────────────────
+      // Its own state machine (START arm-down = green → raise → TOP overhead =
+      // green → hold N s → rep) drives the banner color, skeleton color, reps,
+      // and voice for this exercise, replacing the generic RepCounter. It reads
+      // the raw shoulder angle (result.angles.bicepCurl), so the two green ends
+      // are unambiguous. currentScore/scoreBuffer above stay the raw overhead
+      // form quality, so the analytics average isn't skewed by the checkpoints.
+      const isShoulderFlexion = /shoulder[_ ]?flexion/i.test(exerciseHint || '');
+      if (isShoulderFlexion && currentSet?.format === 'reps') {
+        const snap = sfGuideRef.current.update(
+          result.angles?.bicepCurl ?? null,
+          result.angles?.elbowAngle ?? null,
+          dt,
+        );
+        // Skeleton arm + banner both follow the checkpoint color.
+        setJointColors({ ...colors, bicepCurl: snap.color });
+        setFeedbackColor(snap.color);
+        voicePlayRef.current?.(snap.hintKey);
+        setRepProgress((prev) =>
+          prev.repsCompleted === snap.repsCompleted
+            && prev.state === snap.state
+            && prev.setComplete === snap.setComplete
+            && prev.targetReps === snap.targetReps
+            ? prev
+            : {
+                repsCompleted: snap.repsCompleted,
+                targetReps: snap.targetReps,
+                setComplete: snap.setComplete,
+                state: snap.state,
+              }
+        );
+        if (snap.feedbackText) setFeedbackText(snap.feedbackText);
+        if (snap.setComplete) {
+          finishCurrentSetRef.current?.('finish');
+          inFlightRef.current = false;
+          return;
+        }
+        inFlightRef.current = false;
+        if (captureAndSend) captureAndSend();
+        return;
+      }
+
+      setJointColors(colors);
+      setFeedbackColor(null);
+
+      // Voice cue for this frame's form state. The hook edge-triggers on
+      // hint_key change (with a cooldown) so this fires every frame cheaply.
+      voicePlayRef.current?.(result.hint_key);
 
       // Advance the rep counter for rep-format sets. Hold sets ignore
       // RepCounter entirely (handled by the timer + form-broken tracking).

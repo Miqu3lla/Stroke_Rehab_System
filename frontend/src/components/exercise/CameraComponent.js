@@ -33,6 +33,7 @@ export default function CameraComponent({ exercise, onComplete }) {
     jointColors,
     keypoints,
     feedbackText,
+    feedbackColor,
     inferenceSize,
     cameraLayout,
     affectedSide,
@@ -212,6 +213,7 @@ export default function CameraComponent({ exercise, onComplete }) {
               isModelReady={isModelReady}
               feedbackText={feedbackText}
               currentScore={currentScore}
+              feedbackColor={feedbackColor}
             />
             {!!modelError && <Text className="text-[#ffb8b8] text-center text-sm font-bold mt-2">⚠️ {modelError}</Text>}
           </View>
@@ -281,7 +283,7 @@ export default function CameraComponent({ exercise, onComplete }) {
   );
 };
 
-const PostureFeedback = ({ exercise, keypoints, isModelReady, feedbackText, currentScore }) => {
+const PostureFeedback = ({ exercise, keypoints, isModelReady, feedbackText, currentScore, feedbackColor }) => {
   const exerciseHint = [
     exercise?.name || '',
     exercise?.focus || '',
@@ -314,7 +316,7 @@ const PostureFeedback = ({ exercise, keypoints, isModelReady, feedbackText, curr
   if (feedbackText && isModelReady && isValidPosture) {
     return (
       <View className="mt-3 bg-black/20 py-2 px-1 rounded-lg">
-        <Text className="text-center text-[22px] leading-7 font-black tracking-wide" style={{ color: currentScore >= 85 ? '#4CAF50' : currentScore >= 60 ? '#FFC107' : '#FF5252' }}>
+        <Text className="text-center text-[22px] leading-7 font-black tracking-wide" style={{ color: feedbackColor || (currentScore >= 85 ? '#4CAF50' : currentScore >= 60 ? '#FFC107' : '#FF5252') }}>
           {feedbackText}
         </Text>
       </View>

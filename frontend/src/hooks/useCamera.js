@@ -3,6 +3,7 @@ import usePoseDetection from './usePoseDetection';
 import useVoicePlayback from './useVoicePlayback';
 import usePoseResultHandler from './usePoseResultHandler';
 import RepCounter from '../utils/repCounter';
+import ShoulderFlexionGuide from '../utils/shoulderFlexionGuide';
 
 //timer for reps sets
 const REP_SET_CAP_SECONDS = 120;
@@ -79,6 +80,10 @@ const useCamera = (exercise, { onComplete } = {}) => {
   const [jointColors, setJointColors] = useState({});
   const [keypoints, setKeypoints] = useState([]);
   const [feedbackText, setFeedbackText] = useState('');
+  // Coaching-banner color override. When set (e.g. the shoulder-flexion
+  // two-checkpoint guide), the banner uses this instead of deriving its color
+  // from the numeric score. null = fall back to the score-based color.
+  const [feedbackColor, setFeedbackColor] = useState(null);
   const [inferenceSize, setInferenceSize] = useState({ width: 1, height: 1 });
   const [cameraLayout, setCameraLayout] = useState({ width: 0, height: 0 });
 
@@ -102,6 +107,10 @@ const useCamera = (exercise, { onComplete } = {}) => {
   const pausedRef = useRef(false);
   // Per-set RepCounter — replaced on each set transition.
   const repCounterRef = useRef(new RepCounter(12));
+  // Per-set two-checkpoint guide for shoulder flexion — replaced alongside the
+  // RepCounter on each set transition. Only used when the exercise is shoulder
+  // flexion; the generic RepCounter drives every other exercise.
+  const sfGuideRef = useRef(new ShoulderFlexionGuide(12));
   // Per-set running score buffer (for computing this set's avg on
   // completion). Cleared on each set transition.
   const setScoreBufferRef = useRef([]);
@@ -262,6 +271,7 @@ const useCamera = (exercise, { onComplete } = {}) => {
     setRepProgress,
     setHoldProgress,
     setFeedbackText,
+    setFeedbackColor,
     setIsExercising,
     watchdogRef,
     retryRef,
@@ -271,6 +281,7 @@ const useCamera = (exercise, { onComplete } = {}) => {
     setScoreBufferRef,
     lastFrameTimeRef,
     repCounterRef,
+    sfGuideRef,
     holdInFormMsRef,
     brokenMsRef,
     voicePlayRef,
@@ -293,6 +304,12 @@ const useCamera = (exercise, { onComplete } = {}) => {
     // 0 and count on entry, as before.
     const holdMsPerRep = Number(nextSet?.hold_seconds_per_rep || 0) * 1000;
     repCounterRef.current = new RepCounter(targetReps, holdMsPerRep);
+    // Fresh shoulder-flexion guide for the set. Uses the SAME per-rep hold as
+    // the RepCounter (0 = count on reaching the top, like plain-rep sets; a
+    // Functionality set's hold_seconds_per_rep makes each top a sustained
+    // hold). Passing 0 rather than forcing 6s keeps a 12-rep set inside the
+    // time cap.
+    sfGuideRef.current = new ShoulderFlexionGuide(targetReps, holdMsPerRep);
     setScoreBufferRef.current = [];
     holdInFormMsRef.current = 0;
     brokenMsRef.current = 0;
@@ -360,7 +377,13 @@ const useCamera = (exercise, { onComplete } = {}) => {
         set_index: currentSetIndex,
         format: 'reps',
         score,
-        reps_completed: repCounterRef.current.repsCompleted,
+        // Shoulder flexion counts reps in sfGuideRef; every other exercise in
+        // repCounterRef. Only one is ever advanced per exercise, so max() picks
+        // the live counter without needing the exercise check here.
+        reps_completed: Math.max(
+          repCounterRef.current.repsCompleted,
+          sfGuideRef.current.repsCompleted,
+        ),
         target_reps: currentSet?.target_reps || 12,
         hold_seconds_per_rep: currentSet?.hold_seconds_per_rep ?? null,
         weight_kg: currentSet?.target_weight_kg != null ? currentWeightKg : null,
@@ -513,6 +536,7 @@ const useCamera = (exercise, { onComplete } = {}) => {
     jointColors,
     keypoints,
     feedbackText,
+    feedbackColor,
     inferenceSize,
     cameraLayout,
     affectedSide,
