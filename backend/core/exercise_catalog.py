@@ -76,11 +76,12 @@ DEFAULT_OVERLAY = {
 # see core/neural_network.py). Held-out test accuracy after the swap:
 #   shoulder_flexion 73% (per-exercise), hand_to_mouth 71% (per-exercise),
 #   sit_to_stand 87% (global fallback model).
-# knee_extension is DROPPED here: both the global and per-exercise models
-# score ~46% with TP=0 — they never identify a correct knee extension, a
-# consistent data problem, so its clips fall back to the live joint-angle
-# score instead of a misleading LSTM verdict. Re-add once the knee data is
-# reviewed and a model clears ~70%.
+# knee_extension is DROPPED here deliberately, not for lack of data. Re-recorded
+# 2026-08-08: correct vs incorrect is now 100% separable by PEAK knee angle
+# (~170°+ = full extension), but that signal is a transient mid-clip peak and
+# the LSTM reads only its last timestep (both classes return to a bent rest pose
+# → it can't learn it, stalls at 50%). The live joint-angle score already scores
+# that threshold perfectly, so it's the right tool here — an LSTM adds nothing.
 LSTM_SUPPORTED_EXERCISE_TYPES = frozenset({
     "shoulder_flexion",
     "hand_to_mouth",
