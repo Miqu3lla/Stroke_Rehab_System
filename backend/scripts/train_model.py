@@ -4,6 +4,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 import pickle
+import random
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -114,7 +115,8 @@ def _discover_exercises(split_dir: Path) -> List[str]:
 
 
 class StrokeLSTMClassifier(nn.Module):
-    def __init__(self, input_size: int = INPUT_SIZE, hidden_size: int = 128, num_layers: int = 2):
+    def __init__(self, input_size: int = INPUT_SIZE, hidden_size: int = 128, num_layers: int = 2,
+                 readout: str = "last"):
         super().__init__()
         self.lstm = nn.LSTM(
             input_size=input_size,
@@ -128,10 +130,16 @@ class StrokeLSTMClassifier(nn.Module):
             nn.ReLU(),
             nn.Linear(64, 2),
         )
+        # "last" = final-timestep readout (default, all existing models).
+        # "maxpool" = max over all timesteps; opt-in per model for movements
+        # whose signal is a transient mid-clip peak the last frame misses.
+        # Adds no learnable params, so checkpoints load either way.
+        self.readout = readout
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         outputs, _ = self.lstm(x)
-        return self.head(outputs[:, -1, :])
+        pooled = outputs.max(dim=1).values if self.readout == "maxpool" else outputs[:, -1, :]
+        return self.head(pooled)
 
 
 def _build_synthetic_loader(batch_size: int, num_workers: int, pin_memory: bool) -> DataLoader:
@@ -485,6 +493,9 @@ def train_lstm(
     early_stopping_patience: int = 3,
     augment_flip: bool = True,
     exercise_filter: Optional[str] = None,
+    learning_rate: float = 1e-3,
+    use_scheduler: bool = False,
+    seed: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Train a baseline LSTM classifier with validation, checkpointing, and early stopping.
@@ -498,6 +509,15 @@ def train_lstm(
     """
     label = exercise_filter or "ALL exercises (global)"
     print(f"Training data directory: {data_dir.resolve()} | exercise: {label}")
+
+    # Opt-in reproducible seeding for multi-seed runs. Default (None) leaves
+    # training nondeterministic exactly as before, so other callers are unaffected.
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        print(f"Seed: {seed}")
 
     train_source = data_dir / "train"
     val_source = data_dir / "val"
@@ -559,7 +579,10 @@ def train_lstm(
         )
         print(f"Train samples: {len(train_dataset)} | Val samples: {len(val_dataset)}")
 
-    model = StrokeLSTMClassifier().to(device)
+    # Pooled readout is opt-in per exercise; knee_extension only (its signal is
+    # a transient mid-clip peak the last timestep misses). All others stay "last".
+    readout = "maxpool" if (exercise_filter and _slugify(exercise_filter) == "knee_extension") else "last"
+    model = StrokeLSTMClassifier(readout=readout).to(device)
     if compile_model and device.type == "cuda" and hasattr(torch, "compile"):
         try:
             model = torch.compile(model, mode="max-autotune")
@@ -568,7 +591,12 @@ def train_lstm(
             print(f"torch.compile skipped: {exc}")
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    # Opt-in LR scheduler (default off = unchanged for every other caller).
+    # ReduceLROnPlateau halves the LR when val loss stalls — this locks in a
+    # good minimum instead of letting a high LR bounce back out of it.
+    scheduler = (torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=2) if use_scheduler else None)
     use_fp16_scaler = device.type == "cuda" and runtime["amp_dtype"] == torch.float16
     scaler = torch.amp.GradScaler("cuda", enabled=use_fp16_scaler)
 
@@ -624,6 +652,9 @@ def train_lstm(
         avg_val_loss = val_metrics["loss"]
         val_acc = val_metrics["accuracy"]
 
+        if scheduler is not None:
+            scheduler.step(avg_val_loss)
+
         # GPU memory info
         mem_info = _get_gpu_memory_info(device)
         mem_str = f" | GPU: {mem_info['allocated_mb']:.1f}MB allocated, {mem_info['reserved_mb']:.1f}MB reserved" if device.type == "cuda" else ""
@@ -672,7 +703,7 @@ def train_lstm(
             pin_memory=device.type == "cuda",
             exercise_filter=exercise_filter,
         )
-        best_model = StrokeLSTMClassifier().to(device)
+        best_model = StrokeLSTMClassifier(readout=readout).to(device)
         best_model.load_state_dict(torch.load(output_weights, map_location=device))
         test_metrics = _evaluate(
             best_model,
@@ -719,8 +750,11 @@ def train_lstm(
             "epochs_requested": epochs,
             "epochs_run": epoch + 1,
             "batch_size": batch_size,
-            "learning_rate": 1e-3,
+            "learning_rate": learning_rate,
             "optimizer": "Adam",
+            "lr_scheduler": "ReduceLROnPlateau(0.5,p2)" if use_scheduler else None,
+            "seed": seed,
+            "readout": readout,
             "loss": "CrossEntropyLoss",
             "sequence_len": SEQUENCE_LEN,
             "input_size": INPUT_SIZE,

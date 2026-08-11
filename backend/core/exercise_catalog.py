@@ -76,16 +76,17 @@ DEFAULT_OVERLAY = {
 # see core/neural_network.py). Held-out test accuracy after the swap:
 #   shoulder_flexion 73% (per-exercise), hand_to_mouth 71% (per-exercise),
 #   sit_to_stand 87% (global fallback model).
-# knee_extension is DROPPED here deliberately, not for lack of data. Re-recorded
-# 2026-08-08: correct vs incorrect is now 100% separable by PEAK knee angle
-# (~170°+ = full extension), but that signal is a transient mid-clip peak and
-# the LSTM reads only its last timestep (both classes return to a bent rest pose
-# → it can't learn it, stalls at 50%). The live joint-angle score already scores
-# that threshold perfectly, so it's the right tool here — an LSTM adds nothing.
+# knee_extension uses a HYBRID (2026-08-10): a max-pool LSTM (readout wired in
+# core/neural_network.POOLED_READOUT_SLUGS) trained on the re-recorded data, plus
+# a geometric veto — a rep that never sustains near-full knee extension is scored
+# incorrect regardless of the LSTM. Max-pool made the transient mid-clip peak
+# learnable (last-timestep readout stalled at 50%), and the veto closes its one
+# confident false positive. Hybrid = 100% on the held-out test (LSTM alone 87.5%).
 LSTM_SUPPORTED_EXERCISE_TYPES = frozenset({
     "shoulder_flexion",
     "hand_to_mouth",
     "sit_to_stand",
+    "knee_extension",
 })
 
 
