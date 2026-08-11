@@ -702,6 +702,14 @@ def insert_session_video(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     values = (patient_id, session_id, exercise_type, storage_path, duration_seconds)
 
+    # Tiers are tried in order and FALL THROUGH on failure (matching
+    # list_/delete_other_session_video_*): locally, host :5432 is the pooler,
+    # so the direct psycopg2 connect can fail auth while the docker-exec socket
+    # tier and the REST tier still work. Returning on the first tier's failure
+    # (the old bug) left session_videos empty, which silently disabled the
+    # retention purge. last_error is surfaced only if every tier fails.
+    last_error: Optional[str] = None
+
     # psycopg2 (parameterised) — preferred, no injection surface.
     if psycopg2 is not None and _postgres_configured():
         conn = None
@@ -725,7 +733,7 @@ def insert_session_video(payload: Dict[str, Any]) -> Dict[str, Any]:
                 conn.commit()
                 return {"stored": True, "status_code": 201}
         except Exception as exc:
-            return {"stored": False, "error": str(exc)}
+            last_error = str(exc)  # fall through to docker/REST
         finally:
             if conn is not None:
                 try:
@@ -756,9 +764,9 @@ def insert_session_video(payload: Dict[str, Any]) -> Dict[str, Any]:
             result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=8)
             if result.returncode == 0:
                 return {"stored": True, "status_code": 201}
-            return {"stored": False, "error": result.stderr.strip() or result.stdout.strip()}
+            last_error = result.stderr.strip() or result.stdout.strip()  # fall through to REST
         except subprocess.TimeoutExpired:
-            return {"stored": False, "error": "docker_timeout"}
+            last_error = "docker_timeout"
 
     # REST fallback — PostgREST upsert via merge-duplicates on the unique key.
     if _configured():
@@ -777,9 +785,9 @@ def insert_session_video(payload: Dict[str, Any]) -> Dict[str, Any]:
             with request.urlopen(req, timeout=10) as response:
                 return {"stored": True, "status_code": response.status}
         except Exception as exc:
-            return {"stored": False, "error": str(exc)}
+            last_error = str(exc)
 
-    return {"stored": False, "reason": "no_backend_available"}
+    return {"stored": False, "error": last_error or "no_backend_available"}
 
 
 def list_other_session_video_paths(patient_id: str, session_id: str) -> list:

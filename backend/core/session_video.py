@@ -227,13 +227,18 @@ def store_clip(recorder: SessionClipRecorder) -> None:
             return
 
         duration = round(len(recorder.frames()) / fps, 1)
-        insert_session_video({
+        indexed = insert_session_video({
             "patient_id": recorder.patient_id,
             "session_id": recorder.session_id,
             "exercise_type": recorder.exercise_type,
             "storage_path": storage_path,
             "duration_seconds": duration,
         })
+        # A failed index row silently disables the retention purge (it only
+        # deletes clips that have a row) -> clips stack. Log loudly instead.
+        if not indexed.get("stored"):
+            logger.warning("session-video: index row NOT stored (%s) - purge will "
+                           "not see this clip: %s", storage_path, indexed)
 
         _purge_other_sessions(recorder.patient_id, recorder.session_id)
         logger.info(
