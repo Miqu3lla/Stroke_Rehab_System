@@ -1,0 +1,116 @@
+{
+  "timestamp": "2026-08-11T21:12:04",
+  "exercise": "Sit To Stand",
+  "device": "cuda",
+  "gpu": "NVIDIA GeForce RTX 5060 Ti",
+  "hyperparameters": {
+    "epochs_requested": 25,
+    "epochs_run": 9,
+    "batch_size": 16,
+    "learning_rate": 0.001,
+    "optimizer": "Adam",
+    "lr_scheduler": null,
+    "seed": 42,
+    "readout": "last",
+    "loss": "CrossEntropyLoss",
+    "sequence_len": 40,
+    "input_size": 99,
+    "hidden_size": 128,
+    "num_layers": 2,
+    "dropout": 0.2,
+    "early_stopping_patience": 3
+  },
+  "dataset": {
+    "train_samples": 176,
+    "val_samples": 24,
+    "train_class_balance": {
+      "correct": 110,
+      "incorrect": 66
+    },
+    "val_class_balance": {
+      "correct": 15,
+      "incorrect": 9
+    }
+  },
+  "best_epoch": 6,
+  "best_val_loss": 0.3672,
+  "history": [
+    {
+      "epoch": 1,
+      "train_loss": 0.6853,
+      "train_accuracy": 53.41,
+      "val_loss": 0.6495,
+      "val_accuracy": 62.5
+    },
+    {
+      "epoch": 2,
+      "train_loss": 0.635,
+      "train_accuracy": 62.5,
+      "val_loss": 0.6279,
+      "val_accuracy": 62.5
+    },
+    {
+      "epoch": 3,
+      "train_loss": 0.6033,
+      "train_accuracy": 66.48,
+      "val_loss": 0.645,
+      "val_accuracy": 75.0
+    },
+    {
+      "epoch": 4,
+      "train_loss": 0.5354,
+      "train_accuracy": 80.68,
+      "val_loss": 0.5316,
+      "val_accuracy": 83.33
+    },
+    {
+      "epoch": 5,
+      "train_loss": 0.4399,
+      "train_accuracy": 82.95,
+      "val_loss": 0.4879,
+      "val_accuracy": 79.17
+    },
+    {
+      "epoch": 6,
+      "train_loss": 0.3699,
+      "train_accuracy": 84.66,
+      "val_loss": 0.3672,
+      "val_accuracy": 83.33
+    },
+    {
+      "epoch": 7,
+      "train_loss": 0.5099,
+      "train_accuracy": 81.25,
+      "val_loss": 0.7331,
+      "val_accuracy": 75.0
+    },
+    {
+      "epoch": 8,
+      "train_loss": 0.3188,
+      "train_accuracy": 87.5,
+      "val_loss": 0.3744,
+      "val_accuracy": 83.33
+    },
+    {
+      "epoch": 9,
+      "train_loss": 0.2495,
+      "train_accuracy": 89.2,
+      "val_loss": 0.4166,
+      "val_accuracy": 83.33
+    }
+  ],
+  "test": {
+    "loss": 0.2881968319416046,
+    "accuracy": 86.66666666666667,
+    "precision": 0.8182,
+    "recall": 1.0,
+    "f1": 0.9,
+    "confusion_matrix": {
+      "true_positive": 9,
+      "true_negative": 4,
+      "false_positive": 2,
+      "false_negative": 0
+    },
+    "num_samples": 15
+  }
+}

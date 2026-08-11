@@ -18,6 +18,7 @@ backend/models/*.pkl
 !backend/models/lstm_knee_extension.pth
 !backend/models/lstm_shoulder_flexion.pth
 !backend/models/lstm_hand_to_mouth.pth
+!backend/models/lstm_sit_to_stand.pth
 
 # Datasets (large media — kept local, not tracked)
 datasets/

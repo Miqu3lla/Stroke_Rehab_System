@@ -74,8 +74,11 @@ DEFAULT_OVERLAY = {
 # hand_to_mouth exercise (arm_raise was too similar to shoulder_flexion).
 # Moved to per-exercise models (one specialized classifier per movement;
 # see core/neural_network.py). Held-out test accuracy after the swap:
-#   shoulder_flexion 73% (per-exercise), hand_to_mouth 71% (per-exercise),
-#   sit_to_stand 87% (global fallback model).
+#   shoulder_flexion 73% (per-exercise), hand_to_mouth 71% (per-exercise).
+# sit_to_stand now has its own per-exercise model too (2026-08-11): the old
+# "87% global fallback" figure was unbacked (real global test was 66%); the
+# Kaggle sit_to_stand clips were re-integrated and trained standalone —
+# last-timestep readout, 86.67% held-out test (TP9/TN4/FP2/FN0).
 # knee_extension uses a HYBRID (2026-08-10): a max-pool LSTM (readout wired in
 # core/neural_network.POOLED_READOUT_SLUGS) trained on the re-recorded data, plus
 # a geometric veto — a rep that never sustains near-full knee extension is scored

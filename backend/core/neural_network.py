@@ -60,7 +60,9 @@ POOLED_READOUT_SLUGS = frozenset({"knee_extension"})
 # Supported exercises that intentionally serve the global fallback model (no
 # per-exercise checkpoint expected). Every OTHER supported exercise must ship
 # its own lstm_<slug>.pth — falling back there is a silent misclassification.
-_GLOBAL_FALLBACK_OK = frozenset({"sit_to_stand"})
+# Empty as of 2026-08-11: sit_to_stand got its own trained model, so all four
+# supported exercises now require a per-exercise checkpoint.
+_GLOBAL_FALLBACK_OK: frozenset = frozenset()
 
 
 # One entry per exercise_type slug (plus "__global__" for the fallback
