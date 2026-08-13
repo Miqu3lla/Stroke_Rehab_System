@@ -1,5 +1,13 @@
+import logging
 import math
-from typing import Any, Dict, List, Optional
+import os
+from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger("uvicorn.error")
+
+# Set H2M_GATE_DEBUG=1 to log the mouth-zone gate's inputs and verdict for every
+# scored hand_to_mouth frame (confidences, distances, why it skipped).
+_H2M_GATE_DEBUG = os.getenv("H2M_GATE_DEBUG", "").strip().lower() in ("1", "true", "yes")
 
 # MediaPipe BlazePose landmark indices used by realtime form scoring.
 _NOSE, _MOUTH_LEFT, _MOUTH_RIGHT = 0, 9, 10
@@ -86,7 +94,7 @@ HINT_TEXT: Dict[str, str] = {
     "shoulder_flexion.yellow_low": "Almost there — reach a little higher",
     "shoulder_flexion.red_high": "Bring your hand back down to your shoulder",
     "shoulder_flexion.red_low": "Keep reaching — take your arm straight up overhead",
-    # Hand to mouth — elbow angle, target 40°
+    # Hand to mouth — elbow angle, therapist-confirmed target 13° (green 7-19°)
     "hand_to_mouth.not_visible": "Step back — your shoulder, elbow, and hand need to be visible",
     "hand_to_mouth.correct": "Great form! Hold your hand up at your mouth",
     "hand_to_mouth.yellow_high": "Almost there — bring your hand up closer to your mouth",
@@ -96,6 +104,9 @@ HINT_TEXT: Dict[str, str] = {
     # Spatial gate: elbow is bent but the hand isn't actually at the mouth
     # (e.g. raised in the air / off to the side).
     "hand_to_mouth.off_target": "Bring your hand to your mouth",
+    # Gate couldn't verify the position (face landmarks not confidently tracked).
+    # Never award green on unverified data — ask the patient to reposition.
+    "hand_to_mouth.unverified": "Can't see your face clearly — face the camera and step back a little",
     # Sit to stand (also the generic leg + cross-body leg fallback) — knee angle, target 90°
     "sit_to_stand.not_visible": "Step back — your hip, knee, and ankle need to be visible",
     "sit_to_stand.correct": "Great form! Hold this position",
@@ -156,17 +167,40 @@ def shoulder_flexion_hint(angle: Optional[float]) -> str:
     return "shoulder_flexion.red_high" if diff > 0 else "shoulder_flexion.red_low"
 
 
+# hand_to_mouth ELBOW band (shoulder-elbow-wrist). Therapist-confirmed intent,
+# CALIBRATED FROM THE DATASET 2026-08-13: measured over all 48 correct-labelled
+# clips, on the 633 frames where hand_in_mouth_zone() verified the hand was
+# actually at the mouth. That distribution: p5=1 p25=5 p50=11 p75=16 p90=20
+# p99=27, and ZERO frames above 29. Correct reps are spread across depths (43%
+# of verified frames sit below 10 degrees; per-clip medians span 3-24), so the
+# band is deliberately ASYMMETRIC-IN-EFFECT: green reaches down to 0 because you
+# cannot over-flex past a fist at your own face, and a deeper reach must not be
+# punished. Red starts at 30 because no genuine at-mouth frame ever gets there.
+#
+# The old target of 40 (green 20-60) was inverted in practice: it scored the
+# fist-at-CHIN position green while marking the correct fist-at-mouth position
+# yellow and telling the patient to "ease your hand down" - i.e. reps only
+# counted when the exercise was done WRONG. Note this band is NOT what separates
+# mouth from chin (they differ by ~1 degree of elbow angle, and verified
+# at-mouth frames run to 27): hand_in_mouth_zone() does that spatial check. This
+# band only drives the Form Score and coaching text.
+# Single source of truth - both the scorer and the hint function read these.
+_H2M_TARGET_ANGLE = 9.5
+_H2M_GREEN_BAND = 9.5    # 9.5 +/- 9.5 -> green 0-19  (89% of verified at-mouth frames)
+_H2M_YELLOW_BAND = 20.0  # 9.5 +/- 20  -> yellow 20-29 (keeps chin out of green), red 30+
+
+
 def hand_to_mouth_hint(angle: Optional[float]) -> str:
-    """hint_key for hand_to_mouth — ELBOW angle (shoulder-elbow-wrist),
-    target 40° = hand brought up to the mouth (deep flexion),
-    bands green=20/yellow=40."""
+    """hint_key for hand_to_mouth — ELBOW angle (shoulder-elbow-wrist).
+    Target/bands come from the therapist-confirmed constants above; "high"
+    (angle above target) means the hand is too LOW, so the cue is to bring it up."""
     if angle is None:
         return "hand_to_mouth.not_visible"
-    diff = angle - 40
+    diff = angle - _H2M_TARGET_ANGLE
     abs_diff = abs(diff)
-    if abs_diff <= 20:
+    if abs_diff <= _H2M_GREEN_BAND:
         return "hand_to_mouth.correct"
-    if abs_diff <= 40:
+    if abs_diff <= _H2M_YELLOW_BAND:
         return "hand_to_mouth.yellow_high" if diff > 0 else "hand_to_mouth.yellow_low"
     return "hand_to_mouth.red_high" if diff > 0 else "hand_to_mouth.red_low"
 
@@ -234,57 +268,133 @@ def partial_visibility_score(keypoints: List[Dict[str, float]], indices) -> int:
 
 # ── Hand-to-mouth spatial gate ─────────────────────────────────────────────
 # The elbow angle alone can't tell a real hand-to-mouth (hand folded up to the
-# face) from a raised, bent-elbow "wave" — both flex the elbow, so a wave scored
-# ~96%. So we ALSO require the wrist to actually be in the mouth zone: close to
-# the mouth AND below the nose. Thresholds come from the recorded Correct clips
-# (scripts h2m diagnostic): at peak flexion the wrist sits 0.22-0.58 shoulder-
-# widths from the mouth and always ≥0.31 shoulder-width BELOW the nose, whereas a
-# wave puts the wrist above the nose. Margins added for live-tracking noise and
-# body-proportion variation.
-_H2M_WRIST_MOUTH_MAX_RATIO = 0.75   # correct clips peak at 0.58
-_H2M_WRIST_MIN_BELOW_NOSE = 0.10    # correct clips ≥0.31 below nose; a wave is above it
-_H2M_OFF_TARGET_SCORE = 10          # firmly red when the hand isn't at the mouth
+# face) from a bent-elbow compensation held at chest height — both flex the
+# elbow — so we ALSO require the wrist to actually be in the mouth zone.
+#
+# Thresholds measured on the recorded Correct clips in LIVE pixel coordinates
+# (x*width, y*height — the shape score_pose actually receives), all in
+# shoulder-widths:
+#   genuine hand-at-mouth : 0.19-0.40 from the mouth, +0.17..+0.45 ABOVE the
+#                           shoulder line, and 0.076-0.258 BELOW the nose
+#   wrist at collarbone   : 0.33-0.46 from the mouth,  0.00 above the shoulders
+#   wrist at mid-chest    : 0.97-1.29 from the mouth,  below the shoulder line
+#   fist at nose / temple : 0.09-0.44 from the mouth,  AT or ABOVE the nose
+#   hand waving by head   : 0.47-0.52 from the mouth,  ABOVE the nose
+#
+# The zone therefore needs all three bounds — each one catches a different
+# cheat, and no single one catches them all:
+#   distance      rejects a hand nowhere near the face (mid-chest, overhead)
+#   above-shoulder rejects a wrist parked at the collarbone/chest. Distance
+#                  ALONE cannot: 0.33-0.46 overlaps the genuine 0.19-0.40,
+#                  which is exactly why a chest compensation scored 96% green.
+#   below-nose    rejects a raised "wave" / fist held at nose level. Neither of
+#                 the other two can: a fist at the nose is CLOSER to the mouth
+#                 (0.09-0.12) than a real rep and sits high above the shoulders.
+# Net: the wrist must sit in the band between the shoulder line and the nose,
+# near the mouth — which is where a hand actually is during this exercise.
+_H2M_WRIST_MOUTH_MAX_RATIO = 0.55     # genuine peaks at 0.40; rejects mid-chest (0.97+)
+# Vertical band, measured DOWN from the nose. Anchoring to the nose (a face
+# landmark, like the mouth) rather than to the shoulder line matters: a
+# shoulder-relative height test is camera-angle dependent and failed in the
+# field. In a live labelled capture the same person's wrist sat 0.43-0.52 below
+# the nose holding at the mouth, but 0.66-0.94 below it doing the chest/collarbone
+# compensation - a 0.145 gap, the widest of any metric measured, so the band
+# splits it at ~0.59. The upper bound rejects a raised wave / fist at nose level
+# (which measures 0.00 or above, and is CLOSER to the mouth than a real rep).
+_H2M_WRIST_MIN_BELOW_NOSE = 0.03      # genuine clears this by 0.076 at worst
+_H2M_WRIST_MAX_BELOW_NOSE = 0.59      # genuine max 0.52; compensation min 0.66
+_H2M_OFF_TARGET_SCORE = 10            # firmly red when the hand isn't at the mouth
+# "Can't verify" must never award green: an unverifiable frame is capped to the
+# top of the yellow band instead of letting the elbow-only score stand.
+_H2M_UNVERIFIED_SCORE = 55
 
 
-def hand_in_mouth_zone(keypoints: List[Dict[str, float]], sides) -> Optional[bool]:
-    """Whether a tracked-side wrist is in the mouth zone (near the mouth AND
-    below the nose).
+def hand_in_mouth_zone_detail(
+    keypoints: List[Dict[str, float]], sides
+) -> Tuple[Optional[bool], Dict[str, Any]]:
+    """Gate verdict plus the numbers behind it (for logging/diagnosis).
 
-    Returns True if any tracked side qualifies, False if it's determinable and
-    none do, and None if the face/shoulder landmarks aren't confident enough to
-    judge — in which case the caller SKIPS the gate rather than false-reject
-    (e.g. the hand-at-mouth itself can occlude the face). `sides` are the
-    mirrored-frame side letters ("L"/"R") used throughout this module."""
+    Verdict: True if a tracked-side wrist is in the mouth zone, False if it's
+    determinable and none are, None if the landmarks aren't confident enough to
+    judge. The mouth zone requires ALL THREE:
+      - within _H2M_WRIST_MOUTH_MAX_RATIO shoulder-widths of the mouth
+      - at least _H2M_WRIST_MIN_BELOW_NOSE below the nose (rejects a raised
+        wave / fist at nose level, which is even CLOSER to the mouth than a
+        real rep, so distance alone can never catch it)
+      - no more than _H2M_WRIST_MAX_BELOW_NOSE below the nose (rejects a wrist
+        parked at the collarbone/chest, which sits just as close to the mouth
+        as a genuine hand-at-mouth does)
+    The last two form a vertical band measured DOWN from the nose. It is
+    anchored to the nose rather than to the shoulder line on purpose: a
+    shoulder-relative height test is camera-angle dependent and false-rejected
+    every genuine frame in field testing.
+    `sides` are the mirrored-frame side letters ("L"/"R") used in this module.
+    """
+    d: Dict[str, Any] = {"reason": None, "nose_c": None, "mouth_c": None,
+                         "shoulder_c": None, "wrists": []}
     if len(keypoints) <= max(_MOUTH_RIGHT, _RIGHT_WRIST):
-        return None
+        d["reason"] = "too_few_landmarks"
+        return None, d
     nose = keypoints[_NOSE]
     ml, mr = keypoints[_MOUTH_LEFT], keypoints[_MOUTH_RIGHT]
     ls, rs = keypoints[_LEFT_SHOULDER], keypoints[_RIGHT_SHOULDER]
+    d["nose_c"] = round(float(nose.get("score", 0)), 3)
+    d["mouth_c"] = round(float(min(ml.get("score", 0), mr.get("score", 0))), 3)
+    d["shoulder_c"] = round(float(min(ls.get("score", 0), rs.get("score", 0))), 3)
     # Need a confident nose, mouth, and shoulders to place the zone and set its
-    # scale. The mouth center comes straight from ml/mr, so if those landmarks
-    # aren't reliable (head turned, poor light, or the hand-at-mouth occluding
-    # them) a mis-placed center could wrongly read "far from mouth" and cap a
-    # valid score — so return None to SKIP the gate instead of false-rejecting.
+    # scale. A mis-placed mouth center would produce a meaningless distance, so
+    # we report "can't judge" rather than a wrong verdict — but the CALLER now
+    # treats that as unverified (capped), not as a pass.
     if (nose.get("score", 0) < 0.5
             or min(ml.get("score", 0), mr.get("score", 0)) < 0.5
             or min(ls.get("score", 0), rs.get("score", 0)) < 0.3):
-        return None
+        d["reason"] = "low_face_confidence"
+        return None, d
     shoulder_w = math.hypot(ls["x"] - rs["x"], ls["y"] - rs["y"])
     if shoulder_w < 1e-3:
-        return None
+        d["reason"] = "degenerate_shoulder_width"
+        return None, d
     mouth_x = (ml["x"] + mr["x"]) / 2.0
     mouth_y = (ml["y"] + mr["y"]) / 2.0
+    shoulder_y = (ls["y"] + rs["y"]) / 2.0
     determinable = False
+    verdict = False
     for s in sides:
         wr = keypoints[_LEFT_WRIST] if s == "L" else keypoints[_RIGHT_WRIST]
-        if wr.get("score", 0) < 0.3:
+        wc = float(wr.get("score", 0))
+        if wc < 0.3:
+            d["wrists"].append({"side": s, "conf": round(wc, 3), "skipped": True})
             continue
         determinable = True
         ratio = math.hypot(wr["x"] - mouth_x, wr["y"] - mouth_y) / shoulder_w
-        below_nose = (nose["y"] - wr["y"]) / shoulder_w   # < 0 ⇒ wrist below nose
-        if ratio <= _H2M_WRIST_MOUTH_MAX_RATIO and below_nose <= -_H2M_WRIST_MIN_BELOW_NOSE:
-            return True
-    return False if determinable else None
+        # Image y grows downward, so "above the shoulder line" is positive here
+        # and vs_nose is negative when the wrist is below the nose.
+        above = (shoulder_y - wr["y"]) / shoulder_w
+        vs_nose = (nose["y"] - wr["y"]) / shoulder_w
+        near = ratio <= _H2M_WRIST_MOUTH_MAX_RATIO
+        # Vertical band below the nose: `under` rejects a wave at/above nose
+        # level, `in_band` rejects a wrist dropped to the chest/collarbone.
+        # `above` is logged for diagnosis only - it is NOT a criterion, because
+        # shoulder-relative height varies with camera angle (see constants).
+        under = vs_nose <= -_H2M_WRIST_MIN_BELOW_NOSE
+        in_band = vs_nose >= -_H2M_WRIST_MAX_BELOW_NOSE
+        d["wrists"].append({"side": s, "conf": round(wc, 3),
+                            "ratio": round(ratio, 3), "above": round(above, 3),
+                            "vs_nose": round(vs_nose, 3), "near": near,
+                            "under": under, "in_band": in_band,
+                            "pass": near and under and in_band})
+        if near and under and in_band:
+            verdict = True
+    if not determinable:
+        d["reason"] = "no_confident_wrist"
+        return None, d
+    d["reason"] = "evaluated"
+    return verdict, d
+
+
+def hand_in_mouth_zone(keypoints: List[Dict[str, float]], sides) -> Optional[bool]:
+    """Verdict-only wrapper around hand_in_mouth_zone_detail()."""
+    return hand_in_mouth_zone_detail(keypoints, sides)[0]
 
 
 def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_side: str) -> Dict[str, Any]:
@@ -437,21 +547,35 @@ def score_pose(keypoints: List[Dict[str, float]], exercise_type: str, affected_s
             colors["bicepCurl"] = color
             hint_key = shoulder_flexion_hint(angle)
         elif is_hand_to_mouth:
-            # Elbow angle (shoulder -> elbow -> wrist). Target 40° = hand
-            # brought up to the mouth (deep flexion). Generous bands reward
-            # the raised-to-mouth position without punishing a deeper reach.
+            # Elbow angle (shoulder -> elbow -> wrist), therapist-confirmed band
+            # (see _H2M_TARGET_ANGLE): green = fist at the MOUTH, not the chin.
             angle, color, overall = _score_tracked(
-                lambda s: _arm_triple(s, False), target=40, green=20, yellow=40)
+                lambda s: _arm_triple(s, False), target=_H2M_TARGET_ANGLE,
+                green=_H2M_GREEN_BAND, yellow=_H2M_YELLOW_BAND)
             hint_key = hand_to_mouth_hint(angle)
-            # Spatial hard gate: a bent elbow alone also fits a raised "wave",
-            # so require the wrist to actually be in the mouth zone. When it
-            # isn't, force red + a "bring your hand to your mouth" cue no matter
-            # how good the elbow angle looks. None (can't judge — e.g. the hand
-            # occludes the face) leaves the elbow score untouched.
-            if hand_in_mouth_zone(keypoints, tracked_sides) is False:
+            # Spatial hard gate: a bent elbow alone also fits a chest-height
+            # compensation, so require the wrist to actually be in the mouth
+            # zone. Rehab-safe defaults — an unverified position must never be
+            # awarded green:
+            #   False (definitely not at the mouth) -> red, "bring it up" cue
+            #   None  (can't verify: face not tracked) -> capped to yellow +
+            #          a reposition cue, rather than trusting the elbow alone
+            in_zone, gate_detail = hand_in_mouth_zone_detail(keypoints, tracked_sides)
+            if _H2M_GATE_DEBUG:
+                # ASCII only - this can run on a cp1252 console.
+                logger.info("h2m-gate: verdict=%s reason=%s nose_c=%s mouth_c=%s "
+                            "shoulder_c=%s wrists=%s elbow_angle=%s elbow_score=%s",
+                            in_zone, gate_detail.get("reason"), gate_detail.get("nose_c"),
+                            gate_detail.get("mouth_c"), gate_detail.get("shoulder_c"),
+                            gate_detail.get("wrists"), angle, overall)
+            if in_zone is False:
                 overall = min(overall, _H2M_OFF_TARGET_SCORE)
                 color = "#F44336"
                 hint_key = "hand_to_mouth.off_target"
+            elif in_zone is None:
+                overall = min(overall, _H2M_UNVERIFIED_SCORE)
+                color = "#FFC107"
+                hint_key = "hand_to_mouth.unverified"
             angles["bicepCurl"] = angle
             colors["bicepCurl"] = color
         else:
