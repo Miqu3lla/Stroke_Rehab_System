@@ -1,8 +1,8 @@
-"""Stabilized knee_extension (pooled) training: lower LR + ReduceLROnPlateau
-scheduler (gradient clipping already in the loop). Runs several seeds, prints a
-per-seed consistency table, and selects the best by VALIDATION loss (never test).
-The winner is copied to models/lstm_knee_extension_pooled.pth. Knee stays gated;
-this file is inert. Delete after the experiment concludes.
+"""Reproduction recipe for knee_extension's live hybrid model: pooled-readout
+LSTM, lower LR + ReduceLROnPlateau scheduler (gradient clipping already in the
+loop). Runs several seeds, prints a per-seed consistency table, and selects the
+best by VALIDATION loss (never test). The winner is written directly to
+models/lstm_knee_extension.pth — the filename the runtime actually loads.
 """
 import shutil
 from pathlib import Path
@@ -12,7 +12,7 @@ from train_model import train_lstm
 SCRIPT_DIR = Path(__file__).resolve().parent
 DATA_DIR = SCRIPT_DIR.parent.parent / "datasets" / "Ready_Dataset"
 SCRATCH = Path(r"C:\Users\MATTHE~1\AppData\Local\Temp\claude\c--Users-Matthew-Dee-Documents-School-work-LSPU-School-works-3rd-year-2nd-sem-CMSC-312-Development-Stroke-Rehab-System\79b714fb-4194-46a4-8cd1-f88714cd159e\scratchpad\knee_seeds")
-FINAL = SCRIPT_DIR.parent / "models" / "lstm_knee_extension_pooled.pth"
+FINAL = SCRIPT_DIR.parent / "models" / "lstm_knee_extension.pth"
 SEEDS = [0, 1, 2, 3, 42]
 
 

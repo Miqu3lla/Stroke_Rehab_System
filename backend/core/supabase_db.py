@@ -744,29 +744,35 @@ def insert_session_video(payload: Dict[str, Any]) -> Dict[str, Any]:
     # docker exec — patient_id/session_id are gated above; the free-text
     # values go through _quote_sql_value so they're safely escaped.
     if shutil.which("docker") is not None:
-        container_name = os.getenv("SUPABASE_DOCKER_CONTAINER", "supabase-db")
-        config = _get_postgres_config()
-        cols = "(patient_id, session_id, exercise_type, storage_path, duration_seconds)"
-        vals_sql = ", ".join(_quote_sql_value(v) for v in values)
-        sql = (
-            f"INSERT INTO public.session_videos {cols} VALUES ({vals_sql}) "
-            "ON CONFLICT (patient_id, session_id, exercise_type) DO UPDATE SET "
-            "storage_path = EXCLUDED.storage_path, "
-            "duration_seconds = EXCLUDED.duration_seconds, "
-            "created_at = now()"
-        )
-        command = [
-            "docker", "exec", "-e", f"PGPASSWORD={config['password']}",
-            container_name, "psql", "-U", config["user"], "-d", config["dbname"],
-            "-tA", "-c", sql,
-        ]
         try:
+            container_name = os.getenv("SUPABASE_DOCKER_CONTAINER", "supabase-db")
+            config = _get_postgres_config()
+            cols = "(patient_id, session_id, exercise_type, storage_path, duration_seconds)"
+            vals_sql = ", ".join(_quote_sql_value(v) for v in values)
+            sql = (
+                f"INSERT INTO public.session_videos {cols} VALUES ({vals_sql}) "
+                "ON CONFLICT (patient_id, session_id, exercise_type) DO UPDATE SET "
+                "storage_path = EXCLUDED.storage_path, "
+                "duration_seconds = EXCLUDED.duration_seconds, "
+                "created_at = now()"
+            )
+            command = [
+                "docker", "exec", "-e", f"PGPASSWORD={config['password']}",
+                container_name, "psql", "-U", config["user"], "-d", config["dbname"],
+                # ON_ERROR_STOP=1: without it a failing INSERT can still exit 0,
+                # which we'd wrongly read below as "stored".
+                "-v", "ON_ERROR_STOP=1", "-tA", "-c", sql,
+            ]
             result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=8)
             if result.returncode == 0:
                 return {"stored": True, "status_code": 201}
             last_error = result.stderr.strip() or result.stdout.strip()  # fall through to REST
         except subprocess.TimeoutExpired:
             last_error = "docker_timeout"
+        except Exception as exc:
+            # Config lookup, SQL construction, or docker launch (OSError) failed
+            # before we could even run psql — fall through to REST either way.
+            last_error = str(exc)
 
     # REST fallback — PostgREST upsert via merge-duplicates on the unique key.
     if _configured():

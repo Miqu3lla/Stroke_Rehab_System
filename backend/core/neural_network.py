@@ -147,19 +147,26 @@ def _knee_angle_xy(kp: List[float], hip: int, knee: int, ank: int) -> Optional[f
 
 
 def _knee_reaches_extension(sequence: Sequence[Any]) -> bool:
-    """True if the exercised leg SUSTAINS near-full knee extension. Counts, per
-    leg, frames at/above the extension angle and takes the more-extended leg
-    (seated knee extension is unilateral). Robust to single-frame noise spikes."""
-    counts = {"L": 0, "R": 0}
+    """True if the exercised leg SUSTAINS near-full knee extension. Tracks,
+    per leg, the longest run of CONSECUTIVE frames at/above the extension
+    angle (not a total count — separated spikes must not accumulate) and
+    takes the more-extended leg (seated knee extension is unilateral).
+    Robust to single-frame noise spikes below threshold breaking the streak,
+    since a real hold clears the frame minimum well past any one drop."""
+    streaks = {"L": 0, "R": 0}
+    longest = {"L": 0, "R": 0}
     for frame in sequence:
         kp = _extract_keypoints(frame)
-        if not any(kp):  # skip empty/padded (no-pose) frames
+        if not any(kp):  # skip empty/padded (no-pose) frames, don't break the streak
             continue
         for side, (hip, knee, ank) in _KNEE_LEGS.items():
             angle = _knee_angle_xy(kp, hip, knee, ank)
             if angle is not None and angle >= _KNEE_EXTENSION_ANGLE:
-                counts[side] += 1
-    return max(counts.values()) >= _KNEE_MIN_EXTENDED_FRAMES
+                streaks[side] += 1
+                longest[side] = max(longest[side], streaks[side])
+            else:
+                streaks[side] = 0
+    return max(longest.values()) >= _KNEE_MIN_EXTENDED_FRAMES
 
 
 def _prepare_input_tensor(sequence: Sequence[Any], target_len: int = DEFAULT_SEQUENCE_LEN) -> torch.Tensor:
@@ -270,7 +277,8 @@ def warmup_model() -> None:
         # Fail LOUDLY (in logs) when a required per-exercise checkpoint is absent:
         # its .pth is gitignored-except in .gitignore and must be deployed, but a
         # fresh/other machine could still miss it and would then silently serve the
-        # global model. sit_to_stand is skipped — it uses the global model by design.
+        # global model. _GLOBAL_FALLBACK_OK is currently empty — every supported
+        # exercise (including sit_to_stand) requires its own checkpoint.
         for slug in slugs:
             if slug in _GLOBAL_FALLBACK_OK:
                 continue

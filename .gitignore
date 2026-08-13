@@ -14,7 +14,8 @@ backend/models/*.pth
 backend/models/*.pkl
 # ...except the small (~1MB) per-exercise LSTM checkpoints, which MUST ship with
 # the code: if missing, that exercise silently falls back to the global model and
-# misclassifies. sit_to_stand intentionally uses the global model, so it has none.
+# misclassifies. All four supported exercises require their own checkpoint here —
+# none of them intentionally relies on the global model anymore.
 !backend/models/lstm_knee_extension.pth
 !backend/models/lstm_shoulder_flexion.pth
 !backend/models/lstm_hand_to_mouth.pth

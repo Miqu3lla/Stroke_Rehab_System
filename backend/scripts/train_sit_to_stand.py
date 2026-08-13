@@ -6,8 +6,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 from train_model import train_lstm
 
-DATA = Path("../../datasets/Ready_Dataset").resolve()
-OUT = Path("../models/lstm_sit_to_stand.pth").resolve()
+SCRIPT_DIR = Path(__file__).resolve().parent
+DATA = (SCRIPT_DIR.parent.parent / "datasets" / "Ready_Dataset").resolve()
+OUT = (SCRIPT_DIR.parent / "models" / "lstm_sit_to_stand.pth").resolve()
 
 
 def main():

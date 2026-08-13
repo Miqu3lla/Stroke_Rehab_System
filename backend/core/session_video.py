@@ -227,18 +227,28 @@ def store_clip(recorder: SessionClipRecorder) -> None:
             return
 
         duration = round(len(recorder.frames()) / fps, 1)
-        indexed = insert_session_video({
+        index_payload = {
             "patient_id": recorder.patient_id,
             "session_id": recorder.session_id,
             "exercise_type": recorder.exercise_type,
             "storage_path": storage_path,
             "duration_seconds": duration,
-        })
-        # A failed index row silently disables the retention purge (it only
-        # deletes clips that have a row) -> clips stack. Log loudly instead.
+        }
+        indexed = insert_session_video(index_payload)
         if not indexed.get("stored"):
-            logger.warning("session-video: index row NOT stored (%s) - purge will "
-                           "not see this clip: %s", storage_path, indexed)
+            # insert_session_video is an idempotent UPSERT, so retrying a
+            # transient failure (e.g. a docker-exec timeout) is safe.
+            indexed = insert_session_video(index_payload)
+
+        if not indexed.get("stored"):
+            # A failed index row silently disables the retention purge (it
+            # only deletes clips that have a row) -> the object we just
+            # uploaded would be an orphan no purge can ever reach. No DB row
+            # was committed on either attempt, so it's safe to remove it now.
+            logger.warning("session-video: index row NOT stored after retry (%s) - "
+                           "removing orphaned upload: %s", storage_path, indexed)
+            delete_storage_object(_BUCKET, storage_path)
+            return
 
         _purge_other_sessions(recorder.patient_id, recorder.session_id)
         logger.info(
