@@ -13,6 +13,11 @@ an LSTM movement-form classifier, and a Random Forest recommendation engine.
 When fixing CodeRabbit findings or any other bug/issue, keep comments inline and short (1-2 lines max).
 No block/docstring-style explanations of what the code does — only note non-obvious "why" when needed.
 
+## Conventions
+
+- **ASCII-only in backend log/print messages.** No em-dashes, arrows, or other non-ASCII — the Windows
+  console is cp1252 and a non-interactive/redirected run crashes on encode. Use `-` not `—`, `->` not `→`.
+
 ## Commands
 
 ### Backend (from `backend/`)
@@ -25,12 +30,19 @@ python -m uvicorn main_api:app --host 0.0.0.0 --port 8001
 No backend test suite exists yet (no `pytest`/`test_*.py` files). Verify changes manually via
 `http://localhost:8001/docs` or `curl http://localhost:8001/health`.
 
-Retrain the LSTM:
+Retrain the LSTMs. The live models are **per-exercise** (`models/lstm_<slug>.pth`), trained against the
+split dataset under `datasets/Ready_Dataset/{train,val,test}/<Exercise> {Correct,Incorrect}/` (gitignored;
+clips are Git LFS). Train all four at once, or one exercise via a driver script:
 
 ```powershell
 cd backend/scripts
-python train_model.py --data-dir ../../datasets/processed_data --out ../models/lstm_weights.pth --epochs 10
+python train_model.py --per-exercise --batch-size 16      # all exercises -> lstm_<slug>.pth
+python train_sit_to_stand.py                              # one exercise (reproduction recipe)
 ```
+
+Any training script that sets `num_workers > 0` MUST guard its entrypoint with `if __name__ == "__main__":`
+— Windows spawns DataLoader workers by re-importing the module, so an unguarded top-level `train_lstm(...)`
+call recurses and crashes.
 
 ### Frontend (from `frontend/`)
 
@@ -97,6 +109,40 @@ Two paths to the same MediaPipe/LSTM core:
 
 `POST /predict/form` classifies a pre-extracted pose sequence; `POST /predict/form-from-video` does
 extraction + classification from an uploaded video in one call.
+
+### Form classifier (per-exercise LSTM, `core/neural_network.py`)
+
+There is **one specialized binary classifier per exercise** (`models/lstm_<slug>.pth`), not one global
+model. All four supported exercises (`LSTM_SUPPORTED_EXERCISE_TYPES` in `exercise_catalog.py` —
+`shoulder_flexion`, `hand_to_mouth`, `sit_to_stand`, `knee_extension`) ship their own trained checkpoint;
+`_load_model_for` resolves per-exercise → global (`lstm_weights.pth`) → rule-based. The global fallback is
+effectively dead now (`_GLOBAL_FALLBACK_OK` is empty), so `warmup_model()` logs a loud warning if any
+required `lstm_<slug>.pth` is missing — a fresh machine falling back to the global model would silently
+misclassify.
+
+Watch these invariants when touching the classifier:
+
+- **`StrokeLSTMClassifier` is duplicated** in `scripts/train_model.py` and `core/neural_network.py` and the
+  two definitions MUST stay byte-identical, or `load_state_dict` mismatches silently corrupt inference.
+- **Readout must match how the checkpoint was trained.** Default is last-timestep; `knee_extension` uses
+  `maxpool` (its correct/incorrect signal is a transient mid-clip peak the last timestep misses), gated by
+  `POOLED_READOUT_SLUGS`. A mismatch loads fine but scores garbage.
+- **`knee_extension` is a hybrid**: pooled LSTM + a geometric veto (`_knee_reaches_extension`) that forces
+  "incorrect" when the leg never sustains near-full extension, regardless of the net. It tags `model_source`
+  with `+geo_veto`.
+- **The `.pth` and its `_metrics.json` are version-controlled** via `!` exceptions in `.gitignore` (the
+  metrics file is the evidence trail for a model's reported accuracy). Everything else in `models/` is
+  ignored. When adding a new per-exercise model, add the `!backend/models/lstm_<slug>.pth` exception too.
+
+### Session evidence videos (`core/session_video.py`)
+
+Piggybacks on the `/ws/pose` stream (no second device recording): buffers ~10s of raw JPEGs the patient is
+visible for, encodes a browser-playable H.264 clip on a background thread, uploads to the private
+`session-evidence` Storage bucket, writes a `session_videos` row, then purges the patient's clips from
+earlier sessions. Best-effort — any failure is logged and swallowed so pose scoring never blocks on it. The
+retention purge is DB-driven (it only deletes clips that have a row), so `insert_session_video` must fall
+through all persistence tiers rather than early-return on the first failure — otherwise a missing row
+silently disables the purge and clips stack.
 
 ### Recommendation engine
 
