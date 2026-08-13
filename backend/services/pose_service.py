@@ -19,13 +19,24 @@ def angle_at_vertex(a: Dict[str, float], b: Dict[str, float], c: Dict[str, float
 
 
 def color_and_score(angle: Optional[float], target: float, green: float, yellow: float) -> Dict[str, Any]:
+    """Map a joint angle to a band colour + 0-100 form score.
+
+    The score is CONTINUOUS across the band edges: green runs 100->90, yellow
+    picks up at 90 and runs to 50, red picks up at 50 and decays to 0. It used
+    to jump (green bottomed out at 95 while yellow started at 70), so a 1-degree
+    wobble at the edge swung the displayed score 25 points and read as a bug.
+    Band COLOURS are unchanged, and rep/hold counting keys off colour, not the
+    number - so this only affects the score the patient sees.
+    """
     if angle is None:
         return {"color": "#888888", "score": 0}
     diff = abs(angle - target)
     if diff <= green:
-        return {"color": "#4CAF50", "score": max(90, round(100 - (diff / green) * 5))}
+        span = green if green > 0 else 1.0
+        return {"color": "#4CAF50", "score": round(100 - (diff / span) * 10)}
     if diff <= yellow:
-        return {"color": "#FFC107", "score": max(50, round(70 - ((diff - green) / (yellow - green)) * 20))}
+        span = (yellow - green) if yellow > green else 1.0
+        return {"color": "#FFC107", "score": round(90 - ((diff - green) / span) * 40)}
     # Red zone: no floor and a steeper penalty so an idle pose (arm fully
     # down, leg fully straight = diff ≥ 60-90) scores near 0 instead of
     # staying at the old 20-point floor.
