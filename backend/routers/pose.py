@@ -1,13 +1,13 @@
 import asyncio
 import base64
-import os
 import threading
 from typing import Any, Dict, Optional
 
 import jwt  # PyJWT
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from jwt.exceptions import PyJWKClientError
 
-from core.auth import verify_jwt
+from core.auth import AuthConfigError, decode_supabase_jwt, verify_jwt
 from core.mediapipe_vision import create_realtime_pose, estimate_pose_from_image_bytes
 from core.rate_limit import limiter
 from core.session_video import SessionClipRecorder, store_clip_async
@@ -23,12 +23,6 @@ router = APIRouter()
 # "internal server error" (standard).
 _WS_CLOSE_UNAUTHORIZED = 4401
 _WS_CLOSE_SERVER_ERROR = 1011
-
-# Duplicated from core/auth.py so the WS handshake doesn't reach into
-# that module's private constants. If the algorithm or audience ever
-# changes, update both call sites.
-_JWT_ALGORITHMS = ["HS256"]
-_JWT_AUDIENCE = "authenticated"
 
 # How long we wait for the client's auth message after accept(). The
 # mobile client sends it within a few hundred ms in normal conditions;
@@ -99,25 +93,19 @@ def estimate_pose(
 def _decode_ws_token(token: str) -> Optional[Dict[str, Any]]:
     """Validate a Supabase JWT supplied via the WS auth message.
 
-    Returns the decoded claims on success, None on failure. The caller
-    uses the verified `sub` claim as the patient_id for evidence-clip
-    capture — never a client-supplied field — so one connection can't
-    store to or delete another patient's clips.
+    Returns the decoded claims on success, None if the TOKEN itself is
+    invalid. Does NOT catch AuthConfigError (server misconfiguration) —
+    that propagates to the caller on purpose, so pose_ws can close with a
+    server-error code instead of folding it into the same "unauthorized"
+    outcome as a bad token. The caller uses the verified `sub` claim as the
+    patient_id for evidence-clip capture — never a client-supplied field —
+    so one connection can't store to or delete another patient's clips.
     """
     if not token:
         return None
-    secret = os.getenv("SUPABASE_JWT_SECRET", "").strip()
-    if not secret:
-        return None
     try:
-        return jwt.decode(
-            token,
-            secret,
-            algorithms=_JWT_ALGORITHMS,
-            audience=_JWT_AUDIENCE,
-            options={"require": ["exp", "sub"]},
-        )
-    except jwt.InvalidTokenError:
+        return decode_supabase_jwt(token)
+    except (jwt.InvalidTokenError, PyJWKClientError):
         return None
 
 
@@ -197,7 +185,14 @@ async def pose_ws(websocket: WebSocket) -> None:
     if not isinstance(auth_msg, dict) or auth_msg.get("type") != "auth":
         await websocket.close(code=_WS_CLOSE_UNAUTHORIZED)
         return
-    claims = _decode_ws_token(str(auth_msg.get("token") or ""))
+    try:
+        claims = _decode_ws_token(str(auth_msg.get("token") or ""))
+    except AuthConfigError:
+        # Server misconfiguration (e.g. missing SUPABASE_URL) — not the
+        # client's fault, so close with the server-error code instead of
+        # the "unauthorized" one every bad-token case below uses.
+        await websocket.close(code=_WS_CLOSE_SERVER_ERROR)
+        return
     if not claims:
         await websocket.close(code=_WS_CLOSE_UNAUTHORIZED)
         return

@@ -44,3 +44,25 @@ CREATE UNIQUE INDEX IF NOT EXISTS session_videos_patient_session_exercise_key
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('session-evidence', 'session-evidence', false)
 ON CONFLICT (id) DO NOTHING;
+
+-- RLS. Table holds real patient session data and is reachable via
+-- PostgREST — a plain CREATE TABLE defaults to RLS off, which silently
+-- re-exposes every patient's clips to anyone with the anon key if this
+-- file is ever rerun after a drop/recreate (that happened once already;
+-- this block exists so it can't happen silently again). Idempotent: safe
+-- to rerun against a table that already has these policies.
+ALTER TABLE public.session_videos ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS session_videos_self_select ON public.session_videos;
+CREATE POLICY session_videos_self_select
+    ON public.session_videos
+    FOR SELECT
+    TO authenticated
+    USING (patient_id = (SELECT auth.uid()));
+
+DROP POLICY IF EXISTS session_videos_service_all ON public.session_videos;
+CREATE POLICY session_videos_service_all
+    ON public.session_videos
+    TO service_role
+    USING (true)
+    WITH CHECK (true);
