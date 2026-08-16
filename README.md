@@ -116,12 +116,14 @@ Stroke_Rehab_System/
 
 Create `backend/.env` with the Supabase credentials. The backend rejects
 every request to a protected route unless the JWT in the
-`Authorization: Bearer ...` header validates against `SUPABASE_JWT_SECRET`.
+`Authorization: Bearer ...` header verifies against the project's JWKS,
+fetched from `SUPABASE_URL` (ES256 — see `backend/core/auth.py`). There is
+no shared secret to configure; `SUPABASE_URL` is what auth actually depends
+on, not just DB/storage config.
 
 ```env
 SUPABASE_URL=https://<project>.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=<service-role-key>   # backend writes, bypasses RLS
-SUPABASE_JWT_SECRET=<jwt-secret>                # Settings → API → JWT Settings
 ```
 
 Frontend reads from `frontend/.env`:

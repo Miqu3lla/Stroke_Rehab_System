@@ -27,12 +27,14 @@ Only `/health` should remain unauthenticated.
 from __future__ import annotations
 
 import os
+import threading
+import time
 from typing import Any, Dict, Optional
 
 import jwt  # PyJWT
 from fastapi import Header, HTTPException, status
-from jwt import PyJWKClient
-from jwt.exceptions import PyJWKClientError
+from jwt import PyJWK, PyJWKClient
+from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError
 
 
 _ALGORITHMS = ["ES256"]
@@ -49,16 +51,56 @@ class AuthConfigError(Exception):
     """
 
 
+# Floor between forced JWKS refetches (see _ThrottledPyJWKClient below).
+_MIN_FORCED_REFRESH_INTERVAL_SECONDS = 5.0
+
+
+class _ThrottledPyJWKClient(PyJWKClient):
+    """PyJWKClient.get_signing_key() forces an unconditional JWKS refetch
+    (bypassing `lifespan`'s 5-minute cache) whenever a token's kid isn't in
+    the cached set - by design, so a real key rotation is picked up right
+    away instead of waiting out the cache TTL. But nothing else rate-limits
+    that path: every request carrying a *fabricated* kid also forces a real
+    network round trip to Supabase, so an attacker spamming random kids at
+    verify_jwt's own 200/minute limit turns into 200/minute of upstream
+    JWKS requests. This floors the gap between forced refreshes so a burst
+    of bad kids collapses onto one real refetch; genuine rotation is still
+    picked up, just at worst _MIN_FORCED_REFRESH_INTERVAL_SECONDS later.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._last_forced_refresh = 0.0
+        self._refresh_lock = threading.Lock()
+
+    def get_signing_key(self, kid: str) -> PyJWK:
+        signing_keys = self.get_signing_keys()
+        signing_key = self.match_kid(signing_keys, kid)
+        if signing_key:
+            return signing_key
+
+        with self._refresh_lock:
+            now = time.monotonic()
+            if now - self._last_forced_refresh >= _MIN_FORCED_REFRESH_INTERVAL_SECONDS:
+                signing_keys = self.get_signing_keys(refresh=True)
+                signing_key = self.match_kid(signing_keys, kid)
+                self._last_forced_refresh = now
+
+        if not signing_key:
+            raise PyJWKClientError(f'Unable to find a signing key that matches: "{kid}"')
+        return signing_key
+
+
 # Cached PyJWKClient — it fetches + caches the JWKS document itself (5 min
 # default TTL), so we only need to rebuild it if SUPABASE_URL changes (e.g.
 # a redeploy pointed at a different project) or on first use. Module-level
 # rather than per-request: refetching the whole JWKS on every request would
 # be a needless round trip to Supabase on the hot path.
-_jwks_client: Optional[PyJWKClient] = None
+_jwks_client: Optional[_ThrottledPyJWKClient] = None
 _jwks_client_url: Optional[str] = None
 
 
-def _get_jwks_client() -> PyJWKClient:
+def _get_jwks_client() -> _ThrottledPyJWKClient:
     base_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
     if not base_url:
         # AuthConfigError, not HTTPException: this function is shared by an
@@ -72,7 +114,7 @@ def _get_jwks_client() -> PyJWKClient:
     jwks_url = f"{base_url}/auth/v1/.well-known/jwks.json"
     global _jwks_client, _jwks_client_url
     if _jwks_client is None or _jwks_client_url != jwks_url:
-        _jwks_client = PyJWKClient(jwks_url)
+        _jwks_client = _ThrottledPyJWKClient(jwks_url)
         _jwks_client_url = jwks_url
     return _jwks_client
 
@@ -150,11 +192,21 @@ def verify_jwt(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
             detail="Token audience mismatch",
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
+    except PyJWKClientConnectionError as exc:
+        # We couldn't even reach the JWKS endpoint (network/DNS/Supabase
+        # outage) — that's not evidence the TOKEN is bad, so it shouldn't
+        # be a 401 (which would look like a bad-login prompt to the
+        # client). Caught before PyJWKClientError below since this is a
+        # subclass of it.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Unable to reach JWKS endpoint: {exc}",
+        ) from exc
     except PyJWKClientError as exc:
-        # JWKS fetch failed, or no key matches the token's kid — not the
-        # same as a bad signature, but we still can't verify the token, so
-        # it's still a 401 (kept distinguishable from InvalidTokenError
-        # below for anyone reading server logs).
+        # No key matches the token's kid — not the same as a bad
+        # signature, but we still can't verify the token, so it's still a
+        # 401 (kept distinguishable from InvalidTokenError below for
+        # anyone reading server logs).
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Unable to verify token signature: {exc}",
