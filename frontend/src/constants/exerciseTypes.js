@@ -10,15 +10,16 @@ export const EXERCISE_TYPES = {
 // Frontend uses this to decide whether to fire the post-session sequence
 // to /predict/form — skipping the call for unsupported exercises avoids
 // writing meaningless out-of-distribution verdicts to form_predictions.
-// 2026-07-30: arm_raise retired (swapped for hand_to_mouth). Per-exercise
-// models added for shoulder_flexion + hand_to_mouth; sit_to_stand uses the
-// global model. knee_extension dropped — its model never clears ~46% (a data
-// issue), so it falls back to the live joint-angle score. Keep in sync with
+// 2026-07-30: arm_raise retired (swapped for hand_to_mouth). All four
+// exercises now have per-exercise models (2026-08-11: sit_to_stand got its
+// own model; knee_extension is a hybrid — pooled LSTM + geometric veto, see
+// backend/core/neural_network.py). Keep in sync with
 // backend/core/exercise_catalog.py:LSTM_SUPPORTED_EXERCISE_TYPES.
 export const LSTM_SUPPORTED_EXERCISE_TYPES = new Set([
   "shoulder_flexion",
   "hand_to_mouth",
   "sit_to_stand",
+  "knee_extension",
 ]);
 
 export const isLstmSupported = (exerciseType) =>

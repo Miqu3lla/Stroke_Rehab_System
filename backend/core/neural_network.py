@@ -1,7 +1,8 @@
 import logging
+import math
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 import torch
 from torch import nn
@@ -25,7 +26,8 @@ class StrokeLSTMClassifier(nn.Module):
     # final Linear from head.2 to head.3 — so load_state_dict(strict=False)
     # silently dropped the trained output layer and ran inference on a
     # randomly-initialized classifier. Keep the two definitions identical.
-    def __init__(self, input_size: int = KEYPOINT_DIM, hidden_size: int = 128, num_layers: int = 2):
+    def __init__(self, input_size: int = KEYPOINT_DIM, hidden_size: int = 128, num_layers: int = 2,
+                 readout: str = "last"):
         super().__init__()
         self.lstm = nn.LSTM(
             input_size=input_size,
@@ -39,11 +41,28 @@ class StrokeLSTMClassifier(nn.Module):
             nn.ReLU(),
             nn.Linear(64, 2),
         )
+        # "last" = final-timestep readout (default, must match training). "maxpool"
+        # = max over timesteps; opt-in per model, MUST match how the checkpoint was
+        # trained. Adds no params, so a wrong choice loads fine but scores wrong.
+        self.readout = readout
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         outputs, _ = self.lstm(x)
-        last_hidden = outputs[:, -1, :]
-        return self.head(last_hidden)
+        pooled = outputs.max(dim=1).values if self.readout == "maxpool" else outputs[:, -1, :]
+        return self.head(pooled)
+
+
+# Slugs whose per-exercise model was trained with the max-pool readout and so
+# MUST be reconstructed the same way at inference. knee_extension only — its
+# correct/incorrect signal is a transient mid-clip peak the last timestep misses.
+POOLED_READOUT_SLUGS = frozenset({"knee_extension"})
+
+# Supported exercises that intentionally serve the global fallback model (no
+# per-exercise checkpoint expected). Every OTHER supported exercise must ship
+# its own lstm_<slug>.pth — falling back there is a silent misclassification.
+# Empty as of 2026-08-11: sit_to_stand got its own trained model, so all four
+# supported exercises now require a per-exercise checkpoint.
+_GLOBAL_FALLBACK_OK: frozenset = frozenset()
 
 
 # One entry per exercise_type slug (plus "__global__" for the fallback
@@ -99,6 +118,57 @@ def _extract_keypoints(frame: Any) -> List[float]:
     return [float(v) for v in values]
 
 
+# --- Geometric veto for knee_extension (hybrid with the pooled LSTM) ---
+# A seated knee extension is only "correct" if the leg reaches near-full
+# extension. The pooled LSTM, on its own, confidently mis-scored one incorrect
+# rep whose knee never straightened (P(correct)=0.999). Inference carries no
+# landmark visibility, so a single noisy frame can spike the raw peak angle
+# (that clip: 124deg true peak -> 161deg raw), which defeats a plain peak<X test.
+# So the veto requires the extension to be SUSTAINED: several frames at/above the
+# angle. In the held-out set every correct rep holds >=11 frames >=165deg while
+# every incorrect rep has zero, so this separates cleanly and a lone spike can't.
+_KNEE_EXTENSION_ANGLE = 165.0    # near-full knee extension (hip-knee-ankle)
+_KNEE_MIN_EXTENDED_FRAMES = 3    # sustained, not a one-frame spike
+_KNEE_LEGS = {"L": (23, 25, 27), "R": (24, 26, 28)}  # (hip, knee, ankle) indices
+
+
+def _knee_angle_xy(kp: List[float], hip: int, knee: int, ank: int) -> Optional[float]:
+    """Interior knee angle (hip-knee-ankle) from a flat [x,y,z]*33 frame, x/y only."""
+    hx, hy = kp[hip * 3], kp[hip * 3 + 1]
+    kx, ky = kp[knee * 3], kp[knee * 3 + 1]
+    ax, ay = kp[ank * 3], kp[ank * 3 + 1]
+    v1 = (hx - kx, hy - ky)
+    v2 = (ax - kx, ay - ky)
+    m1 = math.hypot(*v1)
+    m2 = math.hypot(*v2)
+    if m1 == 0 or m2 == 0:
+        return None
+    return math.degrees(math.acos(max(-1.0, min(1.0, (v1[0] * v2[0] + v1[1] * v2[1]) / (m1 * m2)))))
+
+
+def _knee_reaches_extension(sequence: Sequence[Any]) -> bool:
+    """True if the exercised leg SUSTAINS near-full knee extension. Tracks,
+    per leg, the longest run of CONSECUTIVE frames at/above the extension
+    angle (not a total count — separated spikes must not accumulate) and
+    takes the more-extended leg (seated knee extension is unilateral).
+    Robust to single-frame noise spikes below threshold breaking the streak,
+    since a real hold clears the frame minimum well past any one drop."""
+    streaks = {"L": 0, "R": 0}
+    longest = {"L": 0, "R": 0}
+    for frame in sequence:
+        kp = _extract_keypoints(frame)
+        if not any(kp):  # skip empty/padded (no-pose) frames, don't break the streak
+            continue
+        for side, (hip, knee, ank) in _KNEE_LEGS.items():
+            angle = _knee_angle_xy(kp, hip, knee, ank)
+            if angle is not None and angle >= _KNEE_EXTENSION_ANGLE:
+                streaks[side] += 1
+                longest[side] = max(longest[side], streaks[side])
+            else:
+                streaks[side] = 0
+    return max(longest.values()) >= _KNEE_MIN_EXTENDED_FRAMES
+
+
 def _prepare_input_tensor(sequence: Sequence[Any], target_len: int = DEFAULT_SEQUENCE_LEN) -> torch.Tensor:
     """Fix a live pose sequence to exactly target_len frames.
 
@@ -122,16 +192,17 @@ def _prepare_input_tensor(sequence: Sequence[Any], target_len: int = DEFAULT_SEQ
     return tensor
 
 
-def _load_checkpoint(path: Path) -> Any:
+def _load_checkpoint(path: Path, readout: str = "last") -> Any:
     """Load a per-exercise or global model from `path`, or None if it can't
     be loaded cleanly. strict=True on purpose: a key mismatch means the
     saved architecture drifted from this one, and silently partial-loading
-    (the old strict=False) would run inference on random weights."""
+    (the old strict=False) would run inference on random weights. `readout`
+    must match how the checkpoint was trained (see POOLED_READOUT_SLUGS)."""
     if not (path.exists() and path.stat().st_size > 0):
         return None
     device = _get_device()
     try:
-        model = StrokeLSTMClassifier()
+        model = StrokeLSTMClassifier(readout=readout)
         state = torch.load(path, map_location=device)
         if isinstance(state, dict) and "state_dict" in state:
             state = state["state_dict"]
@@ -163,7 +234,8 @@ def _load_model_for(exercise_type: str) -> Dict[str, Any]:
 
     _configure_cuda_runtime()
 
-    model = _load_checkpoint(MODELS_DIR / f"lstm_{slug}.pth")
+    readout = "maxpool" if slug in POOLED_READOUT_SLUGS else "last"
+    model = _load_checkpoint(MODELS_DIR / f"lstm_{slug}.pth", readout=readout)
     if model is not None:
         entry = {"model": model, "source": f"lstm_{slug}", "has_weights": True}
         _MODEL_CACHE[slug] = entry
@@ -201,6 +273,22 @@ def warmup_model() -> None:
         # checkpoints. A supported exercise with no per-exercise file warms the
         # global fallback path via classify_form_sequence, so that stays covered.
         slugs = sorted(LSTM_SUPPORTED_EXERCISE_TYPES)
+
+        # Fail LOUDLY (in logs) when a required per-exercise checkpoint is absent:
+        # its .pth is gitignored-except in .gitignore and must be deployed, but a
+        # fresh/other machine could still miss it and would then silently serve the
+        # global model. _GLOBAL_FALLBACK_OK is currently empty — every supported
+        # exercise (including sit_to_stand) requires its own checkpoint.
+        for slug in slugs:
+            if slug in _GLOBAL_FALLBACK_OK:
+                continue
+            path = MODELS_DIR / f"lstm_{slug}.pth"
+            if not (path.exists() and path.stat().st_size > 0):
+                logger.warning(
+                    "Required per-exercise model MISSING: %s - '%s' will fall back "
+                    "to the global model and MISCLASSIFY. Place the checkpoint in %s.",
+                    path.name, slug, MODELS_DIR)
+
         for slug in (slugs or ["warmup"]):
             classify_form_sequence(slug, dummy)
     except Exception as exc:
@@ -260,11 +348,27 @@ def classify_form_sequence(exercise_type: str, sequence: Iterable[Any]) -> Dict[
             confidence, predicted_idx = torch.max(probabilities, dim=0)
 
     label = "correct" if int(predicted_idx.item()) == 1 else "incorrect"
+    conf = round(float(confidence.item()), 4)
+    model_source = cache["source"]
+
+    # Hybrid geometric veto (knee_extension only): a rep that never sustains
+    # near-full extension is incorrect no matter how confident the LSTM is —
+    # max-pool can fire "correct" on a partial extension. Only ever downgrades
+    # correct->incorrect, never the reverse.
+    geometric_veto = False
+    if _slug(exercise_type) in POOLED_READOUT_SLUGS and label == "correct" \
+            and not _knee_reaches_extension(sequence):
+        label = "incorrect"
+        conf = 0.9  # rule-based override; the geometric evidence, not the LSTM prob
+        model_source = f"{model_source}+geo_veto"
+        geometric_veto = True
+
     return {
         "label": label,
-        "confidence": round(float(confidence.item()), 4),
+        "confidence": conf,
         "frame_count": len(sequence),
         "exercise_type": exercise_type,
         "device": str(device),
-        "model_source": cache["source"],
+        "model_source": model_source,
+        "geometric_veto": geometric_veto,
     }

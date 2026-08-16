@@ -36,6 +36,16 @@ _SAFE_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # own gate before it can be spliced into the docker-exec psql path.
 _SAFE_SESSION_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 
+# session_videos.exercise_type is client-supplied free text (the WS auth
+# message's exercise_type/exercise_slug, not guaranteed to be a clean slug —
+# see routers/pose.py), so it gets a permissive-but-bounded gate rather than
+# _SAFE_IDENT_RE. session_videos.storage_path is built server-side as
+# "{patient_id}/{session_id}/{slug}.mp4" but is re-validated here too, since
+# _quote_sql_value's escaping is not a substitute for the format gate every
+# other spliced value in this module goes through first.
+_SAFE_EXERCISE_RE = re.compile(r"^[A-Za-z0-9 _-]{1,64}$")
+_SAFE_STORAGE_PATH_RE = re.compile(r"^[A-Za-z0-9._/-]{1,512}$")
+
 # The Cloudflare tunnel in front of Supabase blocks requests whose
 # User-Agent looks non-browser (403 / CF error 1010). Every request we
 # send through the tunnel must carry a browser-like UA — REST calls and
@@ -675,6 +685,88 @@ def delete_storage_object(bucket: str, path: str) -> bool:
         return False
 
 
+def session_video_row_exists_for_path(storage_path: str) -> Optional[bool]:
+    """Whether ANY session_videos row currently references this storage_path.
+
+    storage_path is a deterministic key ("{patient_id}/{session_id}/
+    {exercise_type}.mp4"), not a per-upload-unique one — the Storage object
+    is uploaded with x-upsert precisely so a re-record (e.g. a WS reconnect
+    for the same exercise) overwrites the SAME file. That means an EARLIER,
+    already-committed row can still legitimately point at a path a LATER
+    call is failing to index. Callers use this before deleting a Storage
+    object on an index failure, so returning the wrong answer either way is
+    unsafe: True/False must be a real, confirmed answer, and None (every
+    backend tier failed) must be treated as "unknown, do NOT delete" — never
+    coerced to False.
+    """
+    if not _SAFE_STORAGE_PATH_RE.match(storage_path or ""):
+        return None
+
+    # psycopg2 (parameterised) — preferred, no injection surface.
+    if psycopg2 is not None and _postgres_configured():
+        conn = None
+        try:
+            config = _get_postgres_config()
+            conn = psycopg2.connect(
+                host=config["host"], port=config["port"], dbname=config["dbname"],
+                user=config["user"], password=config["password"],
+            )
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "SELECT EXISTS(SELECT 1 FROM public.session_videos WHERE storage_path = %s)",
+                    (storage_path,),
+                )
+                row = cursor.fetchone()
+                return bool(row[0]) if row is not None else None
+        except Exception:
+            pass  # fall through to docker/REST
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    # docker exec — storage_path is gated above; password and SQL text stay
+    # out of argv the same way insert_session_video's docker tier does.
+    if shutil.which("docker") is not None:
+        try:
+            container_name = os.getenv("SUPABASE_DOCKER_CONTAINER", "supabase-db")
+            config = _get_postgres_config()
+            sql = (
+                "SELECT EXISTS(SELECT 1 FROM public.session_videos WHERE storage_path = "
+                f"{_quote_sql_value(storage_path)})"
+            )
+            command = [
+                "docker", "exec", "-i", "-e", "PGPASSWORD",
+                container_name, "psql", "-U", config["user"], "-d", config["dbname"],
+                "-tA", "-f", "-",
+            ]
+            result = subprocess.run(
+                command, input=sql, capture_output=True, text=True, check=False,
+                timeout=8, env={**os.environ, "PGPASSWORD": config["password"]},
+            )
+            if result.returncode == 0:
+                # psql -tA prints a bare "t" or "f" for a boolean SELECT.
+                return result.stdout.strip().lower().startswith("t")
+        except Exception:
+            pass  # fall through to REST
+
+    # REST fallback — PostgREST filter, existence via a 1-row select.
+    if _configured():
+        try:
+            url = (_rest_url("session_videos")
+                   + f"?storage_path=eq.{parse.quote(storage_path, safe='')}&select=id&limit=1")
+            req = request.Request(url, headers=_headers(), method="GET")
+            with request.urlopen(req, timeout=10) as response:
+                data = json.loads(response.read())
+                return len(data) > 0
+        except Exception:
+            pass
+
+    return None  # every tier failed — undeterminable, caller must not delete
+
+
 def insert_session_video(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Upsert one evidence-clip index row into `public.session_videos`.
 
@@ -699,8 +791,18 @@ def insert_session_video(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     if not _is_valid_uuid(patient_id) or not _SAFE_SESSION_RE.match(session_id or ""):
         return {"stored": False, "reason": "invalid_ids"}
+    if not _SAFE_EXERCISE_RE.match(exercise_type) or not _SAFE_STORAGE_PATH_RE.match(storage_path):
+        return {"stored": False, "reason": "invalid_exercise_or_path"}
 
     values = (patient_id, session_id, exercise_type, storage_path, duration_seconds)
+
+    # Tiers are tried in order and FALL THROUGH on failure (matching
+    # list_/delete_other_session_video_*): locally, host :5432 is the pooler,
+    # so the direct psycopg2 connect can fail auth while the docker-exec socket
+    # tier and the REST tier still work. Returning on the first tier's failure
+    # (the old bug) left session_videos empty, which silently disabled the
+    # retention purge. last_error is surfaced only if every tier fails.
+    last_error: Optional[str] = None
 
     # psycopg2 (parameterised) — preferred, no injection surface.
     if psycopg2 is not None and _postgres_configured():
@@ -725,7 +827,7 @@ def insert_session_video(payload: Dict[str, Any]) -> Dict[str, Any]:
                 conn.commit()
                 return {"stored": True, "status_code": 201}
         except Exception as exc:
-            return {"stored": False, "error": str(exc)}
+            last_error = str(exc)  # fall through to docker/REST
         finally:
             if conn is not None:
                 try:
@@ -733,32 +835,51 @@ def insert_session_video(payload: Dict[str, Any]) -> Dict[str, Any]:
                 except Exception:
                     pass
 
-    # docker exec — patient_id/session_id are gated above; the free-text
-    # values go through _quote_sql_value so they're safely escaped.
+    # docker exec — patient_id/session_id/exercise_type/storage_path are all
+    # gated above, and _quote_sql_value escapes them too. The password and
+    # SQL text are still kept OUT of argv (see command/env below): a process
+    # listing or audit log on the same host must not be able to read them.
     if shutil.which("docker") is not None:
-        container_name = os.getenv("SUPABASE_DOCKER_CONTAINER", "supabase-db")
-        config = _get_postgres_config()
-        cols = "(patient_id, session_id, exercise_type, storage_path, duration_seconds)"
-        vals_sql = ", ".join(_quote_sql_value(v) for v in values)
-        sql = (
-            f"INSERT INTO public.session_videos {cols} VALUES ({vals_sql}) "
-            "ON CONFLICT (patient_id, session_id, exercise_type) DO UPDATE SET "
-            "storage_path = EXCLUDED.storage_path, "
-            "duration_seconds = EXCLUDED.duration_seconds, "
-            "created_at = now()"
-        )
-        command = [
-            "docker", "exec", "-e", f"PGPASSWORD={config['password']}",
-            container_name, "psql", "-U", config["user"], "-d", config["dbname"],
-            "-tA", "-c", sql,
-        ]
         try:
-            result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=8)
+            container_name = os.getenv("SUPABASE_DOCKER_CONTAINER", "supabase-db")
+            config = _get_postgres_config()
+            cols = "(patient_id, session_id, exercise_type, storage_path, duration_seconds)"
+            vals_sql = ", ".join(_quote_sql_value(v) for v in values)
+            sql = (
+                f"INSERT INTO public.session_videos {cols} VALUES ({vals_sql}) "
+                "ON CONFLICT (patient_id, session_id, exercise_type) DO UPDATE SET "
+                "storage_path = EXCLUDED.storage_path, "
+                "duration_seconds = EXCLUDED.duration_seconds, "
+                "created_at = now()"
+            )
+            command = [
+                "docker", "exec", "-i",
+                # "-e PGPASSWORD" with NO "=value" tells docker to forward the
+                # CURRENT value from this subprocess's own env (set below),
+                # instead of putting the password in argv.
+                "-e", "PGPASSWORD",
+                container_name, "psql", "-U", config["user"], "-d", config["dbname"],
+                # ON_ERROR_STOP=1: without it a failing INSERT can still exit 0,
+                # which we'd wrongly read below as "stored".
+                "-v", "ON_ERROR_STOP=1", "-tA",
+                # Script comes over stdin ("-f -"), not "-c <sql>" in argv —
+                # argv would otherwise leak patient_id/session_id/storage_path
+                # to any same-user process listing or audit log.
+                "-f", "-",
+            ]
+            result = subprocess.run(
+                command, input=sql, capture_output=True, text=True, check=False,
+                timeout=8, env={**os.environ, "PGPASSWORD": config["password"]},
+            )
             if result.returncode == 0:
                 return {"stored": True, "status_code": 201}
-            return {"stored": False, "error": result.stderr.strip() or result.stdout.strip()}
+            last_error = result.stderr.strip() or result.stdout.strip()  # fall through to REST
         except subprocess.TimeoutExpired:
-            return {"stored": False, "error": "docker_timeout"}
+            last_error = "docker_timeout"
+        except Exception as exc:
+            # Config lookup, SQL construction, or docker launch (OSError) failed
+            # before we could even run psql — fall through to REST either way.
+            last_error = str(exc)
 
     # REST fallback — PostgREST upsert via merge-duplicates on the unique key.
     if _configured():
@@ -777,9 +898,9 @@ def insert_session_video(payload: Dict[str, Any]) -> Dict[str, Any]:
             with request.urlopen(req, timeout=10) as response:
                 return {"stored": True, "status_code": response.status}
         except Exception as exc:
-            return {"stored": False, "error": str(exc)}
+            last_error = str(exc)
 
-    return {"stored": False, "reason": "no_backend_available"}
+    return {"stored": False, "error": last_error or "no_backend_available"}
 
 
 def list_other_session_video_paths(patient_id: str, session_id: str) -> list:
