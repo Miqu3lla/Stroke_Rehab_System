@@ -44,7 +44,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from core.rate_limit import limiter
-from routers import patients, pose, predictions, recommendations, sessions
+from routers import auth, patients, pose, predictions, recommendations, sessions
 
 app = FastAPI(title="Stroke Rehab API", version="0.1.0", lifespan=lifespan)
 
@@ -56,6 +56,7 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
+app.include_router(auth.router)
 app.include_router(patients.router)
 app.include_router(pose.router)
 app.include_router(predictions.router)

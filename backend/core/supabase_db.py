@@ -46,6 +46,11 @@ _SAFE_SESSION_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 _SAFE_EXERCISE_RE = re.compile(r"^[A-Za-z0-9 _-]{1,64}$")
 _SAFE_STORAGE_PATH_RE = re.compile(r"^[A-Za-z0-9._/-]{1,512}$")
 
+# Loose format gate for the forgot-password email-exists check - not a
+# substitute for real validation, just enough to stop garbage input from
+# reaching the DB layer before it gets spliced into SQL/URLs below.
+_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
 # The Cloudflare tunnel in front of Supabase blocks requests whose
 # User-Agent looks non-browser (403 / CF error 1010). Every request we
 # send through the tunnel must carry a browser-like UA — REST calls and
@@ -620,6 +625,86 @@ def get_patient_by_id(patient_id: str) -> Optional[Dict[str, Any]]:
             return data[0] if data else None
     except Exception:
         return None
+
+
+def email_exists_in_auth(email: str) -> Optional[bool]:
+    """Whether a Supabase Auth user is registered under this email.
+
+    auth.users lives in a schema PostgREST doesn't expose, so the REST
+    fallback here hits GoTrue's admin API (/auth/v1/admin/users) instead
+    of /rest/v1/. Returns None - not False - when every tier is
+    unreachable/inconclusive: callers must treat None as "couldn't
+    determine", never as "doesn't exist", or a transient DB hiccup would
+    falsely tell a real patient their email isn't registered.
+    """
+    if not _EMAIL_RE.match(email or ""):
+        return None
+    normalized = email.strip().lower()
+
+    # psycopg2 (parameterised) - preferred, no injection surface.
+    if psycopg2 is not None and _postgres_configured():
+        try:
+            config = _get_postgres_config()
+            with psycopg2.connect(
+                host=config["host"], port=config["port"], dbname=config["dbname"],
+                user=config["user"], password=config["password"],
+            ) as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT EXISTS(SELECT 1 FROM auth.users WHERE lower(email) = %s)",
+                        (normalized,),
+                    )
+                    row = cursor.fetchone()
+                    return bool(row[0]) if row is not None else None
+        except Exception:
+            pass  # fall through to docker/REST
+
+    # docker exec - email is gated by _EMAIL_RE above; _quote_sql_value
+    # escapes it too before it's spliced into the inline SQL.
+    if shutil.which("docker") is not None:
+        try:
+            container_name = os.getenv("SUPABASE_DOCKER_CONTAINER", "supabase-db")
+            config = _get_postgres_config()
+            sql = (
+                "SELECT EXISTS(SELECT 1 FROM auth.users WHERE lower(email) = "
+                f"{_quote_sql_value(normalized)})"
+            )
+            command = [
+                "docker", "exec", "-e", f"PGPASSWORD={config['password']}",
+                container_name, "psql", "-U", config["user"], "-d", config["dbname"],
+                "-tA", "-c", sql,
+            ]
+            result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=8)
+            if result.returncode == 0:
+                return result.stdout.strip().lower().startswith("t")
+        except subprocess.TimeoutExpired:
+            pass
+        except Exception:
+            pass
+
+    # REST fallback - GoTrue admin API, since auth.users isn't in the
+    # schema PostgREST exposes.
+    if _configured():
+        try:
+            key = _get_service_role_key()
+            url = (
+                f"{_get_supabase_url().rstrip('/')}/auth/v1/admin/users"
+                f"?email={parse.quote(normalized, safe='')}"
+            )
+            headers = {
+                "User-Agent": _BROWSER_USER_AGENT,
+                "apikey": key,
+                "Authorization": f"Bearer {key}",
+            }
+            req = request.Request(url, headers=headers, method="GET")
+            with request.urlopen(req, timeout=10) as response:
+                body = json.loads(response.read().decode("utf-8") or "{}")
+                users = body.get("users", body if isinstance(body, list) else [])
+                return len(users) > 0
+        except Exception:
+            pass
+
+    return None
 
 
 # ── Session evidence video (Storage + session_videos table) ─────────────
