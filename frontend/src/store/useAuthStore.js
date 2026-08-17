@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { Alert } from 'react-native';
 import { supabase } from '../services/supabase';
 import { validatePassword } from '../utils/passwordPolicy';
+import { instance as api } from '../lib/api';
 
 const useAuthStore = create((set, get) => ({
   // State
@@ -155,6 +156,16 @@ const useAuthStore = create((set, get) => ({
     set({ loading: true });
 
     try {
+      // Check the email is actually registered before burning a reset
+      // code on it. Note: this deliberately tells the user whether the
+      // email exists, which is an account-enumeration tradeoff accepted
+      // for this app - see /auth/check-email on the backend.
+      const { data: checkData } = await api.post('/auth/check-email', { email });
+      if (!checkData?.exists) {
+        Alert.alert('Error', 'No account found with this email address');
+        return;
+      }
+
       const { error } = await supabase.auth.resetPasswordForEmail(email);
 
       if (error) {
@@ -165,7 +176,8 @@ const useAuthStore = create((set, get) => ({
       Alert.alert('Check your email', 'We sent a reset code to your email.');
       navigation.navigate('ResetPassword', { email });
     } catch (error) {
-      Alert.alert('Error', error.message);
+      const backendMessage = error?.response?.data?.detail;
+      Alert.alert('Error', backendMessage || error.message);
     } finally {
       set({ loading: false });
     }

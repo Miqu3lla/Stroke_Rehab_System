@@ -2,8 +2,6 @@ import axios from "axios"
 import { supabase } from "../services/supabase"
 
 // Create a singleton Axios instance used throughout the app.
-// baseURL points to the production API (Cloudflare tunnel). All requests
-// will be relative to this URL, e.g. instance.post('/patients', payload).
 export const instance = axios.create({
     baseURL: "https://api.necookie.dev",
 })
