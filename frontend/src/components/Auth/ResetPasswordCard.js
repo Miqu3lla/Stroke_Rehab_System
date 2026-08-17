@@ -49,9 +49,12 @@ export default function ResetPasswordCard({ email, navigation }) {
     return () => clearInterval(timer);
   }, [countdown]);
 
-  const onResendCode = () => {
-    handleForgotPassword(email, navigation);
-    setCountdown(300);
+  const onResendCode = async () => {
+    // Only start the cooldown if a code was actually sent - otherwise a
+    // failed resend (rate limit, network error) locks the user out for
+    // 5 minutes for nothing.
+    const sent = await handleForgotPassword(email, navigation);
+    if (sent) setCountdown(300);
   };
 
   const formatTime = (seconds) => {
