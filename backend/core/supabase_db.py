@@ -700,7 +700,9 @@ def email_exists_in_auth(email: str) -> Optional[bool]:
             with request.urlopen(req, timeout=10) as response:
                 body = json.loads(response.read().decode("utf-8") or "{}")
                 users = body.get("users", body if isinstance(body, list) else [])
-                return len(users) > 0
+                # GoTrue's admin list filter isn't guaranteed exact-match;
+                # confirm one of the returned users actually is this email.
+                return any((u.get("email") or "").lower() == normalized for u in users)
         except Exception:
             pass
 
