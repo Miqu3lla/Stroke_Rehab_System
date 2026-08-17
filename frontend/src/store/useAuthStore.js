@@ -130,6 +130,19 @@ const useAuthStore = create((set, get) => ({
         return;
       }
 
+      // "Confirm email" is on: signUp() creates the user but returns no
+      // session until the link is clicked. Onboarding's session guard would
+      // silently bounce this back to Login anyway - route there directly
+      // with an explanation instead of letting that happen invisibly.
+      if (!data.session) {
+        Alert.alert(
+          'Confirm your email',
+          "We've sent a confirmation link to your email. Please confirm it, then log in."
+        );
+        navigation.replace('Login');
+        return;
+      }
+
       Alert.alert('Account created Succesfully!, Welcome to TheraMotion!')
       navigation.replace('Onboarding');
     } catch (error) {
