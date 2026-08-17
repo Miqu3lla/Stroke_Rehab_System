@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { Eye, EyeOff, Check, X } from 'lucide-react-native';
 import useAuthStore from '../../store/useAuthStore';
@@ -35,8 +35,33 @@ export default function ResetPasswordCard({ email, navigation }) {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [countdown, setCountdown] = useState(300);
 
   const { handleResetPassword, handleForgotPassword, loading } = useAuthStore();
+
+  useEffect(() => {
+    let timer;
+    if (countdown > 0) {
+      timer = setInterval(() => {
+        setCountdown((prev) => prev - 1);
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [countdown]);
+
+  const onResendCode = async () => {
+    // Only start the cooldown if a code was actually sent - otherwise a
+    // failed resend (rate limit, network error) locks the user out for
+    // 5 minutes for nothing.
+    const sent = await handleForgotPassword(email, navigation);
+    if (sent) setCountdown(300);
+  };
+
+  const formatTime = (seconds) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+  };
 
   const policyOk = validatePassword(password).ok;
   const confirmMatches = password.length > 0 && password === confirmPassword;
@@ -55,6 +80,15 @@ export default function ResetPasswordCard({ email, navigation }) {
           keyboardType="number-pad"
           maxLength={6}
         />
+        <TouchableOpacity
+          className="mt-3 ml-2 self-start"
+          onPress={onResendCode}
+          disabled={loading || countdown > 0}
+        >
+          <Text className={`text-lg font-bold ${countdown > 0 ? 'text-gray-400' : 'text-[#0052CC]'}`}>
+            {countdown > 0 ? `Resend code in ${formatTime(countdown)}` : 'Resend code'}
+          </Text>
+        </TouchableOpacity>
       </View>
 
       <View className="mb-6">
@@ -117,13 +151,6 @@ export default function ResetPasswordCard({ email, navigation }) {
         )}
       </TouchableOpacity>
 
-      <TouchableOpacity
-        className="w-full py-4 justify-center items-center"
-        onPress={() => handleForgotPassword(email, navigation)}
-        disabled={loading}
-      >
-        <Text className="text-[#0052CC] text-[20px] font-bold">Resend code</Text>
-      </TouchableOpacity>
     </View>
   );
 }
