@@ -84,7 +84,10 @@ first classification request doesn't pay model-load latency.
 ### Auth model
 
 Every protected route depends on `verify_jwt` (`core/auth.py`), which validates the Supabase-issued
-HS256 JWT from `Authorization: Bearer <token>` against `SUPABASE_JWT_SECRET`. Only `/health` is public.
+HS256 JWT from `Authorization: Bearer <token>` against `SUPABASE_JWT_SECRET`. `/health` and
+`POST /auth/check-email` are the only public routes — the latter runs pre-login (forgot-password flow)
+so it can't require a token; it's rate-limited tighter than the app floor (5/minute) since it's an
+intentional account-enumeration surface (see `core/supabase_db.py`'s `email_exists_in_auth`).
 Any handler taking a `patient_id` must additionally call `assert_patient_match(claims, patient_id)` —
 without it an authenticated user could act on someone else's patient record (RLS is a second layer, not
 a substitute). The `/ws/pose` websocket authenticates via its first handshake message instead of a

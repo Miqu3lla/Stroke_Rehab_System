@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 
 from core.rate_limit import limiter
 from core.supabase_db import email_exists_in_auth
@@ -12,7 +12,7 @@ router = APIRouter()
 
 @router.post("/auth/check-email")
 @limiter.limit("5/minute")  # unauthenticated + enumeration-prone, tighter than the 200/min floor
-def check_email(request: Request, payload: CheckEmailRequest) -> dict:
+def check_email(request: Request, response: Response, payload: CheckEmailRequest) -> dict:
     exists = email_exists_in_auth(payload.email)
     if exists is None:
         # Every DB tier was unreachable/inconclusive - don't guess either

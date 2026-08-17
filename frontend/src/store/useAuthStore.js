@@ -176,8 +176,18 @@ const useAuthStore = create((set, get) => ({
       Alert.alert('Check your email', 'We sent a reset code to your email.');
       navigation.navigate('ResetPassword', { email });
     } catch (error) {
-      const backendMessage = error?.response?.data?.detail;
-      Alert.alert('Error', backendMessage || error.message);
+      // Keep raw HTTP status/axios text ("Request failed with status
+      // code 503") off the screen - show plain-language copy instead.
+      const status = error?.response?.status;
+      let message = 'Something went wrong. Please try again.';
+      if (status === 429) {
+        message = 'Too many attempts. Please wait a moment and try again.';
+      } else if (status === 503) {
+        message = 'Could not verify your email right now. Please try again shortly.';
+      } else if (!error?.response) {
+        message = 'Could not reach the server. Check your connection and try again.';
+      }
+      Alert.alert('Error', message);
     } finally {
       set({ loading: false });
     }
