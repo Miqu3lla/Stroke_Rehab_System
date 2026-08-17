@@ -138,6 +138,89 @@ const useAuthStore = create((set, get) => ({
     }
   },
 
+  // ─── Forgot / Reset Password ────────────────────────────────────────────────
+  // Sends a 6-digit recovery code to the user's email (Supabase's Reset Password
+  // template is configured to render {{ .Token }} instead of a link - see plan).
+  handleForgotPassword: async (email, navigation) => {
+    if (!email) {
+      Alert.alert('Error', 'Please enter your email address');
+      return;
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      Alert.alert('Error', 'Please enter a valid email address');
+      return;
+    }
+
+    set({ loading: true });
+
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email);
+
+      if (error) {
+        Alert.alert('Error', error.message);
+        return;
+      }
+
+      Alert.alert('Check your email', 'We sent a reset code to your email.');
+      navigation.navigate('ResetPassword', { email });
+    } catch (error) {
+      Alert.alert('Error', error.message);
+    } finally {
+      set({ loading: false });
+    }
+  },
+
+  // Verifies the emailed code (establishes a recovery session), sets the new
+  // password, then signs out so the user logs back in normally.
+  handleResetPassword: async (email, code, newPassword, confirmPassword, navigation) => {
+    if (!code) {
+      Alert.alert('Error', 'Please enter the code sent to your email');
+      return;
+    }
+    const policy = validatePassword(newPassword);
+    if (!policy.ok) {
+      Alert.alert('Password too weak', `• ${policy.failed.join('\n• ')}`);
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      Alert.alert('Error', 'Passwords do not match');
+      return;
+    }
+
+    set({ loading: true });
+
+    try {
+      const { error: verifyError } = await supabase.auth.verifyOtp({
+        email,
+        token: code,
+        type: 'recovery',
+      });
+
+      if (verifyError) {
+        Alert.alert('Invalid or expired code', verifyError.message);
+        return;
+      }
+
+      const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
+
+      if (updateError) {
+        Alert.alert('Error', updateError.message);
+        return;
+      }
+
+      // Don't leave the patient signed in via the one-off recovery session.
+      await supabase.auth.signOut();
+
+      Alert.alert('Password updated', 'Please log in with your new password.');
+      navigation.replace('Login');
+    } catch (error) {
+      Alert.alert('Error', error.message);
+    } finally {
+      set({ loading: false });
+    }
+  },
+
   // ─── Logout ───────────────────────────────────────────────────────────────
   // Signs the current user out of Supabase and clears the stored session token
   // (handled automatically by the ExpoSecureStoreAdapter in supabase.js).

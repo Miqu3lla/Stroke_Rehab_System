@@ -4,16 +4,7 @@ import { supabase } from '../services/supabase';
 
 //custom hook for onboarding Screen Logic
 
-// QUESTIONS shape:
-//   id      — answer key in `answers` for single-input/options steps. Not
-//             used as an answer key for `fields`-based steps (the fields
-//             carry their own ids).
-//   title   — header rendered by QuestionCard
-//   options — list of choices for choice-style steps; empty = free-text
-//   fields  — optional array of { id, placeholder, required? } for
-//             multi-input steps (e.g. first/last name on one card). When
-//             present, each field writes to answers[field.id] so the
-//             submit payload stays flat.
+//onboarding questions for the pages
 const QUESTIONS = [
   {
     id: 'full_name',
@@ -76,16 +67,10 @@ export function useOnboarding(navigation) {
   //navigates to the next page of the onboarding
   //or submits the data to the backend if on the last page
   const handleNext = async () => {
-    // Re-entrancy guard: the disabled state on the Next button only
-    // propagates after a render, so two fast taps can both enter here
-    // before isSubmitting flips — firing a duplicate POST /patients.
-    // Bail immediately if a submit is already in flight.
+   
     if (isSubmitting) return;
 
-    // Belt-and-suspenders: block if the current step doesn't have enough
-    // input yet. Uses `hasAnswer` (not `selectedOption`) so multi-field
-    // steps — where the answer lives in fields[*].id, not the step's own
-    // id — pass the check once their required fields are non-empty.
+   
     if (!hasAnswer) return;
 
     if (!isLastStep) {

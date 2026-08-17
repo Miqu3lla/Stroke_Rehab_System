@@ -4,32 +4,8 @@ import { isLstmSupported } from '../constants/exerciseTypes';
 import { supabase } from '../services/supabase';
 import useSessionStore from '../store/useSessionStore';
 
-/**
- * Pose detection over a persistent WebSocket: one /ws/pose connection per
- * exercise, streaming raw JPEG frames and receiving JSON pose results.
- *
- * Auth: open the socket (no token in the URL — it would leak in proxy logs),
- * send an {type:"auth", ...} message first, and wait for "auth_ok" before
- * the frame loop starts. The whole handshake is bounded by HANDSHAKE_TIMEOUT_MS.
- *
- * Auth protocol (since 2026-06-04, after CodeRabbit feedback):
- *   1. Open WS to /ws/pose with NO token in the URL — query-string tokens
- *      end up in reverse-proxy logs and would leak the bearer.
- *   2. On open, send {"type": "auth", "token", "exercise_type",
- *      "affected_side", "patient_id", "session_id"} as the first message.
- *      patient_id + session_id let the backend file the session-evidence
- *      clip it records from this stream (see core/session_video.py).
- *   3. Wait for {"type": "auth_ok"} from the server before we consider
- *      the connection live and let the frame loop start.
- *   4. The whole handshake (TCP connect + auth round-trip) is bounded by
- *      HANDSHAKE_TIMEOUT_MS — without it a stuck CONNECTING socket would
- *      leave the UI on "Preparing pose detection…" forever.
- *
- * The end-of-session LSTM call (classifyFormSequence) still uses HTTP
- * because it's one-shot and benefits from the standard auth interceptor.
- */
 
-// Max wait for the handshake + auth_ok before we give up (avoids a hung UI).
+
 const HANDSHAKE_TIMEOUT_MS = 10000;
 
 const usePoseDetection = () => {
@@ -61,12 +37,6 @@ const usePoseDetection = () => {
     return `${wsBase}/ws/pose`;
   }, []);
 
-  // Opens the pose WebSocket. Resolves true on a successful auth_ok handshake,
-  // false on any connection/auth/timeout failure. onResult fires once per pose
-  // message (after auth_ok). onClose fires ONLY when a socket that completed
-  // the auth_ok handshake later drops — handshake failures (auth rejected,
-  // timeout, connection error) are reported solely through the resolved false,
-  // so callers never see both signals for the same attempt.
   const startDetection = useCallback(async (
     exerciseType = '',
     affectedSide = 'right',

@@ -15,12 +15,6 @@ export const instance = axios.create({
 //
 // supabase.auth.getSession() returns the cached session and silently
 // refreshes the access_token in the background when it's near expiry
-// (autoRefreshToken: true in services/supabase.js), so this always grabs
-// a fresh token without us managing the refresh ourselves.
-//
-// We DON'T throw when there's no session — let the request go through
-// without a header, and the backend will return 401. That keeps pre-login
-// flows (signup, password reset if we ever add it) working uniformly.
 instance.interceptors.request.use(async (cfg) => {
     try {
         const { data: { session } } = await supabase.auth.getSession()
