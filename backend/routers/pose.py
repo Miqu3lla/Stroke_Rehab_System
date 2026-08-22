@@ -33,27 +33,8 @@ _WS_CLOSE_UNAUTHORIZED = 4401
 _WS_CLOSE_SERVER_ERROR = 1011
 _WS_CLOSE_AT_CAPACITY = 4503  # "service unavailable" intent, app-defined range
 
-# Hard cap on concurrent /ws/pose connections. This exists to protect the
-# HOST MACHINE, not just app responsiveness — this backend runs on Matthew's
-# personal PC (shared with VS Code, browser, Discord, Spotify, OBS, etc, not
-# a dedicated server), so a burst of real users can't be allowed to peg the
-# whole machine's CPU.
-#
-# Real measured numbers (2026-08-21 ramp test against this exact code, real
-# WS connections + real JWTs + real frames through the real MediaPipe
-# pipeline, run WITH normal daily-use background load, not an idle machine):
-#   N<=10  system-wide CPU stayed 55-80%, worker RSS ~300MB->1GB, comfortable
-#   N=15   first sustained spike to system-wide CPU 96-98%
-#   N=20-35 system-wide CPU pinned at 96-100% consistently; worker RSS grew
-#           to 2.5-3.5GB
-# The frontend's own 2000ms per-frame watchdog (useCamera.js) never actually
-# tripped even at N=35 (max observed latency 1937ms) while system CPU was
-# already pegged at 100% — so the app's own error signal fires too late to
-# protect the machine; the cap has to be set from the system-CPU data, not
-# from when the app itself starts looking broken.
-#
-# 8 sits with real margin below the first saturation spike (N=15), not just
-# under the point of total failure (N=25+).
+# Hard cap on concurrent /ws/pose connections, protecting the shared host
+# machine's CPU (not a dedicated server) - set with margin below the measured saturation point (~15 concurrent, 2026-08-21 ramp test).
 _MAX_CONCURRENT_CONNECTIONS = 8
 
 # How long we wait for the client's auth message after accept(). The

@@ -39,15 +39,8 @@ logger = logging.getLogger("uvicorn.error")
 # Bucket the clips live in (private; created by db/session_videos.sql).
 _BUCKET = "session-evidence"
 
-# storage_path is deterministic (patient+session+exercise -> same path,
-# x-upsert'd on purpose so a re-record overwrites cleanly). That means two
-# store_clip() calls for the same path CAN run concurrently on different
-# threads (store_clip_async spawns one per clip) - without a lock, one call's
-# "no row references this path, safe to delete the orphan" check can pass
-# right before the OTHER call's upload+insert lands, and it deletes a file
-# the other call's now-committed row depends on. One lock per path serializes
-# the whole upload->index->orphan-cleanup sequence for that path only, so
-# unrelated clips (different paths) never contend.
+# One lock per storage_path (deterministic, reused on re-record) - without
+# it, two concurrent store_clip() calls for the same path could race a delete against a real insert.
 _path_locks: dict = {}
 _path_locks_guard = threading.Lock()
 
@@ -243,10 +236,7 @@ def store_clip(recorder: SessionClipRecorder) -> None:
         slug = _safe_exercise_slug(recorder.exercise_type)
         storage_path = f"{recorder.patient_id}/{recorder.session_id}/{slug}.mp4"
 
-        # Serialize upload->index->orphan-cleanup per path - see _lock_for_path
-        # for why: without this, a concurrent call for this SAME path (e.g. a
-        # re-record) could land its upload+row between our row-check and our
-        # delete, and we'd delete the file that row now points to.
+        # Serialize upload->index->orphan-cleanup per path - see _lock_for_path.
         with _lock_for_path(storage_path):
             upload = upload_to_storage(_BUCKET, storage_path, mp4, "video/mp4")
             if not upload.get("stored"):
@@ -278,9 +268,8 @@ def store_clip(recorder: SessionClipRecorder) -> None:
                 # reference this exact path even though the two attempts we
                 # just made both failed. Confirm no row references it before
                 # deleting - guessing "no row was ever committed" from a local
-                # failure is not the same as confirming it. The per-path lock
-                # above is what makes this check trustworthy: nothing else can
-                # be mid-upload for this exact path while we're checking.
+                # failure is not the same as confirming it (the per-path lock
+                # above is what makes this check trustworthy).
                 row_exists = session_video_row_exists_for_path(storage_path)
                 if row_exists is False:
                     logger.warning("session-video: index row NOT stored after retry (%s) - "

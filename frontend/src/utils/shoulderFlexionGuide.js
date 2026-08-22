@@ -18,13 +18,8 @@ const PHASE_RAISING = 'raising';       // reaching up toward straight overhead
 const PHASE_HOLDING = 'holding';       // straight overhead — TOP (green), holding
 
 // Angle bands (degrees).
-// CP1 gate, calibrated off the 24 therapist-approved sf_correct_v2 clips
-// (datasets/Ready_Dataset/*/Shoulder Flexion Correct): the demonstrated start
-// pose measures 22-47° (median 35), while a resting arm measures 105-148°
-// (median 133). 80 sits in that gap with margin on both sides — generous for
-// a patient with limited ROM, still well clear of rest. Deliberately NOT
-// ELBOW_BENT_MAX: that one also gates rep completion at the top and stays at
-// its validated 110.
+// ELBOW_START_MAX calibrated off 24 therapist-approved clips: start pose
+// 22-47°, resting arm 105-148° — 80 sits in the gap. Separate from ELBOW_BENT_MAX, which also gates rep completion.
 const ELBOW_START_MAX = 80;      // elbow below this = folded into the start pose
 const ELBOW_BENT_MAX = 110;      // elbow below this = "bent" (top-of-rep checks)
 const ELBOW_STRAIGHT_MIN = 150;  // elbow above this = "straight" (required at the top)
@@ -60,11 +55,8 @@ export default class ShoulderFlexionGuide {
       ? null : shoulderAngle;
     const el = elbowAngle === null || elbowAngle === undefined || Number.isNaN(elbowAngle)
       ? null : elbowAngle;
-    // These are KNOWN-only: all false when the elbow angle is null (wrist out
-    // of frame). Entering the start pose requires a KNOWN folded elbow — the
-    // hand is at the shoulder there, so it's measurable, and a false green is
-    // worse than a re-prompt. Proceeding overhead stays lenient (`!elbowBent`)
-    // because the wrist really can leave frame at the top.
+    // KNOWN-only: false when el is null. Entering the start pose requires a
+    // known folded elbow; proceeding overhead stays lenient since the wrist can leave frame there.
     this.shoulder = sh;
     this.elbowAtStart = el !== null && el < ELBOW_START_MAX;
     this.elbowBent = el !== null && el < ELBOW_BENT_MAX;
@@ -76,12 +68,8 @@ export default class ShoulderFlexionGuide {
 
     switch (this.phase) {
       case PHASE_NEED_START:
-        // CP1 has to be EARNED on BOTH axes, matching the other two entries
-        // into READY below — elbow folded (not "resting", 105-148°) AND the
-        // arm actually back down (not just "not overhead"). Without the
-        // shoulder check, holding at ~139° with the elbow tucked would
-        // re-enter READY -> RAISING on the very next overhead frame and mint
-        // a rep from a few-degree dip.
+        // Requires BOTH elbow folded AND arm back down (not just "not
+        // overhead") - otherwise a shallow dip after a rep could mint another.
         if (!this.overhead && this.elbowAtStart && sh < SHOULDER_LEAVE_READY) this.phase = PHASE_READY;
         break;
       case PHASE_READY:

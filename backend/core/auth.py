@@ -80,10 +80,8 @@ class _ThrottledPyJWKClient(PyJWKClient):
             return signing_key
 
         with self._refresh_lock:
-            # Re-check the CACHED keys first (no network call) - another
-            # thread may have already refreshed while we waited for the
-            # lock. Without this, the throttle below would make us give up
-            # on a kid that a sibling request just made valid.
+            # Re-check the cache (no network call) - another thread may have
+            # refreshed it while we waited for the lock.
             signing_keys = self.get_signing_keys()
             signing_key = self.match_kid(signing_keys, kid)
             if not signing_key:

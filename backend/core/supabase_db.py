@@ -697,10 +697,8 @@ def email_exists_in_auth(email: str) -> Optional[bool]:
             pass
 
     # REST fallback - GoTrue admin API, since auth.users isn't in the
-    # schema PostgREST exposes. "email=" isn't a real GoTrue query param
-    # (it's "filter", substring match) and results are paginated - walk
-    # pages instead of trusting page 1, and don't call a not-found page
-    # "doesn't exist" unless we've actually seen the whole filtered set.
+    # schema PostgREST exposes. Uses "filter" (substring) not "email" (not a
+    # real param), and walks pages instead of trusting page 1.
     if _configured():
         try:
             key = _get_service_role_key()
