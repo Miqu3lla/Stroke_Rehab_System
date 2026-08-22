@@ -129,11 +129,7 @@ const useAuthStore = create((set, get) => ({
         Alert.alert('Signup Failed', 'Could not determine authenticated user.');
         return;
       }
-
-      // "Confirm email" is on: signUp() creates the user but returns no
-      // session until the link is clicked. Onboarding's session guard would
-      // silently bounce this back to Login anyway - route there directly
-      // with an explanation instead of letting that happen invisibly.
+      //alert to notify the user that they should confirm their email
       if (!data.session) {
         Alert.alert(
           'Confirm your email',
@@ -171,10 +167,7 @@ const useAuthStore = create((set, get) => ({
     set({ loading: true });
 
     try {
-      // Check the email is actually registered before burning a reset
-      // code on it. Note: this deliberately tells the user whether the
-      // email exists, which is an account-enumeration tradeoff accepted
-      // for this app - see /auth/check-email on the backend.
+      // Check the email is actually registered before sending a reset code
       const { data: checkData } = await api.post('/auth/check-email', { email });
       if (!checkData?.exists) {
         Alert.alert('Error', 'No account found with this email address');
