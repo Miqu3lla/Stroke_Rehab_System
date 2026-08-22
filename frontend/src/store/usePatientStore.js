@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { instance } from '../lib/api';
 import { supabase } from '../services/supabase';
+import { queryClient } from '../lib/queryClient';
 
 // Sets-and-modes feature (Phase B, 2026-06-04): the recommendation
 // endpoint now returns TWO variants per request — `functionality`
@@ -19,6 +20,14 @@ const VALID_MODES = ['functionality', 'strength'];
 const _resolveExercises = (variants, mode) => {
   if (!variants) return [];
   return variants[mode] || variants.functionality || [];
+};
+
+// True when a fresh (non-stale) cache entry already exists for this key —
+// used to skip the loading flag so cached data doesn't flash a spinner.
+// isStaleByTime, not isStale — these queries are never mounted via useQuery, so isStale() would report fresh forever.
+const _isQueryFresh = (queryKey) => {
+  const query = queryClient.getQueryCache().find({ queryKey });
+  return !!query && !query.isStaleByTime(30_000);
 };
 
 const usePatientStore = create((set, get) => ({
@@ -45,15 +54,28 @@ const usePatientStore = create((set, get) => ({
   historyError: null,
 
   // ── Recommendation actions ──────────────────────────────────────────
-  fetchRecommendation: async () => {
-    set({ recommendationLoading: true, recommendationError: null });
+  // `force` bypasses the cache — used after a session ends, when the
+  // recommendation genuinely changed server-side (e.g. exercise unlocks).
+  fetchRecommendation: async ({ force = false } = {}) => {
     try {
       const { data: { user }, error: authError } = await supabase.auth.getUser();
       if (authError || !user) {
         throw new Error('User not authenticated');
       }
-      const response = await instance.get(`/recommendation/${user.id}`);
-      const data = response.data || {};
+      const queryKey = ['recommendation', user.id];
+      // Skip the loading flag on a cache hit so cached data doesn't flash
+      // a spinner — only show loading when we're actually going to fetch.
+      if (force || !_isQueryFresh(queryKey)) {
+        set({ recommendationLoading: true, recommendationError: null });
+      }
+      const data = await queryClient.fetchQuery({
+        queryKey,
+        queryFn: async () => {
+          const response = await instance.get(`/recommendation/${user.id}`);
+          return response.data || {};
+        },
+        ...(force && { staleTime: 0 }),
+      });
 
       // Backend sends `functionality.exercises` and `strength.exercises`.
       // Fall back to the legacy top-level `exercises` field for safety
@@ -167,22 +189,33 @@ const usePatientStore = create((set, get) => ({
   },
 
   fetchHistory: async () => {
-    set({ historyLoading: true, historyError: null });
     try {
       const { data: { user }, error: authError } = await supabase.auth.getUser();
       if (authError || !user) {
         throw new Error('User not authenticated');
       }
 
-      const { data, error } = await supabase
-        .from('recommendation_logs')
-        .select('id, latest_form_score, recommendation, created_at')
-        .eq('patient_id', user.id)
-        .gt('latest_form_score', 0)
-        .order('created_at', { ascending: false })
-        .limit(50);
+      const queryKey = ['history', user.id];
+      // Skip the loading flag on a cache hit so cached data doesn't flash
+      // a spinner — only show loading when we're actually going to fetch.
+      if (!_isQueryFresh(queryKey)) {
+        set({ historyLoading: true, historyError: null });
+      }
 
-      if (error) throw error;
+      const data = await queryClient.fetchQuery({
+        queryKey,
+        queryFn: async () => {
+          const { data, error } = await supabase
+            .from('recommendation_logs')
+            .select('id, latest_form_score, recommendation, created_at')
+            .eq('patient_id', user.id)
+            .gt('latest_form_score', 0)
+            .order('created_at', { ascending: false })
+            .limit(50);
+          if (error) throw error;
+          return data;
+        },
+      });
 
       const history = data.map(row => ({
         id: row.id,

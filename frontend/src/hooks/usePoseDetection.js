@@ -4,33 +4,14 @@ import { isLstmSupported } from '../constants/exerciseTypes';
 import { supabase } from '../services/supabase';
 import useSessionStore from '../store/useSessionStore';
 
-/**
- * Pose detection over a persistent WebSocket: one /ws/pose connection per
- * exercise, streaming raw JPEG frames and receiving JSON pose results.
- *
- * Auth: open the socket (no token in the URL — it would leak in proxy logs),
- * send an {type:"auth", ...} message first, and wait for "auth_ok" before
- * the frame loop starts. The whole handshake is bounded by HANDSHAKE_TIMEOUT_MS.
- *
- * Auth protocol (since 2026-06-04, after CodeRabbit feedback):
- *   1. Open WS to /ws/pose with NO token in the URL — query-string tokens
- *      end up in reverse-proxy logs and would leak the bearer.
- *   2. On open, send {"type": "auth", "token", "exercise_type",
- *      "affected_side", "patient_id", "session_id"} as the first message.
- *      patient_id + session_id let the backend file the session-evidence
- *      clip it records from this stream (see core/session_video.py).
- *   3. Wait for {"type": "auth_ok"} from the server before we consider
- *      the connection live and let the frame loop start.
- *   4. The whole handshake (TCP connect + auth round-trip) is bounded by
- *      HANDSHAKE_TIMEOUT_MS — without it a stuck CONNECTING socket would
- *      leave the UI on "Preparing pose detection…" forever.
- *
- * The end-of-session LSTM call (classifyFormSequence) still uses HTTP
- * because it's one-shot and benefits from the standard auth interceptor.
- */
 
-// Max wait for the handshake + auth_ok before we give up (avoids a hung UI).
+
 const HANDSHAKE_TIMEOUT_MS = 10000;
+// Matches backend/routers/pose.py's _WS_IDLE_PING_SECONDS. Runs independently
+// of the frame-capture loop so it still fires during a between-set rest
+// (fully user-paced, no fixed duration) when useCamera sends nothing at all —
+// keeps real data-frame traffic flowing well inside a ~60s proxy idle window.
+const HEARTBEAT_INTERVAL_MS = 25000;
 
 const usePoseDetection = () => {
   // UI states for loading and error handling
@@ -46,10 +27,40 @@ const usePoseDetection = () => {
   const onCloseRef = useRef(null);
   // True once auth_ok has landed; pose results before this are a protocol error.
   const authedRef = useRef(false);
+  // Client-side heartbeat, started once authed. Independent of the frame
+  // capture loop so it keeps sending during a between-set rest.
+  const heartbeatRef = useRef(null);
   // Bumped on every start/stop/unmount. Handlers captured by an older socket
   // compare against it and bail, so a late close/error/message from a replaced
   // connection can't flip state or fire the new connection's callbacks.
   const connectionIdRef = useRef(0);
+
+  // Stops the heartbeat interval, if one is running. Safe to call multiple times.
+  const stopHeartbeat = useCallback(() => {
+    if (heartbeatRef.current) {
+      clearInterval(heartbeatRef.current);
+      heartbeatRef.current = null;
+    }
+  }, []);
+
+  // Starts the client-side heartbeat once auth_ok lands. Fires on its own
+  // timer — NOT tied to the frame capture loop — so it still sends during a
+  // between-set rest, when useCamera's capture loop is paused and would
+  // otherwise leave the socket completely silent from this side.
+  const startHeartbeat = useCallback((ws, isCurrent) => {
+    stopHeartbeat();
+    heartbeatRef.current = setInterval(() => {
+      if (!isCurrent() || ws.readyState !== WebSocket.OPEN) {
+        stopHeartbeat();
+        return;
+      }
+      try {
+        ws.send(JSON.stringify({ type: 'ping' }));
+      } catch (_) {
+        /* socket going away; onclose will clean up */
+      }
+    }, HEARTBEAT_INTERVAL_MS);
+  }, [stopHeartbeat]);
 
   // Build the wss:// URL from the axios baseURL (same host as the HTTP API).
   // No token in the query string — auth happens in the first message.
@@ -61,12 +72,6 @@ const usePoseDetection = () => {
     return `${wsBase}/ws/pose`;
   }, []);
 
-  // Opens the pose WebSocket. Resolves true on a successful auth_ok handshake,
-  // false on any connection/auth/timeout failure. onResult fires once per pose
-  // message (after auth_ok). onClose fires ONLY when a socket that completed
-  // the auth_ok handshake later drops — handshake failures (auth rejected,
-  // timeout, connection error) are reported solely through the resolved false,
-  // so callers never see both signals for the same attempt.
   const startDetection = useCallback(async (
     exerciseType = '',
     affectedSide = 'right',
@@ -179,6 +184,13 @@ const usePoseDetection = () => {
             return;
           }
 
+          // Server is at its connection cap — it sends this right before
+          // closing with 4503 (see backend/routers/pose.py capacity gate).
+          if (data?.type === 'at_capacity') {
+            if (isCurrent()) setModelError('Server is busy — please try again in a moment');
+            return;
+          }
+
           // Auth phase — the first message must be auth_ok, else bail.
           if (!authed) {
             if (data?.type === 'auth_ok') {
@@ -187,6 +199,7 @@ const usePoseDetection = () => {
               setIsDetecting(true);
               setIsModelReady(true);
               setModelError(null);
+              startHeartbeat(ws, isCurrent);
               finish(true);
             } else {
               setModelError('Pose tracking auth failed');
@@ -196,12 +209,25 @@ const usePoseDetection = () => {
             return;
           }
 
+          // Heartbeat control messages — never forward these as pose
+          // results. Reply to a server-initiated ping so the server also
+          // has proof this side is alive; a "pong" is just the reply to
+          // OUR OWN periodic ping and needs nothing further.
+          if (data?.type === 'ping') {
+            try { ws.send(JSON.stringify({ type: 'pong' })); } catch (_) { /* socket going away */ }
+            return;
+          }
+          if (data?.type === 'pong') {
+            return;
+          }
+
           // Post-auth: forward pose results AND error payloads so useCamera's
           // loop always clears its in-flight flag on any reply.
           onResultRef.current?.(data);
         };
 
         ws.onclose = (event) => {
+          stopHeartbeat();
           // Stale socket: it's already been replaced or stopped, so its close
           // says nothing about the live connection.
           if (!isCurrent()) {
@@ -212,6 +238,10 @@ const usePoseDetection = () => {
           setIsModelReady(false);
           if (event?.code === 4401) {
             setModelError('Pose tracking auth failed — please log in again');
+          } else if (event?.code === 4503) {
+            // Belt-and-suspenders for the 'at_capacity' message above — covers
+            // the case where the close beat the JSON send to the client.
+            setModelError('Server is busy — please try again in a moment');
           }
           // Tell useCamera to stop capturing. Skip if we never authed —
           // startDetection's promise handles that case.
@@ -228,12 +258,13 @@ const usePoseDetection = () => {
       setIsDetecting(false);
       return false;
     }
-  }, [buildWsUrl]);
+  }, [buildWsUrl, startHeartbeat, stopHeartbeat]);
 
   // Closes the socket and clears callbacks. Safe to call multiple times.
   const stopDetection = useCallback(() => {
     // Retire the current connection id so its handlers go silent.
     connectionIdRef.current += 1;
+    stopHeartbeat();
     setIsDetecting(false);
     setIsModelReady(false);
     onResultRef.current = null;
@@ -244,7 +275,7 @@ const usePoseDetection = () => {
       wsRef.current = null;
       try { ws.close(); } catch (_) { /* already closed */ }
     }
-  }, []);
+  }, [stopHeartbeat]);
 
   // Send a base64 JPEG as a binary WS frame. Returns { ok } plus a reason
   // useCamera reads: 'not_open' (retry), 'closed' or 'send_failed' (stop).
@@ -329,6 +360,7 @@ const usePoseDetection = () => {
       // the connection id so nothing the socket emits on its way out reaches
       // an unmounted consumer.
       connectionIdRef.current += 1;
+      stopHeartbeat();
       onResultRef.current = null;
       onCloseRef.current = null;
       authedRef.current = false;
@@ -338,7 +370,7 @@ const usePoseDetection = () => {
         try { ws.close(); } catch (_) { /* already closed */ }
       }
     };
-  }, []);
+  }, [stopHeartbeat]);
 
   return {
     isDetecting,

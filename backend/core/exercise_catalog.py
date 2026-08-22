@@ -7,7 +7,7 @@ the catalog is small (3 exercises) and ranking is judgment-call-y.
 Promote to a DB column when the catalog grows.
 
 Ranking convention (lower = easier, higher = harder):
-    arms: shoulder_flexion (1) → arm_raise (2)
+    arms: shoulder_flexion (1) → hand_to_mouth (2)
     legs: sit_to_stand (1)
 
 Each catalog entry exposes a `difficulty_level` integer plus a
@@ -39,10 +39,10 @@ DIFFICULTY_OVERLAY: Dict[str, Dict[str, Any]] = {
         "base_duration_minutes": 2,
         "focus": "shoulder mobility & form correction",
     },
-    "arm_raise": {
+    "hand_to_mouth": {
         "difficulty_level": 2,
         "base_duration_minutes": 2,
-        "focus": "upper-limb strength & coordination",
+        "focus": "upper-limb reach & coordination",
     },
     "knee_extension": {
         "difficulty_level": 1,
@@ -65,14 +65,31 @@ DEFAULT_OVERLAY = {
 
 # Exercises the LSTM (StrokeLSTMClassifier in core/neural_network.py) was
 # trained on. The training dataset under datasets/Ready_Dataset has
-# Correct/Incorrect classes only for these three exercise_types. Sending
-# a sequence for any other exercise_type to the LSTM produces an
-# out-of-distribution prediction — better to skip the call and rely on
-# the live joint-angle score instead.
+# Correct/Incorrect clips for these exercise_types. Sending a sequence
+# for any other exercise_type to the LSTM produces an out-of-distribution
+# prediction — better to skip the call and rely on the live joint-angle
+# score instead.
+#
+# 2026-07-30: retrained after the therapist swapped arm_raise for the new
+# hand_to_mouth exercise (arm_raise was too similar to shoulder_flexion).
+# Moved to per-exercise models (one specialized classifier per movement;
+# see core/neural_network.py). Held-out test accuracy after the swap:
+#   shoulder_flexion 73% (per-exercise), hand_to_mouth 71% (per-exercise).
+# sit_to_stand now has its own per-exercise model too (2026-08-11): the old
+# "87% global fallback" figure was unbacked (real global test was 66%); the
+# Kaggle sit_to_stand clips were re-integrated and trained standalone —
+# last-timestep readout, 86.67% held-out test (TP9/TN4/FP2/FN0).
+# knee_extension uses a HYBRID (2026-08-10): a max-pool LSTM (readout wired in
+# core/neural_network.POOLED_READOUT_SLUGS) trained on the re-recorded data, plus
+# a geometric veto — a rep that never sustains near-full knee extension is scored
+# incorrect regardless of the LSTM. Max-pool made the transient mid-clip peak
+# learnable (last-timestep readout stalled at 50%), and the veto closes its one
+# confident false positive. Hybrid = 100% on the held-out test (LSTM alone 87.5%).
 LSTM_SUPPORTED_EXERCISE_TYPES = frozenset({
-    "arm_raise",
-    "knee_extension",
+    "shoulder_flexion",
+    "hand_to_mouth",
     "sit_to_stand",
+    "knee_extension",
 })
 
 
@@ -82,13 +99,22 @@ def is_lstm_supported(exercise_type: str) -> bool:
 
 
 def _get_pg_config() -> Dict[str, str]:
+    # host/password: no default. See core/supabase_db.py's _get_postgres_config
+    # for why "localhost" used to be here and why that was a footgun.
     return {
-        "host": os.getenv("POSTGRES_HOST", "localhost"),
+        "host": os.getenv("POSTGRES_HOST", ""),
         "port": os.getenv("POSTGRES_PORT", "5432"),
         "dbname": os.getenv("POSTGRES_DB", "postgres"),
         "user": os.getenv("POSTGRES_USER", "supabase_admin"),
         "password": os.getenv("POSTGRES_PASSWORD", ""),
     }
+
+
+def _pg_configured(config: Dict[str, str]) -> bool:
+    """Mirrors supabase_db._postgres_configured() - both host and password
+    required, so an unconfigured host skips this tier instead of attempting
+    a connection to whatever POSTGRES_HOST happens to resolve to."""
+    return bool(config.get("host", "").strip()) and bool(config.get("password", "").strip())
 
 
 def _fetch_catalog_rows() -> List[Dict[str, Any]]:
@@ -127,7 +153,7 @@ def _fetch_catalog_rows() -> List[Dict[str, Any]]:
     # psycopg2 direct
     if psycopg2 is not None:
         config = _get_pg_config()
-        if config.get("password"):
+        if _pg_configured(config):
             try:
                 with psycopg2.connect(
                     host=config["host"], port=config["port"], dbname=config["dbname"],

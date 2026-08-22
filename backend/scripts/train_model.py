@@ -4,6 +4,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 import pickle
+import random
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -86,8 +87,36 @@ LABEL_ALIASES = {
 }
 
 
+def _exercise_of(class_folder_name: str) -> str:
+    """The exercise a class folder belongs to, e.g. 'Hand To Mouth Correct'
+    -> 'Hand To Mouth'. Used to group clips by exercise for per-exercise
+    training."""
+    name = class_folder_name.strip()
+    low = name.lower()
+    for suffix in (" correct", " incorrect"):
+        if low.endswith(suffix):
+            return name[: -len(suffix)].strip()
+    return name
+
+
+def _slugify(exercise_name: str) -> str:
+    """'Hand To Mouth' -> 'hand_to_mouth' (matches the app's exercise_type)."""
+    return "_".join(exercise_name.strip().lower().split())
+
+
+def _discover_exercises(split_dir: Path) -> List[str]:
+    """Unique exercise display names present under a split dir (train/)."""
+    names = set()
+    if split_dir.exists():
+        for child in split_dir.iterdir():
+            if child.is_dir():
+                names.add(_exercise_of(child.name))
+    return sorted(names)
+
+
 class StrokeLSTMClassifier(nn.Module):
-    def __init__(self, input_size: int = INPUT_SIZE, hidden_size: int = 128, num_layers: int = 2):
+    def __init__(self, input_size: int = INPUT_SIZE, hidden_size: int = 128, num_layers: int = 2,
+                 readout: str = "last"):
         super().__init__()
         self.lstm = nn.LSTM(
             input_size=input_size,
@@ -101,10 +130,16 @@ class StrokeLSTMClassifier(nn.Module):
             nn.ReLU(),
             nn.Linear(64, 2),
         )
+        # "last" = final-timestep readout (default, all existing models).
+        # "maxpool" = max over all timesteps; opt-in per model for movements
+        # whose signal is a transient mid-clip peak the last frame misses.
+        # Adds no learnable params, so checkpoints load either way.
+        self.readout = readout
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         outputs, _ = self.lstm(x)
-        return self.head(outputs[:, -1, :])
+        pooled = outputs.max(dim=1).values if self.readout == "maxpool" else outputs[:, -1, :]
+        return self.head(pooled)
 
 
 def _build_synthetic_loader(batch_size: int, num_workers: int, pin_memory: bool) -> DataLoader:
@@ -242,11 +277,13 @@ def _load_video_dataset_loader(
     num_workers: int,
     pin_memory: bool,
     augment_flip: bool = False,
+    exercise_filter: Optional[str] = None,
 ) -> DataLoader:
     video_files = [
         path
         for path in sorted(data_dir.rglob("*"))
         if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
+        and (exercise_filter is None or _exercise_of(path.parent.name) == exercise_filter)
     ]
 
     if not video_files:
@@ -455,12 +492,32 @@ def train_lstm(
     val_split: float = 0.2,
     early_stopping_patience: int = 3,
     augment_flip: bool = True,
-) -> None:
+    exercise_filter: Optional[str] = None,
+    learning_rate: float = 1e-3,
+    use_scheduler: bool = False,
+    seed: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
     """
     Train a baseline LSTM classifier with validation, checkpointing, and early stopping.
     Falls back to synthetic data when no CSV sequences are available.
+
+    When exercise_filter is set, only that exercise's clips are used — this is
+    how per-exercise models are trained (one specialized binary classifier per
+    movement, instead of one global classifier straining across all of them).
+    Returns the run record (incl. held-out test metrics) so a per-exercise
+    driver can collect and summarize them.
     """
-    print(f"Training data directory: {data_dir.resolve()}")
+    label = exercise_filter or "ALL exercises (global)"
+    print(f"Training data directory: {data_dir.resolve()} | exercise: {label}")
+
+    # Opt-in reproducible seeding for multi-seed runs. Default (None) leaves
+    # training nondeterministic exactly as before, so other callers are unaffected.
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        print(f"Seed: {seed}")
 
     train_source = data_dir / "train"
     val_source = data_dir / "val"
@@ -483,12 +540,14 @@ def train_lstm(
             num_workers=num_workers if device.type == "cuda" else 0,
             pin_memory=device.type == "cuda",
             augment_flip=augment_flip,
+            exercise_filter=exercise_filter,
         )
         val_loader = _load_video_dataset_loader(
             val_source,
             batch_size=batch_size,
             num_workers=num_workers if device.type == "cuda" else 0,
             pin_memory=device.type == "cuda",
+            exercise_filter=exercise_filter,
         )
         train_dataset = train_loader.dataset
         val_dataset = val_loader.dataset
@@ -520,7 +579,10 @@ def train_lstm(
         )
         print(f"Train samples: {len(train_dataset)} | Val samples: {len(val_dataset)}")
 
-    model = StrokeLSTMClassifier().to(device)
+    # Pooled readout is opt-in per exercise; knee_extension only (its signal is
+    # a transient mid-clip peak the last timestep misses). All others stay "last".
+    readout = "maxpool" if (exercise_filter and _slugify(exercise_filter) == "knee_extension") else "last"
+    model = StrokeLSTMClassifier(readout=readout).to(device)
     if compile_model and device.type == "cuda" and hasattr(torch, "compile"):
         try:
             model = torch.compile(model, mode="max-autotune")
@@ -529,7 +591,12 @@ def train_lstm(
             print(f"torch.compile skipped: {exc}")
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    # Opt-in LR scheduler (default off = unchanged for every other caller).
+    # ReduceLROnPlateau halves the LR when val loss stalls — this locks in a
+    # good minimum instead of letting a high LR bounce back out of it.
+    scheduler = (torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=2) if use_scheduler else None)
     use_fp16_scaler = device.type == "cuda" and runtime["amp_dtype"] == torch.float16
     scaler = torch.amp.GradScaler("cuda", enabled=use_fp16_scaler)
 
@@ -585,6 +652,9 @@ def train_lstm(
         avg_val_loss = val_metrics["loss"]
         val_acc = val_metrics["accuracy"]
 
+        if scheduler is not None:
+            scheduler.step(avg_val_loss)
+
         # GPU memory info
         mem_info = _get_gpu_memory_info(device)
         mem_str = f" | GPU: {mem_info['allocated_mb']:.1f}MB allocated, {mem_info['reserved_mb']:.1f}MB reserved" if device.type == "cuda" else ""
@@ -631,8 +701,9 @@ def train_lstm(
             batch_size=batch_size,
             num_workers=num_workers if device.type == "cuda" else 0,
             pin_memory=device.type == "cuda",
+            exercise_filter=exercise_filter,
         )
-        best_model = StrokeLSTMClassifier().to(device)
+        best_model = StrokeLSTMClassifier(readout=readout).to(device)
         best_model.load_state_dict(torch.load(output_weights, map_location=device))
         test_metrics = _evaluate(
             best_model,
@@ -663,17 +734,27 @@ def train_lstm(
     print(f"{'='*70}")
 
     # Persist the run so results are quotable later instead of scrolling away.
-    metrics_path = output_weights.parent / "training_metrics.json"
+    # Per-exercise runs write next to their weights (lstm_<slug>_metrics.json)
+    # so they don't clobber each other or the global run's training_metrics.json.
+    metrics_path = (
+        output_weights.parent / f"{output_weights.stem}_metrics.json"
+        if exercise_filter is not None
+        else output_weights.parent / "training_metrics.json"
+    )
     record: Dict[str, Any] = {
         "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "exercise": exercise_filter or "global",
         "device": str(device),
         "gpu": torch.cuda.get_device_name(0) if device.type == "cuda" else None,
         "hyperparameters": {
             "epochs_requested": epochs,
             "epochs_run": epoch + 1,
             "batch_size": batch_size,
-            "learning_rate": 1e-3,
+            "learning_rate": learning_rate,
             "optimizer": "Adam",
+            "lr_scheduler": "ReduceLROnPlateau(0.5,p2)" if use_scheduler else None,
+            "seed": seed,
+            "readout": readout,
             "loss": "CrossEntropyLoss",
             "sequence_len": SEQUENCE_LEN,
             "input_size": INPUT_SIZE,
@@ -697,6 +778,56 @@ def train_lstm(
 
     print(f"Best model saved to : {output_weights.resolve()}")
     print(f"Metrics saved to    : {metrics_path.resolve()}")
+    return record
+
+
+def train_per_exercise(
+    data_dir: Path,
+    models_dir: Path,
+    **kwargs: Any,
+) -> None:
+    """Train one specialized binary classifier per exercise.
+
+    Each model sees only its own exercise's clips, so it learns a clean
+    good-vs-bad boundary for that one movement instead of straining across
+    all of them. Saves models/lstm_<slug>.pth and prints a summary table of
+    per-exercise held-out test accuracy at the end.
+    """
+    exercises = _discover_exercises(data_dir / "train")
+    if not exercises:
+        print(f"No exercises discovered under {data_dir / 'train'} — nothing to train.")
+        return
+
+    print(f"Per-exercise training for: {exercises}\n")
+    summary: List[Dict[str, Any]] = []
+    for exercise in exercises:
+        slug = _slugify(exercise)
+        out_path = models_dir / f"lstm_{slug}.pth"
+        print(f"\n{'#'*70}\n# {exercise}  ->  {out_path.name}\n{'#'*70}")
+        record = train_lstm(data_dir, out_path, exercise_filter=exercise, **kwargs)
+        test = (record or {}).get("test") or {}
+        summary.append({
+            "exercise": exercise,
+            "slug": slug,
+            "test_accuracy": test.get("accuracy"),
+            "precision": test.get("precision"),
+            "recall": test.get("recall"),
+            "f1": test.get("f1"),
+            "confusion": test.get("confusion_matrix"),
+            "test_samples": test.get("num_samples"),
+        })
+
+    print(f"\n{'='*70}\nPER-EXERCISE TEST SUMMARY\n{'='*70}")
+    print(f"{'Exercise':<20}{'Test Acc':>10}{'Prec':>8}{'Recall':>8}{'F1':>7}{'N':>5}")
+    print("-" * 70)
+    for s in summary:
+        acc = f"{s['test_accuracy']:.1f}%" if s["test_accuracy"] is not None else "n/a"
+        prec = f"{s['precision']:.2f}" if s["precision"] is not None else "-"
+        rec = f"{s['recall']:.2f}" if s["recall"] is not None else "-"
+        f1 = f"{s['f1']:.2f}" if s["f1"] is not None else "-"
+        n = s["test_samples"] if s["test_samples"] is not None else "-"
+        print(f"{s['exercise']:<20}{acc:>10}{prec:>8}{rec:>8}{f1:>7}{str(n):>5}")
+    print("=" * 70)
 
 
 if __name__ == "__main__":
@@ -751,15 +882,23 @@ if __name__ == "__main__":
             "inference consistent with training (and doubles the train set)."
         ),
     )
+    parser.add_argument(
+        "--per-exercise",
+        action="store_true",
+        help=(
+            "Train one specialized binary classifier per exercise (saved as "
+            "models/lstm_<slug>.pth) instead of a single global model. Each model "
+            "learns just its own movement's good-vs-bad boundary, which is far "
+            "easier than one model judging every exercise at once."
+        ),
+    )
     args = parser.parse_args()
 
     script_dir = Path(__file__).resolve().parent
     data_dir = (script_dir / args.data_dir).resolve() if not Path(args.data_dir).is_absolute() else Path(args.data_dir)
     out_path = (script_dir / args.out).resolve() if not Path(args.out).is_absolute() else Path(args.out)
 
-    train_lstm(
-        data_dir,
-        out_path,
+    common = dict(
         epochs=args.epochs,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
@@ -768,3 +907,8 @@ if __name__ == "__main__":
         early_stopping_patience=args.early_stop_patience,
         augment_flip=not args.no_flip_augment,
     )
+
+    if args.per_exercise:
+        train_per_exercise(data_dir, out_path.parent, **common)
+    else:
+        train_lstm(data_dir, out_path, **common)

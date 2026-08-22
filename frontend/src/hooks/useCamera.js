@@ -1,68 +1,24 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import usePoseDetection from './usePoseDetection';
-import RepCounter, {
-  pickActiveColor,
-  repAwareHint,
-  COLOR_GREEN,
-} from '../utils/repCounter';
+import useVoicePlayback from './useVoicePlayback';
+import usePoseResultHandler from './usePoseResultHandler';
+import RepCounter from '../utils/repCounter';
+import ShoulderFlexionGuide from '../utils/shoulderFlexionGuide';
 
-// useCamera owns the per-exercise execution flow: the camera, the
-// WebSocket pose loop, the per-set timer + rep counter, and the
-// rest-between-sets pause. The parent (ExerciseScreen / CameraComponent)
-// reads `isBetweenSets` to decide whether to render the BreakScreen
-// overlay vs the active-set HUD.
-//
-// Phase C (2026-06-04) restructured this hook around sets:
-//   - exercise.sets[] from the recommender drives execution
-//   - Each rep set ends when RepCounter hits target_reps OR the per-set
-//     2-minute cap elapses (whichever comes first)
-//   - Each hold set ends when its hold_seconds cap elapses (Phase D
-//     will refine this with form-broken detection)
-//   - Between sets the capture loop pauses (no frames sent) until the
-//     patient taps "Start Next Set" on the BreakScreen
-//   - Across sets within an exercise the WebSocket stays connected so
-//     pose detection doesn't re-handshake between sets
-//
-// Phase 2 frame loop (since 2026-06-04 earlier): backpressure-driven via
-// WebSocket. Each capture+send is followed by an inFlight flag that's
-// only cleared when the server's pose result arrives OR when a 2-second
-// watchdog fires (network glitch recovery).
-
-// Worst-case per-set timer caps. Rep sets have a hard 2-minute cap so a
-// patient stalled at rep 5/12 still progresses to the next set. Hold
-// sets run for their full hold_seconds target (300s = 5 min stretch
-// goal). Phase D (2026-06-04) adds the form-broken-too-long auto-end
-// for holds via HOLD_FORM_BROKEN_LIMIT_MS — a patient out of the green
-// band for 30s straight auto-ends the hold without resetting
-// (resetting would be too punishing in stroke rehab).
+//timer for reps sets
 const REP_SET_CAP_SECONDS = 120;
-const HOLD_FORM_BROKEN_LIMIT_MS = 30 * 1000;
-// Defensive defaults for a hold set whose hold_seconds field is missing
-// or malformed. The recommender always sends 300; these only kick in
-// during deploy overlap or schema drift. Floor at 60s so a payload of
-// 0/NaN can't degrade the hold to a 1-second blip.
+//for hold sets
 const HOLD_DEFAULT_SECONDS = 300;
 const HOLD_MIN_SECONDS = 60;
 
-// Upper bound on the per-frame delta fed to the hold accumulators. The pose
-// WS runs at ~8-15 FPS (~66-125ms/frame). If it stalls — watchdog retry, a
-// brief disconnect, or the app backgrounded — the next frame's raw wall-clock
-// delta could be several seconds and would be credited in FULL toward a hold
-// the patient may not have actually sustained (a single delayed green frame
-// could complete a 6s per-rep hold). Clamp the delta so a stall contributes
-// at most one generous frame's worth of hold credit.
-const MAX_FRAME_DT_MS = 500;
-
-// Default sets payload when an exercise is missing the sets[] field —
-// shouldn't happen in production (recommender always returns sets), but
-// keeps the hook safe against older response shapes during the deploy
-// window.
+//fallback sets if the exercise does not have sets
 const _fallbackSets = () => [
   { set_index: 0, format: 'reps', target_reps: 12, hold_seconds: null },
   { set_index: 1, format: 'reps', target_reps: 12, hold_seconds: null },
   { set_index: 2, format: 'reps', target_reps: 12, hold_seconds: null },
 ];
 
+//timer for hold sets
 const _capForSet = (set) => {
   if (!set) return REP_SET_CAP_SECONDS;
   if (set.format === 'hold') {
@@ -97,13 +53,7 @@ const useCamera = (exercise, { onComplete } = {}) => {
     setComplete: false,
     state: 'initial',
   });
-  // Per-set hold progress, surfaced for the HUD on hold sets. Phase D
-  // tracks two things:
-  //   - secondsInForm: cumulative time the patient held the green band
-  //                    (used to compute the hold's completion %)
-  //   - brokenSeconds: consecutive seconds out of the green band (resets
-  //                    to 0 the moment they re-enter green). When this
-  //                    reaches HOLD_FORM_BROKEN_LIMIT_MS the set auto-ends.
+  // Per-set hold progress, surfaced for the HUD on hold sets. 
   // Both are 0 when format='reps'.
   const [holdProgress, setHoldProgress] = useState({
     secondsInForm: 0,
@@ -111,24 +61,12 @@ const useCamera = (exercise, { onComplete } = {}) => {
     targetSeconds: 300,
   });
   // Completed sets' structured results — flushed to the parent on
-  // exercise completion as setResults[]. Phase E (2026-06-04) replaced
-  // the old parallel completedSetScores/completedSetReps arrays with a
-  // single rich-object list so the backend can persist format-aware
-  // data (rep form % vs hold completion %) for the therapist
-  // dashboard's fatigue curve.
-  //
-  // Each entry: {
-  //   set_index, format ('reps' | 'hold'), score,
-  //   reps_completed, target_reps,                  // 'reps' only
-  //   seconds_held, target_seconds,                 // 'hold' only
-  //   ended_via                                     // per-set end reason
-  // }
+  // exercise completion as setResults[].
   const [completedSetResults, setCompletedSetResults] = useState([]);
 
-  // ── Strength load (kg) ────────────────────────────────────────────
+  // ── Strength load (kg) 
   // The camera can't measure weight, so Strength mode carries a
   // patient-entered load. Seeded from the recommender's suggested weight
-  // (sets[0].target_weight_kg), adjustable via the UI stepper before/
   // between sets, and recorded into each Strength set's result so the
   // recommender can progress it next session. Lazy initializer runs once
   // per exercise (the hook remounts on key=exercise.id).
@@ -138,10 +76,14 @@ const useCamera = (exercise, { onComplete } = {}) => {
     return Number.isFinite(w) && w >= 0 ? w : 0;
   });
 
-  // ── Pose overlay state ────────────────────────────────────────────
+  // ── Pose overlay state 
   const [jointColors, setJointColors] = useState({});
   const [keypoints, setKeypoints] = useState([]);
   const [feedbackText, setFeedbackText] = useState('');
+  // Coaching-banner color override. When set (e.g. the shoulder-flexion
+  // two-checkpoint guide), the banner uses this instead of deriving its color
+  // from the numeric score. null = fall back to the score-based color.
+  const [feedbackColor, setFeedbackColor] = useState(null);
   const [inferenceSize, setInferenceSize] = useState({ width: 1, height: 1 });
   const [cameraLayout, setCameraLayout] = useState({ width: 0, height: 0 });
 
@@ -165,10 +107,14 @@ const useCamera = (exercise, { onComplete } = {}) => {
   const pausedRef = useRef(false);
   // Per-set RepCounter — replaced on each set transition.
   const repCounterRef = useRef(new RepCounter(12));
+  // Per-set two-checkpoint guide for shoulder flexion — replaced alongside the
+  // RepCounter on each set transition. Only used when the exercise is shoulder
+  // flexion; the generic RepCounter drives every other exercise.
+  const sfGuideRef = useRef(new ShoulderFlexionGuide(12));
   // Per-set running score buffer (for computing this set's avg on
   // completion). Cleared on each set transition.
   const setScoreBufferRef = useRef([]);
-  // Phase D hold-tracking accumulators. holdInFormMsRef integrates
+  // holdInFormMsRef integrates
   // frame deltas while the patient is in green; brokenMsRef counts
   // consecutive ms out of green (resets on re-entry). lastFrameTimeRef
   // is the Date.now() of the previous handlePoseResult call — used
@@ -177,10 +123,10 @@ const useCamera = (exercise, { onComplete } = {}) => {
   const holdInFormMsRef = useRef(0);
   const brokenMsRef = useRef(0);
   const lastFrameTimeRef = useRef(null);
-  // Latest handlePoseResult — kept in a ref so the stable wrapper
-  // passed to startDetection never reads a stale closure when
-  // currentSet.format flips mid-exercise (reps → hold transition).
-  const handlePoseResultRef = useRef(() => {});
+  // Latest finishCurrentSet — handlePoseResult (in usePoseResultHandler)
+  // calls through this ref so it always dispatches to the current
+  // version even though finishCurrentSet is defined later in this hook.
+  const finishCurrentSetRef = useRef(() => {});
 
   //derived values
   const currentSet = sets[currentSetIndex] || sets[0];
@@ -200,6 +146,15 @@ const useCamera = (exercise, { onComplete } = {}) => {
   ].join(' ').toLowerCase(), [
     exercise?.exercise_type, exercise?.name, exercise?.body_area, exercise?.focus,
   ]);
+
+  // Voice-over: plays the pre-generated clip for the backend's hint_key.
+  // Edge-triggered + debounced inside the hook; missing clips fall back to
+  // text-only. voicePlayRef keeps handlePoseResult off playHintKey's identity
+  // so the frame handler's deps don't churn.
+  const { playHintKey, muted: voiceMuted, toggleMute: toggleVoiceMute, voiceReady } =
+    useVoicePlayback(exercise?.exercise_type);
+  const voicePlayRef = useRef(null);
+  useEffect(() => { voicePlayRef.current = playHintKey; }, [playHintKey]);
 
   //pose detection backend client
   const {
@@ -246,142 +201,6 @@ const useCamera = (exercise, { onComplete } = {}) => {
     return Number((total / history.length).toFixed(1));
   }, []);
 
-  // Finalize the entire exercise — flushes the LSTM sequence and calls
-  // the parent's onComplete with the cumulative set results. endedVia
-  // distinguishes natural completion ('finish') from early-exit
-  // ('end_early'); both still earn whatever partial set scores were
-  // captured.
-  //
-  // Three call paths:
-  //   1. Last set completes naturally → finishCurrentSet passes
-  //      extraSetResult so the last set is included without waiting
-  //      for a React state flush.
-  //   2. Patient taps "End Early" mid-set in the HUD → we're NOT
-  //      paused, scoreBuffer has the partial set's frames. Roll the
-  //      partial set up so a patient who quit at rep 6/12 still earns
-  //      those reps.
-  //   3. Patient taps "End Early" on the BreakScreen → we ARE paused,
-  //      no partial to capture. Just use completedSetResults as-is.
-  const finishExercise = useCallback((endedVia = 'finish', extraSetResult = null) => {
-    if (finishingRef.current) return;
-    finishingRef.current = true;
-
-    clearIntervals();
-    setIsExercising(false);
-    stopDetection();
-    inFlightRef.current = false;
-
-    let finalSetResults;
-    if (extraSetResult) {
-      // Path 1: last-set natural completion.
-      finalSetResults = [...completedSetResults, extraSetResult];
-    } else if (!pausedRef.current && setScoreBufferRef.current.length > 0) {
-      // Path 2: mid-set "End Early" — fold the partial set in.
-      const isHoldSet = currentSet?.format === 'hold';
-      let partial;
-      if (isHoldSet) {
-        const targetSeconds = _capForSet(currentSet);
-        const heldMs = holdInFormMsRef.current;
-        partial = {
-          set_index: currentSetIndex,
-          format: 'hold',
-          score: targetSeconds > 0
-            ? Math.min(100, Math.round((heldMs / (targetSeconds * 1000)) * 100))
-            : 0,
-          seconds_held: Math.floor(heldMs / 1000),
-          target_seconds: targetSeconds,
-          ended_via: endedVia,
-        };
-      } else {
-        partial = {
-          set_index: currentSetIndex,
-          format: 'reps',
-          score: computeAvgScore(setScoreBufferRef.current),
-          reps_completed: repCounterRef.current.repsCompleted,
-          target_reps: currentSet?.target_reps || 12,
-          hold_seconds_per_rep: currentSet?.hold_seconds_per_rep ?? null,
-          weight_kg: currentSet?.target_weight_kg != null ? currentWeightKg : null,
-          ended_via: endedVia,
-        };
-      }
-      finalSetResults = [...completedSetResults, partial];
-    } else {
-      // Path 3: BreakScreen "End Early" — between sets, nothing to add.
-      finalSetResults = completedSetResults;
-    }
-
-    pausedRef.current = false;
-
-    // Headline avgFormScore is REP SETS ONLY so hold completion %
-    // doesn't bleed into the form-quality number the trajectory
-    // analyzer reads and the dashboard displays. Holds are tracked
-    // separately as `holdScore` for the therapist's endurance view.
-    const repResults = finalSetResults.filter((r) => r.format === 'reps');
-    const avgFormScore = computeAvgScore(repResults.map((r) => r.score));
-    const holdResult = finalSetResults.find((r) => r.format === 'hold') || null;
-    const holdScore = holdResult ? holdResult.score : null;
-    // Real elapsed wall-clock since startExercise (covers sets + break
-    // time + the BeforeYouStart-to-first-frame delay). Falls back to
-    // a cap-based estimate only if the start time was never recorded
-    // (defensive — shouldn't happen).
-    const durationSeconds = exerciseStartTimeRef.current
-      ? Math.floor((Date.now() - exerciseStartTimeRef.current) / 1000)
-      : finalSetResults.length * REP_SET_CAP_SECONDS;
-
-    // Snapshot + clear the keypoint buffer so the next exercise's hook
-    // instance starts clean.
-    const sequenceSnapshot = keypointsBufferRef.current.slice();
-    keypointsBufferRef.current = [];
-    const exerciseTypeForLstm = (exercise?.exercise_type || '').toString();
-    if (sequenceSnapshot.length > 0 && exerciseTypeForLstm) {
-      classifyFormSequence(exerciseTypeForLstm, sequenceSnapshot)
-        .then((res) => {
-          if (res?.ok) {
-            console.log('LSTM verdict:', res.data?.prediction);
-          } else if (res?.reason && res.reason !== 'lstm_unsupported_exercise') {
-            console.log('LSTM skipped:', res.reason);
-          }
-        })
-        .catch((err) => console.log('LSTM dispatch error:', err?.message || err));
-    }
-
-    if (onComplete) {
-      onComplete({
-        avgFormScore,
-        durationSeconds,
-        endedVia,
-        setResults: finalSetResults,
-        holdScore,
-        mode: exercise?.mode || null,
-      });
-    }
-    // Don't reset finishingRef — the parent swaps us out of the active
-    // tree (to RestState), and the next exercise gets a fresh hook
-    // instance via key=exercise.id.
-  }, [
-    clearIntervals,
-    stopDetection,
-    completedSetResults,
-    currentSet,
-    currentSetIndex,
-    onComplete,
-    computeAvgScore,
-    classifyFormSequence,
-    exercise,
-    isStrengthMode,
-    currentWeightKg,
-  ]);
-
-  // Captures one frame from the camera and ships it down the WS as
-  // binary. Sets the in-flight flag so the next call short-circuits
-  // until the result lands. The watchdog backstops a missing result.
-  //
-  // Retry policy (CodeRabbit review 2026-06-04):
-  //   - 'not_open'    → handshake still in flight → schedule a 200ms retry
-  //   - 'closed'      → socket is gone → STOP the loop
-  //   - 'send_failed' → runtime error → also stop
-  //   - catch block   → transient capture error (orientation, busy
-  //                     camera) → schedule a 200ms retry
   const captureAndSend = useCallback(async () => {
     if (!timerRef.current || !cameraRef.current) return;
     if (inFlightRef.current) return;
@@ -432,197 +251,51 @@ const useCamera = (exercise, { onComplete } = {}) => {
     }
   }, [sendFrameBase64]);
 
-  // Per-set RepCounter / score update on every WS pose result. Returns
-  // a flag the caller checks: if the set just completed, the caller
-  // skips the next captureAndSend (the set-end path will take over).
-  // Server may also send error payloads ({error: 'decode_failed' | ...})
-  // — treat those as no-op: don't clear the skeleton, don't advance
-  // reps, just unblock the loop.
-  const handlePoseResult = useCallback((result) => {
-    if (watchdogRef.current) {
-      clearTimeout(watchdogRef.current);
-      watchdogRef.current = null;
-    }
+  // Frame-result processing (rep/hold tracking, HUD state, voice cues)
+  // and end-of-exercise finalization live in usePoseResultHandler —
+  // extracted out since this hook's body was getting unwieldy. See
+  // that file for the per-frame logic and the finishExercise call paths.
+  const { stableHandlePoseResult, handlePoseClose, finishExercise } = usePoseResultHandler({
+    exercise,
+    onComplete,
+    currentSet,
+    currentSetIndex,
+    currentWeightKg,
+    exerciseHint,
+    setTotalSeconds,
+    completedSetResults,
+    setInferenceSize,
+    setKeypoints,
+    setCurrentScore,
+    setJointColors,
+    setRepProgress,
+    setHoldProgress,
+    setFeedbackText,
+    setFeedbackColor,
+    setIsExercising,
+    watchdogRef,
+    retryRef,
+    pausedRef,
+    inFlightRef,
+    keypointsBufferRef,
+    setScoreBufferRef,
+    lastFrameTimeRef,
+    repCounterRef,
+    sfGuideRef,
+    holdInFormMsRef,
+    brokenMsRef,
+    voicePlayRef,
+    finishingRef,
+    exerciseStartTimeRef,
+    finishCurrentSetRef,
+    captureAndSend,
+    clearIntervals,
+    computeAvgScore,
+    stopDetection,
+    classifyFormSequence,
+  });
 
-    // Drop late frames that arrive after the BreakScreen took over —
-    // processing them would advance reps/hold counters for a set the
-    // patient already finished.
-    if (pausedRef.current) {
-      inFlightRef.current = false;
-      return;
-    }
-
-    const isErrorPayload = result && typeof result.error === 'string';
-
-    if (result && !isErrorPayload) {
-      const score = result.score;
-      const colors = result.colors || {};
-      if (result.imageWidth && result.imageHeight) {
-        setInferenceSize({ width: result.imageWidth, height: result.imageHeight });
-      }
-      const frameKeypoints = result.keypoints || [];
-      setKeypoints(frameKeypoints);
-      if (Array.isArray(frameKeypoints) && frameKeypoints.length > 0) {
-        keypointsBufferRef.current.push(frameKeypoints);
-      }
-      if (score !== null && score !== undefined) {
-        setCurrentScore(score);
-        setScoreBufferRef.current.push(score);
-      }
-      setJointColors(colors);
-
-      // Time since the previous processed frame. The WS arrives at a
-      // jittery 8-15 FPS, so every per-frame accumulator (functionality
-      // hold-per-rep AND hold-set tracking) integrates this dt instead of
-      // assuming a fixed rate. First frame of a set has no prior dt → 0.
-      const now = Date.now();
-      const dt = lastFrameTimeRef.current
-        ? Math.min(MAX_FRAME_DT_MS, Math.max(0, now - lastFrameTimeRef.current))
-        : 0;
-      lastFrameTimeRef.current = now;
-
-      // Advance the rep counter for rep-format sets. Hold sets ignore
-      // RepCounter entirely (handled by the timer + form-broken tracking).
-      //
-      // Hint resolution order (rep sets):
-      //   1. Functionality hold-per-rep in progress → show the live
-      //      "hold Ns of Ms" countdown so the patient knows to keep still.
-      //   2. Otherwise repAwareHint overrides the backend wording when a
-      //      rep just counted (return to start, not hold).
-      //   3. Else the WS hint stands (ascent guidance is correct mid-set).
-      if (currentSet?.format === 'reps') {
-        const activeColor = pickActiveColor(colors, exerciseHint);
-        const snapshot = repCounterRef.current.update(activeColor, dt);
-        // 8-15Hz rerenders cost: only flush if something user-visible
-        // changed. The rep state machine churns AT_TOP↔WAITING_FOR_TOP
-        // many times per rep — only the counted-reps and the
-        // state-name matter to the HUD. (currentHoldMs is surfaced via
-        // feedbackText instead, so it stays out of this diff.)
-        setRepProgress((prev) =>
-          prev.repsCompleted === snapshot.repsCompleted
-            && prev.state === snapshot.state
-            && prev.setComplete === snapshot.setComplete
-            && prev.targetReps === snapshot.targetReps
-            ? prev
-            : snapshot
-        );
-
-        let hintForRep;
-        if (snapshot.holdMsPerRep > 0
-            && activeColor === COLOR_GREEN
-            && snapshot.state === 'waiting_for_top'
-            && snapshot.currentHoldMs > 0) {
-          const heldS = Math.floor(snapshot.currentHoldMs / 1000);
-          const targetS = Math.round(snapshot.holdMsPerRep / 1000);
-          hintForRep = `Hold it — ${heldS}s of ${targetS}s`;
-        } else {
-          hintForRep = repAwareHint(snapshot, activeColor, result.hint);
-        }
-        if (hintForRep) setFeedbackText(hintForRep);
-
-        if (snapshot.setComplete) {
-          // Set finished by rep target. Cap is handled by the elapsed-
-          // time effect below; this is the rep-driven path.
-          finishCurrentSetRef.current?.('finish');
-          inFlightRef.current = false;
-          return;
-        }
-      } else if (currentSet?.format === 'hold') {
-        const activeColor = pickActiveColor(colors, exerciseHint);
-        const isInForm = activeColor === COLOR_GREEN;
-
-        if (isInForm) {
-          holdInFormMsRef.current += dt;
-          brokenMsRef.current = 0;
-        } else {
-          brokenMsRef.current += dt;
-        }
-
-        // Surface the hold meters to the HUD. Keeping them in seconds
-        // for display while the refs stay in ms for precision. Diff-
-        // check to avoid 8-15Hz rerenders when the second hasn't
-        // ticked over yet.
-        const nextSecondsInForm = Math.floor(holdInFormMsRef.current / 1000);
-        const nextBrokenSeconds = Math.floor(brokenMsRef.current / 1000);
-        setHoldProgress((prev) =>
-          prev.secondsInForm === nextSecondsInForm
-            && prev.brokenSeconds === nextBrokenSeconds
-            && prev.targetSeconds === setTotalSeconds
-            ? prev
-            : {
-                secondsInForm: nextSecondsInForm,
-                brokenSeconds: nextBrokenSeconds,
-                targetSeconds: setTotalSeconds,
-              }
-        );
-
-        // Hint for hold: when actively in form, encourage the patient
-        // to hold; when broken, surface the countdown to auto-end.
-        if (brokenMsRef.current >= 1000) {
-          const remainingMs = Math.max(0, HOLD_FORM_BROKEN_LIMIT_MS - brokenMsRef.current);
-          const remainingSec = Math.ceil(remainingMs / 1000);
-          setFeedbackText(`Form broken — ${remainingSec}s before the set ends`);
-        } else if (isInForm) {
-          setFeedbackText('Keep holding — every second counts');
-        } else if (result.hint) {
-          // Brief out-of-form moments (< 1s) — show the backend hint
-          // so the patient knows how to correct without the alarming
-          // countdown text yet.
-          setFeedbackText(result.hint);
-        }
-
-        // Auto-end if patient has been out of form for the full window.
-        if (brokenMsRef.current >= HOLD_FORM_BROKEN_LIMIT_MS) {
-          finishCurrentSetRef.current?.('form_broken');
-          inFlightRef.current = false;
-          return;
-        }
-      } else {
-        // Unknown set format — fall back to the backend hint.
-        if (result.hint) setFeedbackText(result.hint);
-      }
-    }
-
-    inFlightRef.current = false;
-    if (timerRef.current && !pausedRef.current) {
-      captureAndSend();
-    }
-  }, [captureAndSend, currentSet?.format, exerciseHint]);
-
-  // Keep the ref in sync with the latest handlePoseResult so the stable
-  // wrapper handed to startDetection never reads a stale closure. Without
-  // this, the wrapper closes over the original (currentSet?.format === 'reps')
-  // handler and never sees the hold-set branch when the patient transitions
-  // from a rep set to the hold set within the same exercise — silently
-  // skipping all hold tracking.
-  useEffect(() => {
-    handlePoseResultRef.current = handlePoseResult;
-  }, [handlePoseResult]);
-
-  // Stable wrapper handed to startDetection — identity never changes,
-  // so the WS handler set up at startDetection time always dispatches
-  // to the LATEST handlePoseResult via the ref.
-  const stableHandlePoseResult = useCallback((result) => {
-    handlePoseResultRef.current?.(result);
-  }, []);
-
-  const handlePoseClose = useCallback(() => {
-    inFlightRef.current = false;
-    if (watchdogRef.current) {
-      clearTimeout(watchdogRef.current);
-      watchdogRef.current = null;
-    }
-    if (retryRef.current) {
-      clearTimeout(retryRef.current);
-      retryRef.current = null;
-    }
-  }, []);
-
-  // Begin set N: reset the per-set state, restart the wall-clock
-  // timer, kick the capture loop. Called by startExercise (set 0) and
-  // by startNextSet (subsequent sets). Does NOT touch the WS — that's
-  // owned by startDetection / stopDetection and stays connected across
-  // sets within an exercise.
+  
   const beginSetTimers = useCallback((nextSet) => {
     const targetReps = nextSet?.target_reps || 12;
     const targetSeconds = _capForSet(nextSet);
@@ -631,6 +304,12 @@ const useCamera = (exercise, { onComplete } = {}) => {
     // 0 and count on entry, as before.
     const holdMsPerRep = Number(nextSet?.hold_seconds_per_rep || 0) * 1000;
     repCounterRef.current = new RepCounter(targetReps, holdMsPerRep);
+    // Fresh shoulder-flexion guide for the set. Uses the SAME per-rep hold as
+    // the RepCounter (0 = count on reaching the top, like plain-rep sets; a
+    // Functionality set's hold_seconds_per_rep makes each top a sustained
+    // hold). Passing 0 rather than forcing 6s keeps a 12-rep set inside the
+    // time cap.
+    sfGuideRef.current = new ShoulderFlexionGuide(targetReps, holdMsPerRep);
     setScoreBufferRef.current = [];
     holdInFormMsRef.current = 0;
     brokenMsRef.current = 0;
@@ -662,10 +341,10 @@ const useCamera = (exercise, { onComplete } = {}) => {
   // and reps to the completed arrays. Pauses the capture loop until
   // the patient taps "Start Next Set".
   //
-  // Held as a ref because handlePoseResult needs to call it inside its
-  // closure, and we want to avoid stale-closure bugs when the set
-  // index changes.
-  const finishCurrentSetRef = useRef(() => {});
+  // finishCurrentSetRef (declared with the other refs above) is used
+  // because handlePoseResult, in usePoseResultHandler, needs to call
+  // it inside its closure, and we want to avoid stale-closure bugs
+  // when the set index changes.
   const finishCurrentSet = useCallback((endedVia = 'finish') => {
     if (pausedRef.current) return; // already between sets
     pausedRef.current = true;
@@ -698,7 +377,13 @@ const useCamera = (exercise, { onComplete } = {}) => {
         set_index: currentSetIndex,
         format: 'reps',
         score,
-        reps_completed: repCounterRef.current.repsCompleted,
+        // Shoulder flexion counts reps in sfGuideRef; every other exercise in
+        // repCounterRef. Only one is ever advanced per exercise, so max() picks
+        // the live counter without needing the exercise check here.
+        reps_completed: Math.max(
+          repCounterRef.current.repsCompleted,
+          sfGuideRef.current.repsCompleted,
+        ),
         target_reps: currentSet?.target_reps || 12,
         hold_seconds_per_rep: currentSet?.hold_seconds_per_rep ?? null,
         weight_kg: currentSet?.target_weight_kg != null ? currentWeightKg : null,
@@ -851,12 +536,17 @@ const useCamera = (exercise, { onComplete } = {}) => {
     jointColors,
     keypoints,
     feedbackText,
+    feedbackColor,
     inferenceSize,
     cameraLayout,
     affectedSide,
     //pose detection state
     isModelReady,
     modelError,
+    //voice-over
+    voiceMuted,
+    toggleVoiceMute,
+    voiceReady,
     //actions
     startExercise,
     finishCurrentSet,

@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { Alert } from 'react-native';
 import { supabase } from '../services/supabase';
 import { validatePassword } from '../utils/passwordPolicy';
+import { instance as api } from '../lib/api';
 
 const useAuthStore = create((set, get) => ({
   // State
@@ -128,11 +129,125 @@ const useAuthStore = create((set, get) => ({
         Alert.alert('Signup Failed', 'Could not determine authenticated user.');
         return;
       }
+      //alert to notify the user that they should confirm their email
+      if (!data.session) {
+        Alert.alert(
+          'Confirm your email',
+          "We've sent a confirmation link to your email. Please confirm it, then log in."
+        );
+        navigation.replace('Login');
+        return;
+      }
 
       Alert.alert('Account created Succesfully!, Welcome to TheraMotion!')
       navigation.replace('Onboarding');
     } catch (error) {
       Alert.alert('Signup Failed', error.message);
+    } finally {
+      set({ loading: false });
+    }
+  },
+
+  // ─── Forgot / Reset Password ────────────────────────────────────────────────
+  // Sends a 6-digit recovery code to the user's email (Supabase's Reset Password
+  // template is configured to render {{ .Token }} instead of a link - see plan).
+  // Returns true only when a code was actually sent, so callers (e.g. the
+  // resend button) know whether it's safe to start a cooldown timer.
+  handleForgotPassword: async (email, navigation) => {
+    if (!email) {
+      Alert.alert('Error', 'Please enter your email address');
+      return false;
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      Alert.alert('Error', 'Please enter a valid email address');
+      return false;
+    }
+
+    set({ loading: true });
+
+    try {
+      // Check the email is actually registered before sending a reset code
+      const { data: checkData } = await api.post('/auth/check-email', { email });
+      if (!checkData?.exists) {
+        Alert.alert('Error', 'No account found with this email address');
+        return false;
+      }
+
+      const { error } = await supabase.auth.resetPasswordForEmail(email);
+
+      if (error) {
+        Alert.alert('Error', error.message);
+        return false;
+      }
+
+      Alert.alert('Check your email', 'We sent a reset code to your email.');
+      navigation.navigate('ResetPassword', { email });
+      return true;
+    } catch (error) {
+      // Keep raw HTTP status/axios text ("Request failed with status
+      // code 503") off the screen - show plain-language copy instead.
+      const status = error?.response?.status;
+      let message = 'Something went wrong. Please try again.';
+      if (status === 429) {
+        message = 'Too many attempts. Please wait a moment and try again.';
+      } else if (status === 503) {
+        message = 'Could not verify your email right now. Please try again shortly.';
+      } else if (!error?.response) {
+        message = 'Could not reach the server. Check your connection and try again.';
+      }
+      Alert.alert('Error', message);
+      return false;
+    } finally {
+      set({ loading: false });
+    }
+  },
+
+  // Verifies the emailed code (establishes a recovery session), sets the new
+  // password, then signs out so the user logs back in normally.
+  handleResetPassword: async (email, code, newPassword, confirmPassword, navigation) => {
+    if (!code) {
+      Alert.alert('Error', 'Please enter the code sent to your email');
+      return;
+    }
+    const policy = validatePassword(newPassword);
+    if (!policy.ok) {
+      Alert.alert('Password too weak', `• ${policy.failed.join('\n• ')}`);
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      Alert.alert('Error', 'Passwords do not match');
+      return;
+    }
+
+    set({ loading: true });
+
+    try {
+      const { error: verifyError } = await supabase.auth.verifyOtp({
+        email,
+        token: code,
+        type: 'recovery',
+      });
+
+      if (verifyError) {
+        Alert.alert('Invalid or expired code', verifyError.message);
+        return;
+      }
+
+      const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
+
+      if (updateError) {
+        Alert.alert('Error', updateError.message);
+        return;
+      }
+
+      // Don't leave the patient signed in via the one-off recovery session.
+      await supabase.auth.signOut();
+
+      Alert.alert('Password updated', 'Please log in with your new password.');
+      navigation.replace('Login');
+    } catch (error) {
+      Alert.alert('Error', error.message);
     } finally {
       set({ loading: false });
     }

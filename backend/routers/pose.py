@@ -1,13 +1,14 @@
 import asyncio
 import base64
-import os
+import json
 import threading
 from typing import Any, Dict, Optional
 
 import jwt  # PyJWT
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError
 
-from core.auth import verify_jwt
+from core.auth import AuthConfigError, decode_supabase_jwt, verify_jwt
 from core.mediapipe_vision import create_realtime_pose, estimate_pose_from_image_bytes
 from core.rate_limit import limiter
 from core.session_video import SessionClipRecorder, store_clip_async
@@ -16,6 +17,13 @@ from services.pose_service import score_pose
 
 router = APIRouter()
 
+# Guards _active_connections. Incremented/decremented from the asyncio event
+# loop thread only (never inside asyncio.to_thread), so this is really just
+# documentation of intent rather than a hard requirement — kept anyway in
+# case that ever changes.
+_connection_count_lock = threading.Lock()
+_active_connections = 0
+
 
 # WebSocket close codes for the realtime pose channel. The WS protocol
 # doesn't have HTTP status codes — the 4000-4999 range is application-
@@ -23,18 +31,26 @@ router = APIRouter()
 # "internal server error" (standard).
 _WS_CLOSE_UNAUTHORIZED = 4401
 _WS_CLOSE_SERVER_ERROR = 1011
+_WS_CLOSE_AT_CAPACITY = 4503  # "service unavailable" intent, app-defined range
 
-# Duplicated from core/auth.py so the WS handshake doesn't reach into
-# that module's private constants. If the algorithm or audience ever
-# changes, update both call sites.
-_JWT_ALGORITHMS = ["HS256"]
-_JWT_AUDIENCE = "authenticated"
+# Hard cap on concurrent /ws/pose connections, protecting the shared host
+# machine's CPU (not a dedicated server) - set with margin below the measured saturation point (~15 concurrent, 2026-08-21 ramp test).
+_MAX_CONCURRENT_CONNECTIONS = 8
 
 # How long we wait for the client's auth message after accept(). The
 # mobile client sends it within a few hundred ms in normal conditions;
 # 10s gives plenty of slack for slow networks before we close as
 # unauthorized.
 _WS_AUTH_TIMEOUT_SECONDS = 10.0
+
+# Idle gap before we send a heartbeat ping during the frame loop. The
+# capture loop sends nothing during a between-set rest (fully user-paced,
+# no fixed duration — see useCamera.js), so a long rest can otherwise look
+# identical to a dead connection to any proxy/LB in front of this socket.
+# Common idle-connection timeouts cluster around ~60s (AWS ALB default,
+# typical nginx defaults); this sends real data-frame traffic well inside
+# that window so the connection never goes quiet long enough to get reaped.
+_WS_IDLE_PING_SECONDS = 25.0
 
 
 @router.post("/pose/estimate")
@@ -77,6 +93,7 @@ def estimate_pose(
             "angles": {},
             "colors": {},
             "hint": "Step back — show your full body",
+            "hint_key": "fallback.show_full_body",
             "imageWidth": image_width,
             "imageHeight": image_height,
         }
@@ -89,6 +106,7 @@ def estimate_pose(
         "angles": scored["angles"],
         "colors": scored["colors"],
         "hint": scored["hint"],
+        "hint_key": scored.get("hint_key"),
         "imageWidth": image_width,
         "imageHeight": image_height,
     }
@@ -97,25 +115,22 @@ def estimate_pose(
 def _decode_ws_token(token: str) -> Optional[Dict[str, Any]]:
     """Validate a Supabase JWT supplied via the WS auth message.
 
-    Returns the decoded claims on success, None on failure. The caller
-    uses the verified `sub` claim as the patient_id for evidence-clip
-    capture — never a client-supplied field — so one connection can't
-    store to or delete another patient's clips.
+    Returns the decoded claims on success, None if the TOKEN itself is
+    invalid. Does NOT catch AuthConfigError or PyJWKClientConnectionError —
+    both propagate to the caller on purpose, so pose_ws can close with a
+    server-error code instead of folding a server-side problem (missing
+    config, JWKS endpoint unreachable) into the same "unauthorized" outcome
+    a bad token gets. The caller uses the verified `sub` claim as the
+    patient_id for evidence-clip capture — never a client-supplied field —
+    so one connection can't store to or delete another patient's clips.
     """
     if not token:
         return None
-    secret = os.getenv("SUPABASE_JWT_SECRET", "").strip()
-    if not secret:
-        return None
     try:
-        return jwt.decode(
-            token,
-            secret,
-            algorithms=_JWT_ALGORITHMS,
-            audience=_JWT_AUDIENCE,
-            options={"require": ["exp", "sub"]},
-        )
-    except jwt.InvalidTokenError:
+        return decode_supabase_jwt(token)
+    except PyJWKClientConnectionError:
+        raise
+    except (jwt.InvalidTokenError, PyJWKClientError):
         return None
 
 
@@ -174,6 +189,37 @@ async def pose_ws(websocket: WebSocket) -> None:
     """
     await websocket.accept()
 
+    # ── Step 0: capacity gate ────────────────────────────────────────────
+    # Checked before the auth handshake so a connection over the cap doesn't
+    # also pay for a JWKS round-trip we're about to refuse anyway.
+    global _active_connections
+    with _connection_count_lock:
+        if _active_connections >= _MAX_CONCURRENT_CONNECTIONS:
+            at_capacity = True
+        else:
+            _active_connections += 1
+            at_capacity = False
+    if at_capacity:
+        # A bare close gives the client nothing to show the patient — send a
+        # reason first (best-effort; the socket may already be going away).
+        try:
+            await websocket.send_json({"error": "at_capacity", "type": "at_capacity"})
+        except Exception:
+            pass
+        await websocket.close(code=_WS_CLOSE_AT_CAPACITY, reason="at_capacity")
+        return
+
+    try:
+        await _pose_ws_admitted(websocket)
+    finally:
+        with _connection_count_lock:
+            _active_connections -= 1
+
+
+async def _pose_ws_admitted(websocket: WebSocket) -> None:
+    """Body of pose_ws for a connection that passed the capacity gate.
+    Split out so the gate's finally-decrement can wrap the entire handler
+    (auth handshake included) without re-indenting it."""
     # ── Step 1: auth handshake ─────────────────────────────────────────
     exercise_type = ""
     affected_side = "right"
@@ -195,7 +241,21 @@ async def pose_ws(websocket: WebSocket) -> None:
     if not isinstance(auth_msg, dict) or auth_msg.get("type") != "auth":
         await websocket.close(code=_WS_CLOSE_UNAUTHORIZED)
         return
-    claims = _decode_ws_token(str(auth_msg.get("token") or ""))
+    try:
+        # PyJWT's JWKS fetch is a synchronous urllib call — run it off the
+        # event loop so a cache miss or a slow/unreachable JWKS endpoint
+        # doesn't stall every other connection's frame loop while this one
+        # handshake is in flight.
+        claims = await asyncio.to_thread(
+            _decode_ws_token, str(auth_msg.get("token") or "")
+        )
+    except (AuthConfigError, PyJWKClientConnectionError):
+        # Server-side problem (missing SUPABASE_URL, or the JWKS endpoint
+        # itself unreachable) — not the client's fault, so close with the
+        # server-error code instead of the "unauthorized" one every
+        # bad-token case below uses.
+        await websocket.close(code=_WS_CLOSE_SERVER_ERROR)
+        return
     if not claims:
         await websocket.close(code=_WS_CLOSE_UNAUTHORIZED)
         return
@@ -227,7 +287,48 @@ async def pose_ws(websocket: WebSocket) -> None:
     # ── Step 3: frame loop ─────────────────────────────────────────────
     try:
         while True:
-            data = await websocket.receive_bytes()
+            # Raw receive() (not receive_bytes()) so an idle gap can be
+            # caught with a timeout AND a text control message (ping/pong)
+            # can arrive interleaved with binary frames — receive_bytes()
+            # blocks indefinitely and rejects anything that isn't bytes.
+            try:
+                message = await asyncio.wait_for(
+                    websocket.receive(), timeout=_WS_IDLE_PING_SECONDS
+                )
+            except asyncio.TimeoutError:
+                # Nothing arrived in the idle window (e.g. the patient is
+                # resting between sets, which has no fixed duration) — send
+                # a heartbeat so any proxy/LB in front of this socket sees
+                # real traffic and doesn't reap it as idle. A failed send
+                # means the socket is already dead; let the next iteration's
+                # receive() surface that as a disconnect instead of masking
+                # it here.
+                try:
+                    await websocket.send_json({"type": "ping"})
+                except Exception:
+                    break
+                continue
+
+            if message["type"] == "websocket.disconnect":
+                # Same signal receive_bytes() turns into WebSocketDisconnect
+                # internally — raise it ourselves so the except clause below
+                # still handles it identically.
+                raise WebSocketDisconnect(message.get("code") or 1000)
+
+            if message.get("text") is not None:
+                # Control-channel only — real frames are always binary.
+                try:
+                    control = json.loads(message["text"])
+                except (TypeError, ValueError):
+                    continue
+                control_type = control.get("type") if isinstance(control, dict) else None
+                if control_type == "ping":
+                    await websocket.send_json({"type": "pong"})
+                # "pong" (a reply to OUR ping) needs no response — it's
+                # just proof the client is still alive.
+                continue
+
+            data = message.get("bytes")
             if not data:
                 # Empty payload — reply to keep the client's backpressure
                 # loop moving rather than letting its watchdog fire.
@@ -280,6 +381,7 @@ async def pose_ws(websocket: WebSocket) -> None:
                     "angles": {},
                     "colors": {},
                     "hint": "Step back — show your full body",
+                    "hint_key": "fallback.show_full_body",
                     "imageWidth": image_width,
                     "imageHeight": image_height,
                 })
@@ -292,6 +394,7 @@ async def pose_ws(websocket: WebSocket) -> None:
                 "angles": scored["angles"],
                 "colors": scored["colors"],
                 "hint": scored["hint"],
+                "hint_key": scored.get("hint_key"),
                 "imageWidth": image_width,
                 "imageHeight": image_height,
             })

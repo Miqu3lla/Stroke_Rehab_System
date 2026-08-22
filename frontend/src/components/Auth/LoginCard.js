@@ -33,6 +33,13 @@ export default function LoginCard({ navigation }) {
           onChangeText={setPassword}
           secureTextEntry
         />
+        <TouchableOpacity
+          className="self-end mt-3 mr-2"
+          onPress={() => navigation.navigate('ForgotPassword')}
+          disabled={loading}
+        >
+          <Text className="text-[#0052CC] text-base font-semibold">Forgot password?</Text>
+        </TouchableOpacity>
       </View>
 
       <TouchableOpacity
