@@ -96,10 +96,16 @@ def _get_service_role_key() -> str:
 def _get_postgres_config() -> Dict[str, str]:
     """Gather Postgres connection configuration from environment.
 
-    Keys: host, port, dbname, user, password.
+    Keys: host, port, dbname, user, password. host and password have NO
+    default on purpose - both empty means "direct Postgres isn't configured
+    for this deployment", which _postgres_configured() below treats as a
+    clean skip to the next tier (docker-exec, then REST). The old
+    "localhost" default here was a real footgun: a host with no local
+    Postgres running would silently attempt (and fail) a loopback connect
+    on this tier on every single request instead of skipping it outright.
     """
     return {
-        "host": os.getenv("POSTGRES_HOST", "localhost"),
+        "host": os.getenv("POSTGRES_HOST", ""),
         "port": os.getenv("POSTGRES_PORT", "5432"),
         "dbname": os.getenv("POSTGRES_DB", "postgres"),
         "user": os.getenv("POSTGRES_USER", "supabase_admin"),
@@ -115,9 +121,14 @@ def _configured() -> bool:
 
 
 def _postgres_configured() -> bool:
-    """Return True when Postgres credential (password) is configured."""
+    """Return True when direct Postgres access is configured (host + password).
+
+    Gates every psycopg2.connect() call site in this module - requiring
+    both means an unconfigured host skips this tier cleanly instead of
+    attempting a connection to whatever POSTGRES_HOST happens to resolve to.
+    """
     config = _get_postgres_config()
-    return bool(config["password"].strip())
+    return bool(config["host"].strip()) and bool(config["password"].strip())
 
 
 def _quote_sql_value(value: Any) -> str:

@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import json
 import threading
 from typing import Any, Dict, Optional
 
@@ -16,6 +17,13 @@ from services.pose_service import score_pose
 
 router = APIRouter()
 
+# Guards _active_connections. Incremented/decremented from the asyncio event
+# loop thread only (never inside asyncio.to_thread), so this is really just
+# documentation of intent rather than a hard requirement — kept anyway in
+# case that ever changes.
+_connection_count_lock = threading.Lock()
+_active_connections = 0
+
 
 # WebSocket close codes for the realtime pose channel. The WS protocol
 # doesn't have HTTP status codes — the 4000-4999 range is application-
@@ -23,12 +31,45 @@ router = APIRouter()
 # "internal server error" (standard).
 _WS_CLOSE_UNAUTHORIZED = 4401
 _WS_CLOSE_SERVER_ERROR = 1011
+_WS_CLOSE_AT_CAPACITY = 4503  # "service unavailable" intent, app-defined range
+
+# Hard cap on concurrent /ws/pose connections. This exists to protect the
+# HOST MACHINE, not just app responsiveness — this backend runs on Matthew's
+# personal PC (shared with VS Code, browser, Discord, Spotify, OBS, etc, not
+# a dedicated server), so a burst of real users can't be allowed to peg the
+# whole machine's CPU.
+#
+# Real measured numbers (2026-08-21 ramp test against this exact code, real
+# WS connections + real JWTs + real frames through the real MediaPipe
+# pipeline, run WITH normal daily-use background load, not an idle machine):
+#   N<=10  system-wide CPU stayed 55-80%, worker RSS ~300MB->1GB, comfortable
+#   N=15   first sustained spike to system-wide CPU 96-98%
+#   N=20-35 system-wide CPU pinned at 96-100% consistently; worker RSS grew
+#           to 2.5-3.5GB
+# The frontend's own 2000ms per-frame watchdog (useCamera.js) never actually
+# tripped even at N=35 (max observed latency 1937ms) while system CPU was
+# already pegged at 100% — so the app's own error signal fires too late to
+# protect the machine; the cap has to be set from the system-CPU data, not
+# from when the app itself starts looking broken.
+#
+# 8 sits with real margin below the first saturation spike (N=15), not just
+# under the point of total failure (N=25+).
+_MAX_CONCURRENT_CONNECTIONS = 8
 
 # How long we wait for the client's auth message after accept(). The
 # mobile client sends it within a few hundred ms in normal conditions;
 # 10s gives plenty of slack for slow networks before we close as
 # unauthorized.
 _WS_AUTH_TIMEOUT_SECONDS = 10.0
+
+# Idle gap before we send a heartbeat ping during the frame loop. The
+# capture loop sends nothing during a between-set rest (fully user-paced,
+# no fixed duration — see useCamera.js), so a long rest can otherwise look
+# identical to a dead connection to any proxy/LB in front of this socket.
+# Common idle-connection timeouts cluster around ~60s (AWS ALB default,
+# typical nginx defaults); this sends real data-frame traffic well inside
+# that window so the connection never goes quiet long enough to get reaped.
+_WS_IDLE_PING_SECONDS = 25.0
 
 
 @router.post("/pose/estimate")
@@ -167,6 +208,31 @@ async def pose_ws(websocket: WebSocket) -> None:
     """
     await websocket.accept()
 
+    # ── Step 0: capacity gate ────────────────────────────────────────────
+    # Checked before the auth handshake so a connection over the cap doesn't
+    # also pay for a JWKS round-trip we're about to refuse anyway.
+    global _active_connections
+    with _connection_count_lock:
+        if _active_connections >= _MAX_CONCURRENT_CONNECTIONS:
+            at_capacity = True
+        else:
+            _active_connections += 1
+            at_capacity = False
+    if at_capacity:
+        await websocket.close(code=_WS_CLOSE_AT_CAPACITY)
+        return
+
+    try:
+        await _pose_ws_admitted(websocket)
+    finally:
+        with _connection_count_lock:
+            _active_connections -= 1
+
+
+async def _pose_ws_admitted(websocket: WebSocket) -> None:
+    """Body of pose_ws for a connection that passed the capacity gate.
+    Split out so the gate's finally-decrement can wrap the entire handler
+    (auth handshake included) without re-indenting it."""
     # ── Step 1: auth handshake ─────────────────────────────────────────
     exercise_type = ""
     affected_side = "right"
@@ -234,7 +300,48 @@ async def pose_ws(websocket: WebSocket) -> None:
     # ── Step 3: frame loop ─────────────────────────────────────────────
     try:
         while True:
-            data = await websocket.receive_bytes()
+            # Raw receive() (not receive_bytes()) so an idle gap can be
+            # caught with a timeout AND a text control message (ping/pong)
+            # can arrive interleaved with binary frames — receive_bytes()
+            # blocks indefinitely and rejects anything that isn't bytes.
+            try:
+                message = await asyncio.wait_for(
+                    websocket.receive(), timeout=_WS_IDLE_PING_SECONDS
+                )
+            except asyncio.TimeoutError:
+                # Nothing arrived in the idle window (e.g. the patient is
+                # resting between sets, which has no fixed duration) — send
+                # a heartbeat so any proxy/LB in front of this socket sees
+                # real traffic and doesn't reap it as idle. A failed send
+                # means the socket is already dead; let the next iteration's
+                # receive() surface that as a disconnect instead of masking
+                # it here.
+                try:
+                    await websocket.send_json({"type": "ping"})
+                except Exception:
+                    break
+                continue
+
+            if message["type"] == "websocket.disconnect":
+                # Same signal receive_bytes() turns into WebSocketDisconnect
+                # internally — raise it ourselves so the except clause below
+                # still handles it identically.
+                raise WebSocketDisconnect(message.get("code") or 1000)
+
+            if message.get("text") is not None:
+                # Control-channel only — real frames are always binary.
+                try:
+                    control = json.loads(message["text"])
+                except (TypeError, ValueError):
+                    continue
+                control_type = control.get("type") if isinstance(control, dict) else None
+                if control_type == "ping":
+                    await websocket.send_json({"type": "pong"})
+                # "pong" (a reply to OUR ping) needs no response — it's
+                # just proof the client is still alive.
+                continue
+
+            data = message.get("bytes")
             if not data:
                 # Empty payload — reply to keep the client's backpressure
                 # loop moving rather than letting its watchdog fire.

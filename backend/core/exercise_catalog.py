@@ -99,13 +99,22 @@ def is_lstm_supported(exercise_type: str) -> bool:
 
 
 def _get_pg_config() -> Dict[str, str]:
+    # host/password: no default. See core/supabase_db.py's _get_postgres_config
+    # for why "localhost" used to be here and why that was a footgun.
     return {
-        "host": os.getenv("POSTGRES_HOST", "localhost"),
+        "host": os.getenv("POSTGRES_HOST", ""),
         "port": os.getenv("POSTGRES_PORT", "5432"),
         "dbname": os.getenv("POSTGRES_DB", "postgres"),
         "user": os.getenv("POSTGRES_USER", "supabase_admin"),
         "password": os.getenv("POSTGRES_PASSWORD", ""),
     }
+
+
+def _pg_configured(config: Dict[str, str]) -> bool:
+    """Mirrors supabase_db._postgres_configured() - both host and password
+    required, so an unconfigured host skips this tier instead of attempting
+    a connection to whatever POSTGRES_HOST happens to resolve to."""
+    return bool(config.get("host", "").strip()) and bool(config.get("password", "").strip())
 
 
 def _fetch_catalog_rows() -> List[Dict[str, Any]]:
@@ -144,7 +153,7 @@ def _fetch_catalog_rows() -> List[Dict[str, Any]]:
     # psycopg2 direct
     if psycopg2 is not None:
         config = _get_pg_config()
-        if config.get("password"):
+        if _pg_configured(config):
             try:
                 with psycopg2.connect(
                     host=config["host"], port=config["port"], dbname=config["dbname"],
