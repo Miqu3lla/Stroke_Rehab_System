@@ -4,10 +4,14 @@ import { Home, Sparkles, Dumbbell, User } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { supabase } from "../../services/supabase";
 
+// Tab order — lower index is "further left", higher is "further right".
+// Used to derive the slide direction when switching tabs.
+const ROUTE_ORDER = { Dashboard: 0, Sessions: 1, Exercise: 2 };
+
 const bottomNavItems = [
-  { label: "Home", route: "Dashboard", icon: Home },
-  { label: "Sessions", route: "Sessions", icon: Sparkles },
-  { label: "Exercise", route: "Exercise", icon: Dumbbell },
+  { label: "Home",     route: "Dashboard", icon: Home },
+  { label: "Sessions", route: "Sessions",  icon: Sparkles },
+  { label: "Exercise", route: "Exercise",  icon: Dumbbell },
 ];
 
 export default function Navbar({ title, currentRoute, children, navigationRef }) {
@@ -67,10 +71,18 @@ export default function Navbar({ title, currentRoute, children, navigationRef })
         >
           {bottomNavItems.map(({ label, route, icon: Icon }) => {
             const isActive = currentRoute === route;
+            const handlePress = () => {
+              if (isActive) return;
+              // Slide left when going forward in tab order, right when going back.
+              const fromIdx = ROUTE_ORDER[currentRoute] ?? 0;
+              const toIdx   = ROUTE_ORDER[route]        ?? 0;
+              const direction = toIdx > fromIdx ? 'left' : 'right';
+              navigationRef?.navigate(route, { direction });
+            };
             return (
               <Pressable
                 key={label}
-                onPress={() => navigationRef?.navigate(route)}
+                onPress={handlePress}
                 className={`items-center justify-center px-6 py-2 rounded-2xl ${isActive ? "bg-blue-600" : "bg-transparent"}`}
               >
                 <Icon color={isActive ? "#ffffff" : "#64748b"} size={24} />
