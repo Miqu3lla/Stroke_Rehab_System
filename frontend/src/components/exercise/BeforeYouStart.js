@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import { formatExerciseSession } from '../../utils/duration';
+import { EXERCISE_TYPES } from '../../constants/exerciseTypes';
 
 //color legend items displayed on the "Before you start" card
 const COLOR_LEGEND = [
@@ -24,6 +25,15 @@ export default function BeforeYouStart({ exercise, onBegin }) {
   const suggestedWeight = exercise?.suggested_weight_kg
     ?? exercise?.sets?.find((s) => s?.target_weight_kg != null)?.target_weight_kg;
 
+  // Determine if this is a leg/lower-body exercise so we can show the right
+  // distance and visibility instructions.
+  const LEG_EXERCISE_TYPES = new Set([
+    EXERCISE_TYPES.KNEE_EXTENSION,
+    EXERCISE_TYPES.SIT_TO_STAND,
+  ]);
+  const exerciseType = (exercise?.exercise_type || exercise?.type || '').toLowerCase();
+  const isLegExercise = LEG_EXERCISE_TYPES.has(exerciseType);
+
   return (
     <View className="flex-1 justify-center bg-[#0f1116] p-6">
       <Text className="text-white text-2xl font-bold text-center mb-2">{exercise?.name}</Text>
@@ -39,8 +49,17 @@ export default function BeforeYouStart({ exercise, onBegin }) {
 
       <View className="mt-4 bg-white/5 rounded-2xl p-4 w-full">
         <Text className="text-white font-bold text-[15px] mb-2.5">Before you start</Text>
-        <Text className="text-[#c3c9dd] text-[13px] mb-1.5 leading-[18px]">• Stand 1–2 metres from the camera</Text>
-        <Text className="text-[#c3c9dd] text-[13px] mb-1.5 leading-[18px]">• Make sure your full upper body is visible</Text>
+        {isLegExercise ? (
+          <>
+            <Text className="text-[#c3c9dd] text-[13px] mb-1.5 leading-[18px]">• Stand 1.5–2 metres from the camera</Text>
+            <Text className="text-[#c3c9dd] text-[13px] mb-1.5 leading-[18px]">• Make sure your full body (head to feet) is visible</Text>
+          </>
+        ) : (
+          <>
+            <Text className="text-[#c3c9dd] text-[13px] mb-1.5 leading-[18px]">• Stand 0.5–1 metre from the camera</Text>
+            <Text className="text-[#c3c9dd] text-[13px] mb-1.5 leading-[18px]">• Make sure your full upper body is visible</Text>
+          </>
+        )}
         <Text className="text-[#c3c9dd] text-[13px] mb-1.5 leading-[18px]">• You'll get a short break between each set</Text>
         {!isStrength && holdPerRep ? (
           <Text className="text-[#c3c9dd] text-[13px] mb-1.5 leading-[18px]">

@@ -1,12 +1,18 @@
 {
   "expo": {
-    "name": "frontend",
+    "name": "TheraMotion",
     "slug": "frontend",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/489e559d-3f76-4432-bb50-38fe53af7013"
+    },
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -16,11 +22,16 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.theramotion.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -29,6 +40,11 @@
       "expo-secure-store",
       "expo-video",
       "expo-audio"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "489e559d-3f76-4432-bb50-38fe53af7013"
+      }
+    }
   }
 }
