@@ -14,10 +14,10 @@ import useAuthStore from "../store/useAuthStore";
 
 const Stack = createStackNavigator();
 
-// Slide the incoming screen in from the left or right based on the
-// `direction` param passed by the navbar. Defaults to 'left' (forward).
-const directionalSlideInterpolator = ({ current, next, layouts, route }) => {
-  const direction = route.params?.direction ?? 'left';
+// Slide the incoming screen in from the left or right. cardStyleInterpolator
+// isn't given `route`, so direction must be resolved beforehand (from the
+// navbar's `direction` param) and baked into the interpolator per-screen.
+const makeDirectionalSlideInterpolator = (direction) => ({ current, next, layouts }) => {
   const translateX = current.progress.interpolate({
     inputRange:  [0, 1],
     outputRange: [direction === 'left' ? layouts.screen.width : -layouts.screen.width, 0],
@@ -29,6 +29,11 @@ const directionalSlideInterpolator = ({ current, next, layouts, route }) => {
     cardStyle: { transform: [{ translateX }], opacity },
   };
 };
+
+// Defaults to 'left' (forward) when the navbar didn't pass a direction.
+const directionalScreenOptions = ({ route }) => ({
+  cardStyleInterpolator: makeDirectionalSlideInterpolator(route.params?.direction ?? 'left'),
+});
 
 const AppNavigator = () => {
   const [user, setUser] = useState(null);
@@ -74,17 +79,17 @@ const AppNavigator = () => {
       <Stack.Screen
         name="Dashboard"
         component={HomeScreen}
-        options={{ cardStyleInterpolator: directionalSlideInterpolator }}
+        options={directionalScreenOptions}
       />
       <Stack.Screen
         name="Sessions"
         component={SessionScreen}
-        options={{ cardStyleInterpolator: directionalSlideInterpolator }}
+        options={directionalScreenOptions}
       />
       <Stack.Screen
         name="Exercise"
         component={ExerciseScreen}
-        options={{ cardStyleInterpolator: directionalSlideInterpolator }}
+        options={directionalScreenOptions}
       />
 
       {/* Detail screens — default slide-from-right */}

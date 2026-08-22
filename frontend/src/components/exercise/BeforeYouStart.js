@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import { formatExerciseSession } from '../../utils/duration';
-import { EXERCISE_TYPES } from '../../constants/exerciseTypes';
+import { isLegExercise } from '../../utils/repCounter';
 
 //color legend items displayed on the "Before you start" card
 const COLOR_LEGEND = [
@@ -25,14 +25,14 @@ export default function BeforeYouStart({ exercise, onBegin }) {
   const suggestedWeight = exercise?.suggested_weight_kg
     ?? exercise?.sets?.find((s) => s?.target_weight_kg != null)?.target_weight_kg;
 
-  // Determine if this is a leg/lower-body exercise so we can show the right
-  // distance and visibility instructions.
-  const LEG_EXERCISE_TYPES = new Set([
-    EXERCISE_TYPES.KNEE_EXTENSION,
-    EXERCISE_TYPES.SIT_TO_STAND,
-  ]);
-  const exerciseType = (exercise?.exercise_type || exercise?.type || '').toLowerCase();
-  const isLegExercise = LEG_EXERCISE_TYPES.has(exerciseType);
+  // Same classifier + fields as ExerciseInfoCard's PostureFeedback, so this
+  // pre-session guidance stays consistent with the in-session HUD.
+  const exerciseHint = [
+    exercise?.name || '',
+    exercise?.focus || '',
+    exercise?.affected_area || '',
+  ].join(' ').toLowerCase();
+  const isLeg = isLegExercise(exerciseHint);
 
   return (
     <View className="flex-1 justify-center bg-[#0f1116] p-6">
@@ -49,7 +49,7 @@ export default function BeforeYouStart({ exercise, onBegin }) {
 
       <View className="mt-4 bg-white/5 rounded-2xl p-4 w-full">
         <Text className="text-white font-bold text-[15px] mb-2.5">Before you start</Text>
-        {isLegExercise ? (
+        {isLeg ? (
           <>
             <Text className="text-[#c3c9dd] text-[13px] mb-1.5 leading-[18px]">• Stand 1.5–2 metres from the camera</Text>
             <Text className="text-[#c3c9dd] text-[13px] mb-1.5 leading-[18px]">• Make sure your full body (head to feet) is visible</Text>

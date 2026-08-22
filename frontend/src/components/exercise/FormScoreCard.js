@@ -20,6 +20,11 @@ export default function FormScoreCard({
   const [collapsed, setCollapsed] = useState(false);
   const translateY   = useRef(new Animated.Value(0)).current;
   const cardHeightRef = useRef(0);
+  // PanResponder is built once via useRef, so its handlers close over a
+  // stale `collapsed` — read/write this ref instead so gestures see the
+  // latest state.
+  const collapsedRef = useRef(collapsed);
+  collapsedRef.current = collapsed;
 
   const snapTo = (toCollapsed) => {
     const toValue = toCollapsed ? cardHeightRef.current - COLLAPSED_HEIGHT : 0;
@@ -37,13 +42,13 @@ export default function FormScoreCard({
       onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 5,
       onPanResponderMove: (_, g) => {
         const max     = cardHeightRef.current - COLLAPSED_HEIGHT;
-        const clamped = Math.max(0, Math.min(max, g.dy + (collapsed ? max : 0)));
+        const clamped = Math.max(0, Math.min(max, g.dy + (collapsedRef.current ? max : 0)));
         translateY.setValue(clamped);
       },
       onPanResponderRelease: (_, g) => {
         if      (g.vy > 0.3 || g.dy > 40)  snapTo(true);
         else if (g.vy < -0.3 || g.dy < -40) snapTo(false);
-        else                                 snapTo(collapsed);
+        else                                 snapTo(collapsedRef.current);
       },
     })
   ).current;
