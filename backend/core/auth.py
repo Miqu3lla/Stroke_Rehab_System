@@ -80,11 +80,18 @@ class _ThrottledPyJWKClient(PyJWKClient):
             return signing_key
 
         with self._refresh_lock:
-            now = time.monotonic()
-            if now - self._last_forced_refresh >= _MIN_FORCED_REFRESH_INTERVAL_SECONDS:
-                signing_keys = self.get_signing_keys(refresh=True)
-                signing_key = self.match_kid(signing_keys, kid)
-                self._last_forced_refresh = now
+            # Re-check the CACHED keys first (no network call) - another
+            # thread may have already refreshed while we waited for the
+            # lock. Without this, the throttle below would make us give up
+            # on a kid that a sibling request just made valid.
+            signing_keys = self.get_signing_keys()
+            signing_key = self.match_kid(signing_keys, kid)
+            if not signing_key:
+                now = time.monotonic()
+                if now - self._last_forced_refresh >= _MIN_FORCED_REFRESH_INTERVAL_SECONDS:
+                    signing_keys = self.get_signing_keys(refresh=True)
+                    signing_key = self.match_kid(signing_keys, kid)
+                    self._last_forced_refresh = now
 
         if not signing_key:
             raise PyJWKClientError(f'Unable to find a signing key that matches: "{kid}"')

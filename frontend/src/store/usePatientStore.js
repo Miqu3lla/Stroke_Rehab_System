@@ -24,9 +24,13 @@ const _resolveExercises = (variants, mode) => {
 
 // True when a fresh (non-stale) cache entry already exists for this key —
 // used to skip the loading flag so cached data doesn't flash a spinner.
+// isStaleByTime (not isStale) because these queries aren't mounted via
+// useQuery — an unobserved entry never gets its stale timer ticked, so
+// isStale() would report fresh forever. Compare elapsed time directly
+// against the configured staleTime instead.
 const _isQueryFresh = (queryKey) => {
   const query = queryClient.getQueryCache().find({ queryKey });
-  return !!query && !query.isStale();
+  return !!query && !query.isStaleByTime(30_000);
 };
 
 const usePatientStore = create((set, get) => ({

@@ -39,6 +39,27 @@ logger = logging.getLogger("uvicorn.error")
 # Bucket the clips live in (private; created by db/session_videos.sql).
 _BUCKET = "session-evidence"
 
+# storage_path is deterministic (patient+session+exercise -> same path,
+# x-upsert'd on purpose so a re-record overwrites cleanly). That means two
+# store_clip() calls for the same path CAN run concurrently on different
+# threads (store_clip_async spawns one per clip) - without a lock, one call's
+# "no row references this path, safe to delete the orphan" check can pass
+# right before the OTHER call's upload+insert lands, and it deletes a file
+# the other call's now-committed row depends on. One lock per path serializes
+# the whole upload->index->orphan-cleanup sequence for that path only, so
+# unrelated clips (different paths) never contend.
+_path_locks: dict = {}
+_path_locks_guard = threading.Lock()
+
+
+def _lock_for_path(path: str) -> threading.Lock:
+    with _path_locks_guard:
+        lock = _path_locks.get(path)
+        if lock is None:
+            lock = threading.Lock()
+            _path_locks[path] = lock
+        return lock
+
 # Capture window. We only need a few seconds proving the patient did the
 # movement, so we stop after whichever comes first — the time window or a
 # hard frame cap that bounds the in-memory buffer.
@@ -222,55 +243,62 @@ def store_clip(recorder: SessionClipRecorder) -> None:
         slug = _safe_exercise_slug(recorder.exercise_type)
         storage_path = f"{recorder.patient_id}/{recorder.session_id}/{slug}.mp4"
 
-        upload = upload_to_storage(_BUCKET, storage_path, mp4, "video/mp4")
-        if not upload.get("stored"):
-            logger.warning("session-video: upload failed: %s", upload)
-            return
+        # Serialize upload->index->orphan-cleanup per path - see _lock_for_path
+        # for why: without this, a concurrent call for this SAME path (e.g. a
+        # re-record) could land its upload+row between our row-check and our
+        # delete, and we'd delete the file that row now points to.
+        with _lock_for_path(storage_path):
+            upload = upload_to_storage(_BUCKET, storage_path, mp4, "video/mp4")
+            if not upload.get("stored"):
+                logger.warning("session-video: upload failed: %s", upload)
+                return
 
-        duration = round(len(recorder.frames()) / fps, 1)
-        index_payload = {
-            "patient_id": recorder.patient_id,
-            "session_id": recorder.session_id,
-            "exercise_type": recorder.exercise_type,
-            "storage_path": storage_path,
-            "duration_seconds": duration,
-        }
-        indexed = insert_session_video(index_payload)
-        if not indexed.get("stored"):
-            # insert_session_video is an idempotent UPSERT, so retrying a
-            # transient failure (e.g. a docker-exec timeout) is safe.
+            duration = round(len(recorder.frames()) / fps, 1)
+            index_payload = {
+                "patient_id": recorder.patient_id,
+                "session_id": recorder.session_id,
+                "exercise_type": recorder.exercise_type,
+                "storage_path": storage_path,
+                "duration_seconds": duration,
+            }
             indexed = insert_session_video(index_payload)
+            if not indexed.get("stored"):
+                # insert_session_video is an idempotent UPSERT, so retrying a
+                # transient failure (e.g. a docker-exec timeout) is safe.
+                indexed = insert_session_video(index_payload)
 
-        if not indexed.get("stored"):
-            # A failed index row silently disables the retention purge (it
-            # only deletes clips that have a row) -> the object we just
-            # uploaded could be an orphan no purge can ever reach. BUT
-            # storage_path is a deterministic key (same patient+session+
-            # exercise always maps to it, since the Storage object is
-            # x-upsert'd for exactly that reason on a re-record), so an
-            # EARLIER, already-committed row can still legitimately
-            # reference this exact path even though the two attempts we
-            # just made both failed. Confirm no row references it before
-            # deleting - guessing "no row was ever committed" from a local
-            # failure is not the same as confirming it.
-            row_exists = session_video_row_exists_for_path(storage_path)
-            if row_exists is False:
-                logger.warning("session-video: index row NOT stored after retry (%s) - "
-                               "confirmed no row references it, removing orphaned "
-                               "upload: %s", storage_path, indexed)
-                if not delete_storage_object(_BUCKET, storage_path):
-                    logger.warning("session-video: failed to delete orphaned upload: %s",
-                                   storage_path)
-            else:
-                # row_exists is True (a prior call's row still points here)
-                # or None (every backend tier failed - undeterminable).
-                # Either way, deleting could destroy a file a real row
-                # depends on, so leave it and just log loudly.
-                logger.warning("session-video: index row NOT stored after retry (%s) - "
-                               "leaving upload in place (row_exists=%s) to avoid "
-                               "breaking a possible existing reference: %s",
-                               storage_path, row_exists, indexed)
-            return
+            if not indexed.get("stored"):
+                # A failed index row silently disables the retention purge (it
+                # only deletes clips that have a row) -> the object we just
+                # uploaded could be an orphan no purge can ever reach. BUT
+                # storage_path is a deterministic key (same patient+session+
+                # exercise always maps to it, since the Storage object is
+                # x-upsert'd for exactly that reason on a re-record), so an
+                # EARLIER, already-committed row can still legitimately
+                # reference this exact path even though the two attempts we
+                # just made both failed. Confirm no row references it before
+                # deleting - guessing "no row was ever committed" from a local
+                # failure is not the same as confirming it. The per-path lock
+                # above is what makes this check trustworthy: nothing else can
+                # be mid-upload for this exact path while we're checking.
+                row_exists = session_video_row_exists_for_path(storage_path)
+                if row_exists is False:
+                    logger.warning("session-video: index row NOT stored after retry (%s) - "
+                                   "confirmed no row references it, removing orphaned "
+                                   "upload: %s", storage_path, indexed)
+                    if not delete_storage_object(_BUCKET, storage_path):
+                        logger.warning("session-video: failed to delete orphaned upload: %s",
+                                       storage_path)
+                else:
+                    # row_exists is True (a prior call's row still points here)
+                    # or None (every backend tier failed - undeterminable).
+                    # Either way, deleting could destroy a file a real row
+                    # depends on, so leave it and just log loudly.
+                    logger.warning("session-video: index row NOT stored after retry (%s) - "
+                                   "leaving upload in place (row_exists=%s) to avoid "
+                                   "breaking a possible existing reference: %s",
+                                   storage_path, row_exists, indexed)
+                return
 
         _purge_other_sessions(recorder.patient_id, recorder.session_id)
         logger.info(

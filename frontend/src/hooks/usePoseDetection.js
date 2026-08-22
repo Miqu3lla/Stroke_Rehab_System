@@ -184,6 +184,13 @@ const usePoseDetection = () => {
             return;
           }
 
+          // Server is at its connection cap — it sends this right before
+          // closing with 4503 (see backend/routers/pose.py capacity gate).
+          if (data?.type === 'at_capacity') {
+            if (isCurrent()) setModelError('Server is busy — please try again in a moment');
+            return;
+          }
+
           // Auth phase — the first message must be auth_ok, else bail.
           if (!authed) {
             if (data?.type === 'auth_ok') {
@@ -231,6 +238,10 @@ const usePoseDetection = () => {
           setIsModelReady(false);
           if (event?.code === 4401) {
             setModelError('Pose tracking auth failed — please log in again');
+          } else if (event?.code === 4503) {
+            // Belt-and-suspenders for the 'at_capacity' message above — covers
+            // the case where the close beat the JSON send to the client.
+            setModelError('Server is busy — please try again in a moment');
           }
           // Tell useCamera to stop capturing. Skip if we never authed —
           // startDetection's promise handles that case.

@@ -18,16 +18,23 @@ const PHASE_RAISING = 'raising';       // reaching up toward straight overhead
 const PHASE_HOLDING = 'holding';       // straight overhead — TOP (green), holding
 
 // Angle bands (degrees).
-const ELBOW_BENT_MAX = 110;      // elbow below this = "bent" (start pose)
+// CP1 gate, calibrated off the 24 therapist-approved sf_correct_v2 clips
+// (datasets/Ready_Dataset/*/Shoulder Flexion Correct): the demonstrated start
+// pose measures 22-47° (median 35), while a resting arm measures 105-148°
+// (median 133). 80 sits in that gap with margin on both sides — generous for
+// a patient with limited ROM, still well clear of rest. Deliberately NOT
+// ELBOW_BENT_MAX: that one also gates rep completion at the top and stays at
+// its validated 110.
+const ELBOW_START_MAX = 80;      // elbow below this = folded into the start pose
+const ELBOW_BENT_MAX = 110;      // elbow below this = "bent" (top-of-rep checks)
 const ELBOW_STRAIGHT_MIN = 150;  // elbow above this = "straight" (required at the top)
 const SHOULDER_TOP_MIN = 140;    // upper arm overhead
 const SHOULDER_YELLOW_MIN = 120; // "almost overhead" band
 const SHOULDER_LEAVE_READY = 60; // arm has clearly begun to rise off the start
 
 export default class ShoulderFlexionGuide {
-  constructor(targetReps = 12, holdMsPerRep = 6000) {
+  constructor(targetReps = 12, holdMsPerRep = 0) {
     this.targetReps = Math.max(1, Math.floor(Number(targetReps) || 12));
-    // Fall back to 6s if the set didn't carry a per-rep hold.
     // Per-rep hold at the top. 0 (plain-rep sets) = count on reaching the
     // straight-overhead position, matching the generic RepCounter — do NOT
     // force a hold on sets that didn't ask for one (a 6s×12 forced hold can
@@ -53,12 +60,13 @@ export default class ShoulderFlexionGuide {
       ? null : shoulderAngle;
     const el = elbowAngle === null || elbowAngle === undefined || Number.isNaN(elbowAngle)
       ? null : elbowAngle;
-    // elbowBent / elbowStraight are KNOWN-only: both false when the elbow angle
-    // is null (wrist out of frame — common at the top of an overhead reach). So
-    // transitions gate on `!elbowStraight` (bent OR unknown) to ENTER the bent
-    // start, and `!elbowBent` (straight OR unknown) to PROCEED overhead — a null
-    // elbow never blocks the flow, it just can't earn the "straighten" nudge.
+    // These are KNOWN-only: all false when the elbow angle is null (wrist out
+    // of frame). Entering the start pose requires a KNOWN folded elbow — the
+    // hand is at the shoulder there, so it's measurable, and a false green is
+    // worse than a re-prompt. Proceeding overhead stays lenient (`!elbowBent`)
+    // because the wrist really can leave frame at the top.
     this.shoulder = sh;
+    this.elbowAtStart = el !== null && el < ELBOW_START_MAX;
     this.elbowBent = el !== null && el < ELBOW_BENT_MAX;
     this.elbowStraight = el !== null && el >= ELBOW_STRAIGHT_MIN;
     this.overhead = sh !== null && sh >= SHOULDER_TOP_MIN;
@@ -68,8 +76,13 @@ export default class ShoulderFlexionGuide {
 
     switch (this.phase) {
       case PHASE_NEED_START:
-        // Start pose: not overhead, elbow bent (or unknown — not KNOWN straight).
-        if (!this.overhead && !this.elbowStraight) this.phase = PHASE_READY;
+        // CP1 has to be EARNED on BOTH axes, matching the other two entries
+        // into READY below — elbow folded (not "resting", 105-148°) AND the
+        // arm actually back down (not just "not overhead"). Without the
+        // shoulder check, holding at ~139° with the elbow tucked would
+        // re-enter READY -> RAISING on the very next overhead frame and mint
+        // a rep from a few-degree dip.
+        if (!this.overhead && this.elbowAtStart && sh < SHOULDER_LEAVE_READY) this.phase = PHASE_READY;
         break;
       case PHASE_READY:
         // Leave once the arm begins to rise, or the elbow is KNOWN straightened
@@ -87,7 +100,7 @@ export default class ShoulderFlexionGuide {
             this.phase = PHASE_HOLDING;
             this.currentHoldMs = 0;
           }
-        } else if (this.elbowBent && sh < SHOULDER_LEAVE_READY) {
+        } else if (this.elbowAtStart && sh < SHOULDER_LEAVE_READY) {
           this.phase = PHASE_READY; // lowered back into the bent-elbow start
         }
         break;
@@ -101,7 +114,7 @@ export default class ShoulderFlexionGuide {
           // Left the straight-overhead position before the hold finished — the
           // rep must be re-earned with a fresh continuous hold.
           this.currentHoldMs = 0;
-          this.phase = (this.elbowBent && sh < SHOULDER_LEAVE_READY)
+          this.phase = (this.elbowAtStart && sh < SHOULDER_LEAVE_READY)
             ? PHASE_READY : PHASE_RAISING;
         }
         break;

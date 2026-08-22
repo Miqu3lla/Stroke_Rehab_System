@@ -219,7 +219,13 @@ async def pose_ws(websocket: WebSocket) -> None:
             _active_connections += 1
             at_capacity = False
     if at_capacity:
-        await websocket.close(code=_WS_CLOSE_AT_CAPACITY)
+        # A bare close gives the client nothing to show the patient — send a
+        # reason first (best-effort; the socket may already be going away).
+        try:
+            await websocket.send_json({"error": "at_capacity", "type": "at_capacity"})
+        except Exception:
+            pass
+        await websocket.close(code=_WS_CLOSE_AT_CAPACITY, reason="at_capacity")
         return
 
     try:

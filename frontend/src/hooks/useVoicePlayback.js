@@ -33,7 +33,12 @@ export default function useVoicePlayback(exerciseType) {
   const lastKeyRef = useRef(null);
   const lastPlayMsRef = useRef(0);
 
-  useEffect(() => { mutedRef.current = muted; }, [muted]);
+  useEffect(() => {
+    mutedRef.current = muted;
+    // Re-arm on unmute — otherwise a cue that was already "current" when the
+    // patient muted never plays again until the hint_key actually changes.
+    if (!muted) lastKeyRef.current = null;
+  }, [muted]);
 
   // Configure the audio session once: audible even on the iOS silent switch
   // (it's coaching feedback), and duck — not stop — any music the patient has.

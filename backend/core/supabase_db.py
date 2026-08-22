@@ -681,11 +681,14 @@ def email_exists_in_auth(email: str) -> Optional[bool]:
                 f"{_quote_sql_value(normalized)})"
             )
             command = [
-                "docker", "exec", "-e", f"PGPASSWORD={config['password']}",
+                "docker", "exec", "-i", "-e", "PGPASSWORD",  # forwarded via env, not argv
                 container_name, "psql", "-U", config["user"], "-d", config["dbname"],
-                "-tA", "-c", sql,
+                "-tA", "-f", "-",  # SQL over stdin, not argv - it embeds the email
             ]
-            result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=8)
+            result = subprocess.run(
+                command, input=sql, capture_output=True, text=True, check=False,
+                timeout=8, env={**os.environ, "PGPASSWORD": config["password"]},
+            )
             if result.returncode == 0:
                 return result.stdout.strip().lower().startswith("t")
         except subprocess.TimeoutExpired:
@@ -694,26 +697,37 @@ def email_exists_in_auth(email: str) -> Optional[bool]:
             pass
 
     # REST fallback - GoTrue admin API, since auth.users isn't in the
-    # schema PostgREST exposes.
+    # schema PostgREST exposes. "email=" isn't a real GoTrue query param
+    # (it's "filter", substring match) and results are paginated - walk
+    # pages instead of trusting page 1, and don't call a not-found page
+    # "doesn't exist" unless we've actually seen the whole filtered set.
     if _configured():
         try:
             key = _get_service_role_key()
-            url = (
-                f"{_get_supabase_url().rstrip('/')}/auth/v1/admin/users"
-                f"?email={parse.quote(normalized, safe='')}"
-            )
+            base_url = _get_supabase_url().rstrip("/")
             headers = {
                 "User-Agent": _BROWSER_USER_AGENT,
                 "apikey": key,
                 "Authorization": f"Bearer {key}",
             }
-            req = request.Request(url, headers=headers, method="GET")
-            with request.urlopen(req, timeout=10) as response:
-                body = json.loads(response.read().decode("utf-8") or "{}")
+            per_page = 200
+            for page in range(1, 11):  # bounded walk - 2000 filtered users is plenty
+                url = (
+                    f"{base_url}/auth/v1/admin/users"
+                    f"?filter={parse.quote(normalized, safe='')}"
+                    f"&page={page}&per_page={per_page}"
+                )
+                req = request.Request(url, headers=headers, method="GET")
+                with request.urlopen(req, timeout=10) as response:
+                    body = json.loads(response.read().decode("utf-8") or "{}")
                 users = body.get("users", body if isinstance(body, list) else [])
-                # GoTrue's admin list filter isn't guaranteed exact-match;
-                # confirm one of the returned users actually is this email.
-                return any((u.get("email") or "").lower() == normalized for u in users)
+                # "filter" is substring, not guaranteed exact - confirm one
+                # of the returned users actually is this email.
+                if any((u.get("email") or "").lower() == normalized for u in users):
+                    return True
+                if len(users) < per_page:
+                    return False  # exhausted every matching page - genuinely absent
+            return None  # hit the page cap without exhausting the set - inconclusive
         except Exception:
             pass
 
