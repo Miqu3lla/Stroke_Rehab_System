@@ -7,6 +7,11 @@ import useSessionStore from '../store/useSessionStore';
 
 
 const HANDSHAKE_TIMEOUT_MS = 10000;
+// Matches backend/routers/pose.py's _WS_IDLE_PING_SECONDS. Runs independently
+// of the frame-capture loop so it still fires during a between-set rest
+// (fully user-paced, no fixed duration) when useCamera sends nothing at all —
+// keeps real data-frame traffic flowing well inside a ~60s proxy idle window.
+const HEARTBEAT_INTERVAL_MS = 25000;
 
 const usePoseDetection = () => {
   // UI states for loading and error handling
@@ -22,10 +27,40 @@ const usePoseDetection = () => {
   const onCloseRef = useRef(null);
   // True once auth_ok has landed; pose results before this are a protocol error.
   const authedRef = useRef(false);
+  // Client-side heartbeat, started once authed. Independent of the frame
+  // capture loop so it keeps sending during a between-set rest.
+  const heartbeatRef = useRef(null);
   // Bumped on every start/stop/unmount. Handlers captured by an older socket
   // compare against it and bail, so a late close/error/message from a replaced
   // connection can't flip state or fire the new connection's callbacks.
   const connectionIdRef = useRef(0);
+
+  // Stops the heartbeat interval, if one is running. Safe to call multiple times.
+  const stopHeartbeat = useCallback(() => {
+    if (heartbeatRef.current) {
+      clearInterval(heartbeatRef.current);
+      heartbeatRef.current = null;
+    }
+  }, []);
+
+  // Starts the client-side heartbeat once auth_ok lands. Fires on its own
+  // timer — NOT tied to the frame capture loop — so it still sends during a
+  // between-set rest, when useCamera's capture loop is paused and would
+  // otherwise leave the socket completely silent from this side.
+  const startHeartbeat = useCallback((ws, isCurrent) => {
+    stopHeartbeat();
+    heartbeatRef.current = setInterval(() => {
+      if (!isCurrent() || ws.readyState !== WebSocket.OPEN) {
+        stopHeartbeat();
+        return;
+      }
+      try {
+        ws.send(JSON.stringify({ type: 'ping' }));
+      } catch (_) {
+        /* socket going away; onclose will clean up */
+      }
+    }, HEARTBEAT_INTERVAL_MS);
+  }, [stopHeartbeat]);
 
   // Build the wss:// URL from the axios baseURL (same host as the HTTP API).
   // No token in the query string — auth happens in the first message.
@@ -157,6 +192,7 @@ const usePoseDetection = () => {
               setIsDetecting(true);
               setIsModelReady(true);
               setModelError(null);
+              startHeartbeat(ws, isCurrent);
               finish(true);
             } else {
               setModelError('Pose tracking auth failed');
@@ -166,12 +202,25 @@ const usePoseDetection = () => {
             return;
           }
 
+          // Heartbeat control messages — never forward these as pose
+          // results. Reply to a server-initiated ping so the server also
+          // has proof this side is alive; a "pong" is just the reply to
+          // OUR OWN periodic ping and needs nothing further.
+          if (data?.type === 'ping') {
+            try { ws.send(JSON.stringify({ type: 'pong' })); } catch (_) { /* socket going away */ }
+            return;
+          }
+          if (data?.type === 'pong') {
+            return;
+          }
+
           // Post-auth: forward pose results AND error payloads so useCamera's
           // loop always clears its in-flight flag on any reply.
           onResultRef.current?.(data);
         };
 
         ws.onclose = (event) => {
+          stopHeartbeat();
           // Stale socket: it's already been replaced or stopped, so its close
           // says nothing about the live connection.
           if (!isCurrent()) {
@@ -198,12 +247,13 @@ const usePoseDetection = () => {
       setIsDetecting(false);
       return false;
     }
-  }, [buildWsUrl]);
+  }, [buildWsUrl, startHeartbeat, stopHeartbeat]);
 
   // Closes the socket and clears callbacks. Safe to call multiple times.
   const stopDetection = useCallback(() => {
     // Retire the current connection id so its handlers go silent.
     connectionIdRef.current += 1;
+    stopHeartbeat();
     setIsDetecting(false);
     setIsModelReady(false);
     onResultRef.current = null;
@@ -214,7 +264,7 @@ const usePoseDetection = () => {
       wsRef.current = null;
       try { ws.close(); } catch (_) { /* already closed */ }
     }
-  }, []);
+  }, [stopHeartbeat]);
 
   // Send a base64 JPEG as a binary WS frame. Returns { ok } plus a reason
   // useCamera reads: 'not_open' (retry), 'closed' or 'send_failed' (stop).
@@ -299,6 +349,7 @@ const usePoseDetection = () => {
       // the connection id so nothing the socket emits on its way out reaches
       // an unmounted consumer.
       connectionIdRef.current += 1;
+      stopHeartbeat();
       onResultRef.current = null;
       onCloseRef.current = null;
       authedRef.current = false;
@@ -308,7 +359,7 @@ const usePoseDetection = () => {
         try { ws.close(); } catch (_) { /* already closed */ }
       }
     };
-  }, []);
+  }, [stopHeartbeat]);
 
   return {
     isDetecting,
