@@ -1,11 +1,14 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, Modal, Pressable } from 'react-native';
-import { Clock, X, Play } from 'lucide-react-native';
+import { Clock, X, Play, ChevronRight } from 'lucide-react-native';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { supabase } from '../../services/supabase';
 import usePatientStore from '../../store/usePatientStore';
 import useSessionStore from '../../store/useSessionStore';
 import { formatExerciseSession } from '../../utils/duration';
+import { palette } from '../../constants/palette';
+import { fonts } from '../../constants/fonts';
+import { getExerciseVisual } from '../../utils/exerciseVisuals';
 
 export default function ExerciseModal({ visible, exercise, onClose, navigation }) {
   const { recommendedExercises } = usePatientStore();
@@ -46,6 +49,9 @@ export default function ExerciseModal({ visible, exercise, onClose, navigation }
 
   if (!exercise) return null;
 
+  const visual = getExerciseVisual(exercise.name);
+  const Icon = visual.icon;
+
   // Tapping a card starts a workout session with the full recommended
   // playlist, entering at the tapped exercise's index. Falls back to a
   // single-exercise playlist if the recommendations list isn't loaded.
@@ -66,34 +72,78 @@ export default function ExerciseModal({ visible, exercise, onClose, navigation }
       animationType="slide"
       onRequestClose={onClose}
     >
-      <View className="flex-1 justify-end bg-black/50">
-        <Pressable className="flex-1" onPress={onClose} />
+      <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(22, 35, 58, 0.55)' }}>
+        <Pressable style={{ flex: 1 }} onPress={onClose} />
 
-        {/* Modal Content */}
-        <View className="bg-[#faf8ff] rounded-t-3xl pt-2 px-6 pb-10 max-h-[90%]">
-
-          {/* Drag Indicator */}
-          <View className="w-12 h-1.5 bg-[#c3c6d6] rounded-full self-center mb-4" />
+        {/* Modal Sheet */}
+        <View
+          style={{
+            backgroundColor: palette.canvas,
+            borderTopLeftRadius: 32,
+            borderTopRightRadius: 32,
+            paddingTop: 8,
+            paddingHorizontal: 24,
+            paddingBottom: 40,
+            maxHeight: '90%',
+          }}
+        >
+          {/* Drag handle */}
+          <View
+            style={{
+              width: 40,
+              height: 4,
+              backgroundColor: palette.line,
+              borderRadius: 99,
+              alignSelf: 'center',
+              marginBottom: 20,
+            }}
+          />
 
           {/* Header Row */}
-          <View className="flex-row justify-between items-start mb-6">
-            <View className="flex-1 pr-4">
-              <Text className="text-[28px] font-bold text-[#191b23] leading-tight">
-                {exercise.name}
-              </Text>
-              <View className="flex-row items-center gap-2 mt-2">
-                <Clock size={18} color="#434654" />
-                <Text className="text-[16px] font-medium text-[#434654]">
-                  {formatExerciseSession(exercise)}
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+            {/* Icon + Title */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, paddingRight: 12 }}>
+              <View
+                style={{
+                  width: 52,
+                  height: 52,
+                  borderRadius: 16,
+                  backgroundColor: visual.soft,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginRight: 14,
+                }}
+              >
+                <Icon size={26} color={visual.color} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={{ fontFamily: fonts.serif, fontSize: 24, color: palette.ink, lineHeight: 30 }}
+                  numberOfLines={2}
+                >
+                  {exercise.name}
                 </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                  <Clock size={14} color={palette.inkSoft} />
+                  <Text style={{ fontFamily: fonts.sansMedium, fontSize: 13, color: palette.inkSoft }}>
+                    {formatExerciseSession(exercise)}
+                  </Text>
+                </View>
               </View>
             </View>
 
+            {/* Close button */}
             <TouchableOpacity
               onPress={onClose}
-              className="bg-[#e7e7f2] p-2 rounded-full mt-1"
+              style={{
+                backgroundColor: palette.line,
+                padding: 8,
+                borderRadius: 99,
+                marginTop: 2,
+              }}
+              activeOpacity={0.7}
             >
-              <X size={24} color="#191b23" />
+              <X size={20} color={palette.ink} />
             </TouchableOpacity>
           </View>
 
@@ -101,7 +151,18 @@ export default function ExerciseModal({ visible, exercise, onClose, navigation }
               back to the original placeholder so future exercises without a
               recording still render the card. */}
           {demoVideoUrl ? (
-            <View className="w-full aspect-video rounded-2xl mb-6 overflow-hidden border-4 border-[#ededf8] bg-black">
+            <View
+              style={{
+                width: '100%',
+                aspectRatio: 16 / 9,
+                borderRadius: 20,
+                marginBottom: 20,
+                overflow: 'hidden',
+                borderWidth: 2,
+                borderColor: palette.line,
+                backgroundColor: '#000',
+              }}
+            >
               <VideoView
                 player={player}
                 style={{ width: '100%', height: '100%' }}
@@ -111,26 +172,81 @@ export default function ExerciseModal({ visible, exercise, onClose, navigation }
               />
             </View>
           ) : (
-            <View className="w-full aspect-video bg-[#e7e7f2] rounded-2xl mb-6 items-center justify-center border-4 border-[#ededf8]">
-              <Play size={48} color="#c3c6d6" />
-              <Text className="text-[#434654] font-medium mt-2">Video Demonstration</Text>
+            <View
+              style={{
+                width: '100%',
+                aspectRatio: 16 / 9,
+                backgroundColor: visual.soft,
+                borderRadius: 20,
+                marginBottom: 20,
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderWidth: 2,
+                borderColor: palette.line,
+              }}
+            >
+              <View
+                style={{
+                  width: 64,
+                  height: 64,
+                  borderRadius: 32,
+                  backgroundColor: palette.card,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginBottom: 8,
+                  shadowColor: palette.ink,
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.08,
+                  shadowRadius: 6,
+                  elevation: 2,
+                }}
+              >
+                <Play size={28} color={visual.color} />
+              </View>
+              <Text style={{ fontFamily: fonts.sansMedium, fontSize: 13, color: palette.inkSoft }}>
+                Video demonstration
+              </Text>
             </View>
           )}
 
-          {/* Description */}
-          <View className="mb-8">
-            <Text className="text-[18px] font-bold text-[#191b23] mb-2">Instructions</Text>
-            <Text className="text-[16px] text-[#434654] leading-relaxed">
-              {exercise.description || "Follow along with the video to safely and effectively perform this exercise."}
+          {/* Instructions */}
+          <View
+            style={{
+              backgroundColor: palette.card,
+              borderRadius: 20,
+              padding: 18,
+              marginBottom: 24,
+              borderWidth: 1,
+              borderColor: palette.line,
+            }}
+          >
+            <Text style={{ fontFamily: fonts.sansBold, fontSize: 13, color: palette.primary, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
+              Instructions
+            </Text>
+            <Text style={{ fontFamily: fonts.sans, fontSize: 15, color: palette.ink, lineHeight: 23 }}>
+              {exercise.description || 'Follow along with the video to safely and effectively perform this exercise.'}
             </Text>
           </View>
 
           {/* Start Button */}
           <TouchableOpacity
-            className="w-full bg-[#0c56d0] min-h-[64px] rounded-full flex-row items-center justify-center active:bg-[#0a46a8]"
+            style={{
+              width: '100%',
+              backgroundColor: palette.primary,
+              minHeight: 64,
+              borderRadius: 99,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+            }}
             onPress={handleStartExercise}
+            activeOpacity={0.85}
           >
-            <Text className="text-white text-[20px] font-bold">Start Exercise</Text>
+            <Text style={{ fontFamily: fonts.sansBold, fontSize: 18, color: '#ffffff' }}>
+              Start Exercise
+            </Text>
+            <ChevronRight size={20} color="#ffffff" />
           </TouchableOpacity>
         </View>
       </View>

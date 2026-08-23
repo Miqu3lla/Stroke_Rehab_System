@@ -3,8 +3,10 @@ import { useMemo } from 'react';
 // Takes the full history array from the store and computes progress stats.
 // useMemo makes sure we only recalculate when history actually changes.
 //
-// the dashboard's "Overall Progress" cards
-// summarize the patient's CURRENT performance,
+// Exports two headline metrics:
+//   overallAverage – latest-per-exercise mean (used by OverallProgressCard)
+//   weekAverage    – mean of all rows logged in the past 7 calendar days
+//                    (used by WeeklyHeroCard so it truly reflects "this week")
 const useOverallProgress = (history) => {
   return useMemo(() => {
     // No data yet — return safe defaults so the card can show a placeholder
@@ -100,7 +102,24 @@ const useOverallProgress = (history) => {
       ? { name: topMoverRaw.name, delta: topMoverRaw.delta, direction: topMoverRaw.delta > 0 ? 'up' : 'down' }
       : null;
 
-    return { overallAverage, exerciseAverages, trend, hasData: true, topMover };
+    // 7-calendar-day average: every score row logged in the last 7 days,
+    // regardless of exercise. This is what the WeeklyHeroCard hero number
+    // should display so "This week" means exactly that.
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    sevenDaysAgo.setHours(0, 0, 0, 0);
+    const weekScores = history
+      .filter((item) => {
+        const d = item.created_at ? new Date(item.created_at) : null;
+        return d && d >= sevenDaysAgo;
+      })
+      .map((item) => Number(item.latest_form_score))
+      .filter((s) => Number.isFinite(s) && s > 0);
+    const weekAverage = weekScores.length > 0
+      ? Math.round(weekScores.reduce((sum, s) => sum + s, 0) / weekScores.length)
+      : overallAverage; // fall back to overall when no sessions this week
+
+    return { overallAverage, weekAverage, exerciseAverages, trend, hasData: true, topMover };
   }, [history]);
 };
 

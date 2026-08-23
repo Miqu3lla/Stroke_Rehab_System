@@ -83,7 +83,7 @@ export default function OverallProgressCard() {
         {/* Average score + trend pill */}
         <View className="flex-row items-start justify-between mb-4">
           <View>
-            <Text className="text-[12px] mb-0.5" style={{ color: palette.inkSoft, fontFamily: fonts.sans }}>Average score, last 7 sessions</Text>
+            <Text className="text-[12px] mb-0.5" style={{ color: palette.inkSoft, fontFamily: fonts.sans }}>Latest score, per exercise</Text>
             <Text style={{ color: scoreTone(overallAverage), fontFamily: fonts.serif, fontSize: 32 }}>
               {overallAverage}%
             </Text>

@@ -11,7 +11,7 @@ import { palette } from "../constants/palette";
 const HomeScreen = ({ navigation }) => {
   const { fetchHistory, history } = usePatientStore();
   const { getAuthSession } = useAuthStore();
-  const { overallAverage, topMover, hasData } = useOverallProgress(history);
+  const { overallAverage, weekAverage, topMover, hasData } = useOverallProgress(history);
 
   // Guard: redirect to Login if there is no active session
   useEffect(() => {
@@ -31,7 +31,7 @@ const HomeScreen = ({ navigation }) => {
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: palette.canvas }} contentContainerStyle={{ paddingBottom: 20 }}>
-      {hasData && <WeeklyHeroCard overallAverage={overallAverage} topMover={topMover} />}
+      {hasData && <WeeklyHeroCard overallAverage={weekAverage} topMover={topMover} />}
       <View className="p-4 mt-4">
         <HistoryList />
         <OverallProgressCard />

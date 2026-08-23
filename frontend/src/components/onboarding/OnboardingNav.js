@@ -1,5 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
+import { palette } from '../../constants/palette';
+import { fonts } from '../../constants/fonts';
 
 /**
  * OnboardingNav
@@ -26,14 +28,22 @@ export default function OnboardingNav({
   const nextEnabled = hasAnswer && !isSubmitting;
 
   return (
-    <View className="flex-row gap-3 mt-auto mb-10">
+    <View style={{ flexDirection: 'row', gap: 12, marginTop: 'auto', marginBottom: 32 }}>
       {/* Only show Back if we are past the first step */}
       {currentStep > 0 && (
         <TouchableOpacity
           onPress={onBack}
-          className="flex-1 py-4 rounded-full items-center bg-slate-100"
+          style={{
+            flex: 1,
+            paddingVertical: 18,
+            borderRadius: 99,
+            alignItems: 'center',
+            backgroundColor: palette.line,
+          }}
         >
-          <Text className="text-slate-500 text-lg font-bold">Back</Text>
+          <Text style={{ fontFamily: fonts.sansBold, fontSize: 16, color: palette.inkSoft }}>
+            Back
+          </Text>
         </TouchableOpacity>
       )}
 
@@ -41,11 +51,21 @@ export default function OnboardingNav({
       <TouchableOpacity
         disabled={!nextEnabled}
         onPress={onNext}
-        className={`flex-[2] py-4 rounded-full items-center ${
-          nextEnabled ? 'bg-blue-600' : 'bg-blue-200'
-        }`}
+        style={{
+          flex: 2,
+          paddingVertical: 18,
+          borderRadius: 99,
+          alignItems: 'center',
+          backgroundColor: nextEnabled ? palette.primary : palette.primarySoft,
+        }}
       >
-        <Text className="text-white text-lg font-bold">
+        <Text
+          style={{
+            fontFamily: fonts.sansBold,
+            fontSize: 16,
+            color: nextEnabled ? '#ffffff' : palette.inkSoft,
+          }}
+        >
           {isSubmitting ? 'Saving...' : isLastStep ? 'Finish' : 'Next'}
         </Text>
       </TouchableOpacity>

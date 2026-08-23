@@ -1,6 +1,8 @@
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import { Play, X } from 'lucide-react-native';
+import { palette, scoreTone } from '../../constants/palette';
+import { fonts } from '../../constants/fonts';
 
 // BreakScreen — overlay shown between sets of the same exercise.
 // Sets-and-modes Phase C (2026-06-04). Designed with the user's
@@ -21,7 +23,9 @@ export default function BreakScreen({
   onEndEarly,
 }) {
   const score = Math.round(Number(justFinishedScore) || 0);
-  const tone = score >= 85 ? '#4CAF50' : score >= 60 ? '#FFC107' : '#FF5252';
+  const tone = scoreTone(score);
+  const toneSoft = score >= 70 ? palette.sageSoft : palette.amberSoft;
+
   const encouragement = score >= 85
     ? 'Great form! Keep it up.'
     : score >= 60
@@ -32,58 +36,105 @@ export default function BreakScreen({
   const repTarget = Math.max(1, Math.floor(Number(targetRepsForFinishedSet) || 12));
 
   return (
-    <View className="absolute inset-0 bg-[#faf8ff] px-6 pt-12 pb-8">
-      <View className="flex-1 items-center justify-center">
-        <Text className="text-[#434654] text-base font-medium mb-1">
-          Set {Math.max(1, (Number(justFinishedSetIndex) || 0) + 1)} of {Math.max(1, Number(totalSets) || 1)} complete
-        </Text>
-        <Text className="text-[#191b23] text-2xl font-bold text-center mb-6">
+    <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: palette.canvas, paddingHorizontal: 24, paddingTop: 48, paddingBottom: 32 }}>
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+
+        {/* Set badge */}
+        <View style={{ backgroundColor: palette.primarySoft, paddingHorizontal: 14, paddingVertical: 6, borderRadius: 99, marginBottom: 16 }}>
+          <Text style={{ fontFamily: fonts.monoSemibold, fontSize: 11, color: palette.primary, letterSpacing: 1.2, textTransform: 'uppercase' }}>
+            Set {Math.max(1, (Number(justFinishedSetIndex) || 0) + 1)} of {Math.max(1, Number(totalSets) || 1)} complete
+          </Text>
+        </View>
+
+        {/* Heading */}
+        <Text style={{ fontFamily: fonts.serif, fontSize: 28, color: palette.ink, textAlign: 'center', marginBottom: 28 }}>
           Take a breather
         </Text>
 
+        {/* Score ring */}
         <View
-          className="w-44 h-44 rounded-full items-center justify-center border-8 mb-5"
-          style={{ borderColor: tone }}
+          style={{
+            width: 176,
+            height: 176,
+            borderRadius: 88,
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderWidth: 8,
+            borderColor: tone,
+            backgroundColor: toneSoft,
+            marginBottom: 20,
+          }}
         >
-          <Text className="text-[#191b23] text-6xl font-black">{score}%</Text>
-          <Text className="text-[#434654] text-sm font-semibold mt-1">Form Score</Text>
+          <Text style={{ fontFamily: fonts.monoSemibold, fontSize: 52, color: palette.ink, lineHeight: 56 }}>
+            {score}%
+          </Text>
+          <Text style={{ fontFamily: fonts.sansSemibold, fontSize: 11, color: palette.inkSoft, marginTop: 4, textTransform: 'uppercase', letterSpacing: 1 }}>
+            Form Score
+          </Text>
         </View>
 
-        <Text className="text-[#434654] text-base font-medium mb-2">
+        {/* Rep count */}
+        <Text style={{ fontFamily: fonts.sansMedium, fontSize: 15, color: palette.inkSoft, marginBottom: 6 }}>
           {reps} of {repTarget} reps completed
         </Text>
-        <Text className="text-xl font-bold mb-2" style={{ color: tone }}>
+
+        {/* Encouragement */}
+        <Text style={{ fontFamily: fonts.sansBold, fontSize: 18, color: tone, marginBottom: 4 }}>
           {encouragement}
         </Text>
 
+        {/* Up next */}
         {upNextLabel ? (
-          <Text className="text-[#434654] text-base font-medium mt-4 text-center">
-            Up next: <Text className="font-bold text-[#191b23]">{upNextLabel}</Text>
+          <Text style={{ fontFamily: fonts.sansMedium, fontSize: 15, color: palette.inkSoft, marginTop: 16, textAlign: 'center' }}>
+            Up next:{' '}
+            <Text style={{ fontFamily: fonts.sansBold, color: palette.ink }}>{upNextLabel}</Text>
           </Text>
         ) : null}
       </View>
 
-      <View className="gap-3">
+      <View style={{ gap: 12 }}>
         {/* Happy Path primary action — massive button, hard to miss. */}
         <TouchableOpacity
-          className="bg-[#0c56d0] rounded-full flex-row items-center justify-center min-h-[72px] active:bg-[#0a46a8]"
+          style={{
+            backgroundColor: palette.primary,
+            borderRadius: 99,
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minHeight: 72,
+          }}
           onPress={onStartNextSet}
           accessibilityRole="button"
+          activeOpacity={0.85}
         >
-          <Play size={26} color="white" />
-          <Text className="text-white text-2xl font-black ml-3">Start Next Set</Text>
+          <Play size={26} color="#ffffff" />
+          <Text style={{ fontFamily: fonts.sansBold, fontSize: 20, color: '#ffffff', marginLeft: 12 }}>
+            Start Next Set
+          </Text>
         </TouchableOpacity>
 
         {/* Secondary "end early" — visually deprioritized so an
             exhausted patient can still find the exit, but the eye
             naturally lands on Start Next Set first. */}
         <TouchableOpacity
-          className="bg-transparent border-2 border-[#c3c6d6] rounded-full flex-row items-center justify-center min-h-[52px] active:bg-[#ededf8]"
+          style={{
+            backgroundColor: 'transparent',
+            borderWidth: 2,
+            borderColor: palette.line,
+            borderRadius: 99,
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minHeight: 52,
+          }}
           onPress={onEndEarly}
           accessibilityRole="button"
+          activeOpacity={0.7}
         >
-          <X size={18} color="#434654" />
-          <Text className="text-[#434654] text-base font-bold ml-2">End Early</Text>
+          <X size={18} color={palette.inkSoft} />
+          <Text style={{ fontFamily: fonts.sansBold, fontSize: 15, color: palette.inkSoft, marginLeft: 8 }}>
+            End Early
+          </Text>
         </TouchableOpacity>
       </View>
     </View>
