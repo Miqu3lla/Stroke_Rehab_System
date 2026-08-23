@@ -3,13 +3,15 @@ import { useMemo } from 'react';
 // Takes the full history array from the store and computes progress stats.
 // useMemo makes sure we only recalculate when history actually changes.
 //
-// the dashboard's "Overall Progress" cards
-// summarize the patient's CURRENT performance,
+// Exports two headline metrics:
+//   overallAverage – latest-per-exercise mean (used by OverallProgressCard)
+//   weekAverage    – mean of all rows logged in the past 7 calendar days
+//                    (used by WeeklyHeroCard so it truly reflects "this week")
 const useOverallProgress = (history) => {
   return useMemo(() => {
     // No data yet — return safe defaults so the card can show a placeholder
     if (!history || history.length === 0) {
-      return { overallAverage: 0, exerciseAverages: [], trend: 0, hasData: false };
+      return { overallAverage: 0, exerciseAverages: [], trend: 0, hasData: false, topMover: null };
     }
 
     // history is newest-first (see usePatientStore.fetchHistory). Bucket
@@ -37,7 +39,7 @@ const useOverallProgress = (history) => {
       .filter((s) => Number.isFinite(s) && s > 0);
 
     if (latestScores.length === 0) {
-      return { overallAverage: 0, exerciseAverages: [], trend: 0, hasData: false };
+      return { overallAverage: 0, exerciseAverages: [], trend: 0, hasData: false, topMover: null };
     }
 
     const overallAverage = Math.round(
@@ -75,18 +77,49 @@ const useOverallProgress = (history) => {
     // with the per-card deltas. Exercises with no prior attempt don't
     // contribute to the trend (no signal to derive).
     const deltas = [];
+    // Named deltas (not just the averaged number) so the hero card can
+    // call out which exercise actually moved, e.g. "Hand to Mouth is
+    // trending up" — see useOverallProgress topMover.
+    const namedDeltas = [];
     Object.keys(latestByExercise).forEach((key) => {
       const latest = Number(latestByExercise[key].latest_form_score);
       const prev = previousByExercise[key] && Number(previousByExercise[key].latest_form_score);
       if (Number.isFinite(latest) && Number.isFinite(prev) && latest > 0 && prev > 0) {
-        deltas.push(latest - prev);
+        const delta = latest - prev;
+        deltas.push(delta);
+        namedDeltas.push({ name: latestByExercise[key].exercise_name, delta });
       }
     });
     const trend = deltas.length > 0
       ? Math.round(deltas.reduce((s, d) => s + d, 0) / deltas.length)
       : 0;
 
-    return { overallAverage, exerciseAverages, trend, hasData: true };
+    // Biggest mover by magnitude, up or down.
+    const topMoverRaw = namedDeltas.length
+      ? namedDeltas.reduce((a, b) => (Math.abs(b.delta) > Math.abs(a.delta) ? b : a))
+      : null;
+    const topMover = topMoverRaw && topMoverRaw.delta !== 0
+      ? { name: topMoverRaw.name, delta: topMoverRaw.delta, direction: topMoverRaw.delta > 0 ? 'up' : 'down' }
+      : null;
+
+    // 7-calendar-day average: every score row logged in the last 7 days,
+    // regardless of exercise. This is what the WeeklyHeroCard hero number
+    // should display so "This week" means exactly that.
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    sevenDaysAgo.setHours(0, 0, 0, 0);
+    const weekScores = history
+      .filter((item) => {
+        const d = item.created_at ? new Date(item.created_at) : null;
+        return d && d >= sevenDaysAgo;
+      })
+      .map((item) => Number(item.latest_form_score))
+      .filter((s) => Number.isFinite(s) && s > 0);
+    const weekAverage = weekScores.length > 0
+      ? Math.round(weekScores.reduce((sum, s) => sum + s, 0) / weekScores.length)
+      : overallAverage; // fall back to overall when no sessions this week
+
+    return { overallAverage, weekAverage, exerciseAverages, trend, hasData: true, topMover };
   }, [history]);
 };
 

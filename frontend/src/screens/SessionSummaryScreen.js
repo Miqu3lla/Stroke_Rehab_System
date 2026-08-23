@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
-import { CheckCircle2, XCircle, AlertTriangle } from 'lucide-react-native';
+import { CheckCircle2, XCircle, AlertTriangle, TrendingUp, TrendingDown } from 'lucide-react-native';
 import usePatientStore from '../store/usePatientStore';
 import useSessionStore from '../store/useSessionStore';
 import { supabase } from '../services/supabase';
+import { palette, scoreTone } from '../constants/palette';
+import { fonts } from '../constants/fonts';
 
 // This screen shows the user's score after they finish their workout.
 // It displays which exercises were completed and which ones were skipped.
@@ -89,25 +91,49 @@ const SessionSummaryScreen = ({ route, navigation }) => {
     }
   }, [session.sessionId]);
 
+  const overallTone = scoreTone(overallScore);
+  const overallToneSoft = overallScore >= 70 ? palette.sageSoft : palette.amberSoft;
+
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: '#faf8ff' }} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
-      <Text className="text-[#191b23] text-3xl font-black mt-4 mb-1">Session Complete</Text>
-      <Text className="text-[#434654] text-base font-medium mb-6">
+    <ScrollView
+      style={{ flex: 1, backgroundColor: palette.canvas }}
+      contentContainerStyle={{ padding: 20, paddingBottom: 48 }}
+    >
+      {/* Header */}
+      <Text
+        style={{ fontFamily: fonts.serif, fontSize: 34, color: palette.ink, marginTop: 16, marginBottom: 4 }}
+      >
+        Session Complete
+      </Text>
+      <Text style={{ fontFamily: fonts.sansMedium, fontSize: 15, color: palette.inkSoft, marginBottom: 28 }}>
         {completedCount} of {totalCount} {totalCount === 1 ? 'exercise' : 'exercises'} completed
       </Text>
 
       {/* Overall score ring */}
-      <View className="items-center mb-8">
+      <View style={{ alignItems: 'center', marginBottom: 32 }}>
         <View
-          className="w-40 h-40 rounded-full items-center justify-center border-8 bg-white"
-          style={{ borderColor: overallScore >= 85 ? '#4CAF50' : overallScore >= 60 ? '#FFC107' : '#FF5252' }}
+          style={{
+            width: 160,
+            height: 160,
+            borderRadius: 80,
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderWidth: 8,
+            borderColor: overallTone,
+            backgroundColor: overallToneSoft,
+          }}
         >
-          <Text className="text-[#191b23] text-5xl font-black">{overallScore}%</Text>
-          <Text className="text-[#434654] text-xs font-bold mt-1">AVERAGE</Text>
+          <Text style={{ fontFamily: fonts.monoSemibold, fontSize: 46, color: palette.ink, lineHeight: 50 }}>
+            {overallScore}%
+          </Text>
+          <Text style={{ fontFamily: fonts.sansSemibold, fontSize: 10, color: palette.inkSoft, marginTop: 4, textTransform: 'uppercase', letterSpacing: 1.2 }}>
+            Average
+          </Text>
         </View>
       </View>
 
-      <View className="gap-3 mb-6">
+      {/* Exercise result rows */}
+      <View style={{ gap: 12, marginBottom: 24 }}>
         {slots.map((slot) => (
           <ResultRow key={slot.index} slot={slot} previousScore={previousScores[slot.exercise.id]} />
         ))}
@@ -115,19 +141,22 @@ const SessionSummaryScreen = ({ route, navigation }) => {
 
       {/* Warning message shown if the scores couldn't be saved to the server */}
       {saveResult && !saveResult.ok ? (
-        <View className="flex-row items-center bg-[#fff4e5] border border-[#FFC107] rounded-xl p-4 mb-6">
-          <AlertTriangle size={20} color="#b86e00" />
-          <Text className="text-[#7a4a00] text-sm font-medium ml-2 flex-1">
+        <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: palette.amberSoft, borderWidth: 1, borderColor: palette.amber, borderRadius: 18, padding: 16, marginBottom: 24 }}>
+          <AlertTriangle size={20} color={palette.amber} />
+          <Text style={{ fontFamily: fonts.sansMedium, fontSize: 13, color: palette.ink, marginLeft: 10, flex: 1 }}>
             Results couldn't sync to the server. Your scores are still visible here, but tomorrow's recommendation won't reflect this session.
           </Text>
         </View>
       ) : null}
 
       <TouchableOpacity
-        className="bg-[#0c56d0] rounded-full min-h-[60px] items-center justify-center active:bg-[#0a46a8]"
+        style={{ backgroundColor: palette.primary, borderRadius: 99, minHeight: 60, alignItems: 'center', justifyContent: 'center' }}
         onPress={handleDone}
+        activeOpacity={0.85}
       >
-        <Text className="text-white text-lg font-bold">Back to Dashboard</Text>
+        <Text style={{ fontFamily: fonts.sansBold, fontSize: 17, color: '#ffffff' }}>
+          Back to Dashboard
+        </Text>
       </TouchableOpacity>
     </ScrollView>
   );
@@ -138,47 +167,66 @@ const ResultRow = ({ slot, previousScore }) => {
 
   if (!result) {
     return (
-      <View className="flex-row items-center bg-[#ededf8] border border-[#e7e7f2] rounded-xl p-4">
-        <XCircle size={22} color="#8a8d9b" />
-        <View className="flex-1 ml-3">
-          <Text className="text-[#191b23] font-bold text-base" numberOfLines={1}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: palette.canvas, borderWidth: 1.5, borderColor: palette.line, borderRadius: 18, padding: 16 }}>
+        <View style={{ width: 38, height: 38, borderRadius: 12, backgroundColor: palette.line, alignItems: 'center', justifyContent: 'center' }}>
+          <XCircle size={20} color={palette.inkSoft} />
+        </View>
+        <View style={{ flex: 1, marginLeft: 12 }}>
+          <Text style={{ fontFamily: fonts.sansBold, fontSize: 15, color: palette.ink }} numberOfLines={1}>
             {index + 1}. {exercise.name}
           </Text>
-          <Text className="text-[#8a8d9b] text-sm font-medium">Skipped</Text>
+          <Text style={{ fontFamily: fonts.sansMedium, fontSize: 12, color: palette.inkSoft, marginTop: 2 }}>
+            Skipped
+          </Text>
         </View>
       </View>
     );
   }
 
   const score = Math.round(Number(result.avg_form_score) || 0);
-  const tone = score >= 85 ? '#4CAF50' : score >= 60 ? '#FFC107' : '#FF5252';
+  const tone = scoreTone(score);
+  const toneSoft = score >= 70 ? palette.sageSoft : palette.amberSoft;
   const isEarly = result.ended_via === 'end_early';
-  
+
   let diffElement = null;
   if (previousScore !== undefined) {
     const prevScoreRounded = Math.round(previousScore);
     const diff = score - prevScoreRounded;
     if (diff > 0) {
-      diffElement = <Text className="text-[#4CAF50] text-xs font-bold mt-0.5">+{diff}% better on average</Text>;
+      diffElement = (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+          <TrendingUp size={12} color={palette.sage} />
+          <Text style={{ fontFamily: fonts.sansBold, fontSize: 11, color: palette.sage }}>+{diff}% better on average</Text>
+        </View>
+      );
     } else if (diff < 0) {
-      diffElement = <Text className="text-[#FF5252] text-xs font-bold mt-0.5">{Math.abs(diff)}% less on average</Text>;
+      diffElement = (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+          <TrendingDown size={12} color={palette.amber} />
+          <Text style={{ fontFamily: fonts.sansBold, fontSize: 11, color: palette.amber }}>{Math.abs(diff)}% less on average</Text>
+        </View>
+      );
     } else {
-      diffElement = <Text className="text-[#8a8d9b] text-xs font-bold mt-0.5">Same as before</Text>;
+      diffElement = (
+        <Text style={{ fontFamily: fonts.sansBold, fontSize: 11, color: palette.inkSoft, marginTop: 2 }}>Same as before</Text>
+      );
     }
   }
 
   return (
-    <View className="flex-row items-center bg-white border-2 rounded-xl p-4" style={{ borderColor: tone }}>
-      <CheckCircle2 size={22} color={tone} />
-      <View className="flex-1 ml-3">
-        <Text className="text-[#191b23] font-bold text-base" numberOfLines={1}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: palette.card, borderWidth: 2, borderColor: tone, borderRadius: 18, padding: 16 }}>
+      <View style={{ width: 38, height: 38, borderRadius: 12, backgroundColor: toneSoft, alignItems: 'center', justifyContent: 'center' }}>
+        <CheckCircle2 size={20} color={tone} />
+      </View>
+      <View style={{ flex: 1, marginLeft: 12 }}>
+        <Text style={{ fontFamily: fonts.sansBold, fontSize: 15, color: palette.ink }} numberOfLines={1}>
           {index + 1}. {exercise.name}
         </Text>
         {isEarly ? (
-          <Text className="text-[#8a8d9b] text-xs font-medium mt-0.5">Ended early</Text>
+          <Text style={{ fontFamily: fonts.sansMedium, fontSize: 12, color: palette.inkSoft, marginTop: 2 }}>Ended early</Text>
         ) : diffElement}
       </View>
-      <Text className="text-[#191b23] text-2xl font-black" style={{ color: tone }}>
+      <Text style={{ fontFamily: fonts.monoSemibold, fontSize: 22, color: tone }}>
         {score}%
       </Text>
     </View>

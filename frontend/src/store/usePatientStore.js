@@ -58,7 +58,10 @@ const usePatientStore = create((set, get) => ({
   // recommendation genuinely changed server-side (e.g. exercise unlocks).
   fetchRecommendation: async ({ force = false } = {}) => {
     try {
-      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      // getSession() reads from local storage — no network round-trip, unlike
+      // getUser() which validates the JWT against the Supabase Auth server.
+      const { data: { session }, error: authError } = await supabase.auth.getSession();
+      const user = session?.user;
       if (authError || !user) {
         throw new Error('User not authenticated');
       }
@@ -190,7 +193,9 @@ const usePatientStore = create((set, get) => ({
 
   fetchHistory: async () => {
     try {
-      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      // getSession() reads from local storage — no network round-trip.
+      const { data: { session }, error: authError } = await supabase.auth.getSession();
+      const user = session?.user;
       if (authError || !user) {
         throw new Error('User not authenticated');
       }

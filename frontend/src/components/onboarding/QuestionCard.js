@@ -1,6 +1,8 @@
 import React from 'react';
 import { View, Text, Pressable, TextInput } from 'react-native';
 import { CheckCircle2, Circle } from 'lucide-react-native';
+import { palette } from '../../constants/palette';
+import { fonts } from '../../constants/fonts';
 
 /**
  * QuestionCard
@@ -32,13 +34,35 @@ export default function QuestionCard({
   const hasFields = Array.isArray(question.fields) && question.fields.length > 0;
 
   return (
-    <View className="bg-white rounded-[32px] p-6 mb-8 border border-slate-100 shadow-sm elevation-2">
+    <View
+      style={{
+        backgroundColor: palette.card,
+        borderRadius: 28,
+        padding: 24,
+        marginBottom: 24,
+        borderWidth: 1,
+        borderColor: palette.line,
+        shadowColor: palette.ink,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.06,
+        shadowRadius: 8,
+        elevation: 2,
+      }}
+    >
       {/* Question title */}
-      <Text className="text-2xl font-extrabold text-slate-900 mb-8">
+      <Text
+        style={{
+          fontFamily: fonts.serif,
+          fontSize: 24,
+          color: palette.ink,
+          marginBottom: 24,
+          lineHeight: 32,
+        }}
+      >
         {question.title}
       </Text>
 
-      <View className="gap-3">
+      <View style={{ gap: 12 }}>
         {hasOptions ? (
           // Render a tappable row for each answer choice
           question.options.map((option, index) => {
@@ -48,25 +72,40 @@ export default function QuestionCard({
               <Pressable
                 key={index}
                 onPress={() => onSelect(option)}
-                className={`flex-row items-center justify-between p-5 rounded-2xl border-2 ${
-                  isSelected
-                    ? 'bg-blue-600 border-blue-600'
-                    : 'bg-slate-50 border-slate-100'
-                }`}
+                style={({ pressed }) => ({
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  paddingVertical: 16,
+                  paddingHorizontal: 20,
+                  borderRadius: 18,
+                  borderWidth: 2,
+                  backgroundColor: isSelected
+                    ? palette.primary
+                    : pressed
+                      ? palette.primarySoft
+                      : palette.canvas,
+                  borderColor: isSelected ? palette.primary : palette.line,
+                  opacity: pressed && !isSelected ? 0.85 : 1,
+                })}
               >
                 <Text
-                  className={`text-lg font-bold ${
-                    isSelected ? 'text-white' : 'text-slate-900'
-                  }`}
+                  style={{
+                    fontFamily: fonts.sansSemibold,
+                    fontSize: 16,
+                    color: isSelected ? '#ffffff' : palette.ink,
+                    flex: 1,
+                    marginRight: 8,
+                  }}
                 >
                   {option}
                 </Text>
 
                 {/* Checkmark icon when selected, empty circle when not */}
                 {isSelected ? (
-                  <CheckCircle2 color="white" size={24} strokeWidth={2.5} />
+                  <CheckCircle2 color="#ffffff" size={22} strokeWidth={2.5} />
                 ) : (
-                  <Circle color="#cbd5e1" size={24} strokeWidth={2.5} />
+                  <Circle color={palette.line} size={22} strokeWidth={2.5} />
                 )}
               </Pressable>
             );
@@ -78,9 +117,18 @@ export default function QuestionCard({
           question.fields.map((field, index) => (
             <TextInput
               key={field.id}
-              className="bg-slate-50 border-2 border-slate-100 rounded-2xl p-5 text-lg font-semibold text-slate-900"
+              style={{
+                backgroundColor: palette.canvas,
+                borderWidth: 2,
+                borderColor: palette.line,
+                borderRadius: 18,
+                padding: 18,
+                fontSize: 16,
+                color: palette.ink,
+                fontFamily: fonts.sansMedium,
+              }}
               placeholder={field.placeholder}
-              placeholderTextColor="#94a3b8"
+              placeholderTextColor={palette.inkSoft}
               value={(answers && answers[field.id]) || ''}
               onChangeText={(text) => setFieldAnswer(field.id, text)}
               autoFocus={index === 0}
@@ -89,9 +137,18 @@ export default function QuestionCard({
         ) : (
           // Free-text input for questions without preset options
           <TextInput
-            className="bg-slate-50 border-2 border-slate-100 rounded-2xl p-5 text-lg font-semibold text-slate-900"
+            style={{
+              backgroundColor: palette.canvas,
+              borderWidth: 2,
+              borderColor: palette.line,
+              borderRadius: 18,
+              padding: 18,
+              fontSize: 16,
+              color: palette.ink,
+              fontFamily: fonts.sansMedium,
+            }}
             placeholder="Type your answer here..."
-            placeholderTextColor="#94a3b8"
+            placeholderTextColor={palette.inkSoft}
             value={selectedOption || ''}
             onChangeText={onSelect}
             autoFocus

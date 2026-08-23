@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { ChevronRight, X } from 'lucide-react-native';
+import { palette, scoreTone } from '../../constants/palette';
+import { fonts } from '../../constants/fonts';
 
 // Rest / Transition state between exercises. Shows the score from the
 // exercise the patient just ended and offers two choices: Move to Next
@@ -42,7 +44,9 @@ export default function RestState({
   };
 
   const score = Math.round(Number(justFinishedScore) || 0);
-  const tone = score >= 85 ? '#4CAF50' : score >= 60 ? '#FFC107' : '#FF5252';
+  const tone = scoreTone(score);
+  const toneSoft = score >= 70 ? palette.sageSoft : palette.amberSoft;
+
   const message = score >= 85
     ? 'Great job!'
     : score >= 60
@@ -52,73 +56,132 @@ export default function RestState({
   const isAnyLoading = isLoadingNext || isLoadingEnd;
 
   return (
-    <View className="flex-1 bg-[#faf8ff] px-6 pt-12 pb-8">
-      <View className="flex-1 items-center justify-center">
-        <Text className="text-[#434654] text-base font-medium mb-2">You just finished</Text>
-        <Text className="text-[#191b23] text-2xl font-bold text-center mb-8" numberOfLines={2}>
+    <View style={{ flex: 1, backgroundColor: palette.canvas, paddingHorizontal: 24, paddingTop: 48, paddingBottom: 32 }}>
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+
+        {/* Finished label */}
+        <Text style={{ fontFamily: fonts.sansMedium, fontSize: 14, color: palette.inkSoft, marginBottom: 6 }}>
+          You just finished
+        </Text>
+        <Text
+          style={{ fontFamily: fonts.serif, fontSize: 24, color: palette.ink, textAlign: 'center', marginBottom: 28 }}
+          numberOfLines={2}
+        >
           {justFinishedName}
         </Text>
 
+        {/* Score ring */}
         <View
-          className="w-44 h-44 rounded-full items-center justify-center border-8 mb-6"
-          style={{ borderColor: tone }}
+          style={{
+            width: 176,
+            height: 176,
+            borderRadius: 88,
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderWidth: 8,
+            borderColor: tone,
+            backgroundColor: toneSoft,
+            marginBottom: 20,
+          }}
         >
-          <Text className="text-[#191b23] text-6xl font-black">{score}%</Text>
-          <Text className="text-[#434654] text-sm font-semibold mt-1">Form Score</Text>
+          <Text style={{ fontFamily: fonts.monoSemibold, fontSize: 52, color: palette.ink, lineHeight: 56 }}>
+            {score}%
+          </Text>
+          <Text style={{ fontFamily: fonts.sansSemibold, fontSize: 11, color: palette.inkSoft, marginTop: 4, textTransform: 'uppercase', letterSpacing: 1 }}>
+            Form Score
+          </Text>
         </View>
 
-        <Text className="text-[#191b23] text-xl font-bold mb-2" style={{ color: tone }}>
+        {/* Encouragement */}
+        <Text style={{ fontFamily: fonts.sansBold, fontSize: 18, color: tone, marginBottom: 4 }}>
           {message}
         </Text>
 
+        {/* Up next */}
         {!isLastExercise && upNextName ? (
-          <Text className="text-[#434654] text-base font-medium mt-4 text-center">
-            Up next: <Text className="font-bold text-[#191b23]">{upNextName}</Text>
+          <Text style={{ fontFamily: fonts.sansMedium, fontSize: 15, color: palette.inkSoft, marginTop: 16, textAlign: 'center' }}>
+            Up next:{' '}
+            <Text style={{ fontFamily: fonts.sansBold, color: palette.ink }}>{upNextName}</Text>
           </Text>
         ) : null}
       </View>
 
-      <View className="gap-3">
+      <View style={{ gap: 12 }}>
         {!isLastExercise ? (
           <TouchableOpacity
-            className={`bg-[#0c56d0] rounded-full flex-row items-center justify-center min-h-[60px] ${isAnyLoading ? 'opacity-70' : 'active:bg-[#0a46a8]'}`}
+            style={{
+              backgroundColor: palette.primary,
+              borderRadius: 99,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              minHeight: 60,
+              opacity: isAnyLoading ? 0.7 : 1,
+            }}
             onPress={handleNext}
             disabled={isAnyLoading}
+            activeOpacity={0.85}
           >
             {isLoadingNext ? (
               <ActivityIndicator color="white" />
             ) : (
               <>
-                <Text className="text-white text-lg font-bold mr-2">Move to Next</Text>
+                <Text style={{ fontFamily: fonts.sansBold, fontSize: 17, color: '#ffffff', marginRight: 6 }}>
+                  Move to Next
+                </Text>
                 <ChevronRight size={22} color="white" />
               </>
             )}
           </TouchableOpacity>
         ) : (
           <TouchableOpacity
-            className={`bg-[#4CAF50] rounded-full flex-row items-center justify-center min-h-[60px] ${isAnyLoading ? 'opacity-70' : 'active:opacity-90'}`}
+            style={{
+              backgroundColor: palette.sage,
+              borderRadius: 99,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              minHeight: 60,
+              opacity: isAnyLoading ? 0.7 : 1,
+            }}
             onPress={handleNext}
             disabled={isAnyLoading}
+            activeOpacity={0.85}
           >
             {isLoadingNext ? (
               <ActivityIndicator color="white" />
             ) : (
-              <Text className="text-white text-lg font-bold">Finish Workout</Text>
+              <Text style={{ fontFamily: fonts.sansBold, fontSize: 17, color: '#ffffff' }}>
+                Finish Workout
+              </Text>
             )}
           </TouchableOpacity>
         )}
 
         <TouchableOpacity
-          className={`bg-transparent border-2 border-[#c3c6d6] rounded-full flex-row items-center justify-center min-h-[56px] ${isAnyLoading ? 'opacity-70' : 'active:bg-[#ededf8]'}`}
+          style={{
+            backgroundColor: 'transparent',
+            borderWidth: 2,
+            borderColor: palette.line,
+            borderRadius: 99,
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minHeight: 56,
+            opacity: isAnyLoading ? 0.7 : 1,
+          }}
           onPress={handleEnd}
           disabled={isAnyLoading}
+          activeOpacity={0.7}
         >
           {isLoadingEnd ? (
-            <ActivityIndicator color="#434654" />
+            <ActivityIndicator color={palette.inkSoft} />
           ) : (
             <>
-              <X size={18} color="#434654" />
-              <Text className="text-[#434654] text-base font-bold ml-2">End Workout</Text>
+              <X size={18} color={palette.inkSoft} />
+              <Text style={{ fontFamily: fonts.sansBold, fontSize: 15, color: palette.inkSoft, marginLeft: 8 }}>
+                End Workout
+              </Text>
             </>
           )}
         </TouchableOpacity>

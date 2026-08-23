@@ -3,12 +3,15 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "REACT_NATIVE_PACKAGER_HOSTNAME=192.168.1.8 expo start --lan",
-    "android": "REACT_NATIVE_PACKAGER_HOSTNAME=192.168.1.8 expo start --android",
-    "ios": "REACT_NATIVE_PACKAGER_HOSTNAME=192.168.1.8 expo start --ios",
+    "start": "REACT_NATIVE_PACKAGER_HOSTNAME=192.168.1.14 expo start --lan",
+    "android": "REACT_NATIVE_PACKAGER_HOSTNAME=192.168.1.14 expo start --android",
+    "ios": "REACT_NATIVE_PACKAGER_HOSTNAME=192.168.1.14 expo start --ios",
     "web": "expo start --web"
   },
   "dependencies": {
+    "@expo-google-fonts/fraunces": "^0.4.1",
+    "@expo-google-fonts/ibm-plex-mono": "^0.4.1",
+    "@expo-google-fonts/public-sans": "^0.4.2",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-navigation/native": "^7.2.2",
     "@react-navigation/stack": "^7.8.11",
@@ -18,6 +21,9 @@
     "expo": "~54.0.33",
     "expo-audio": "~1.1.1",
     "expo-camera": "~17.0.10",
+    "expo-font": "~14.0.12",
+    "expo-keep-awake": "~15.0.8",
+    "expo-notifications": "~0.32.17",
     "expo-secure-store": "~15.0.8",
     "expo-speech": "~14.0.8",
     "expo-status-bar": "~3.0.9",

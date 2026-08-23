@@ -4,6 +4,7 @@ import usePatientStore from "../store/usePatientStore";
 import useAuthStore from "../store/useAuthStore";
 import RecommendationCard from "../components/exercise/RecommendationCard";
 import SessionModeToggle from "../components/exercise/SessionModeToggle";
+import { palette } from "../constants/palette";
 
 const SessionScreen = ({ navigation }) => {
   const { fetchRecommendation, loadActiveModeFromProfile } = usePatientStore();
@@ -30,7 +31,7 @@ const SessionScreen = ({ navigation }) => {
   }, []);
 
   return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 20 }}>
+    <ScrollView style={{ flex: 1, backgroundColor: palette.canvas }} contentContainerStyle={{ paddingBottom: 20 }}>
       <View className="p-4 mt-4">
         <SessionModeToggle />
         <RecommendationCard navigation={navigation} />

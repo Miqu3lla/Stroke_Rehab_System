@@ -1,6 +1,30 @@
 import React from 'react';
-import { View, Text } from 'react-native';
+import { View } from 'react-native';
 import { Activity, Calendar } from 'lucide-react-native';
+import AppText from '../ui/AppText';
+import { palette } from '../../constants/palette';
+import { fonts } from '../../constants/fonts';
+
+function StatRow({ icon, iconBg, iconColor, label, value, last }) {
+  return (
+    <View
+      className="flex-row items-center gap-3.5 p-4"
+      style={!last ? { borderBottomWidth: 1, borderBottomColor: palette.line } : null}
+    >
+      <View className="w-10 h-10 rounded-xl items-center justify-center" style={{ backgroundColor: iconBg }}>
+        {icon}
+      </View>
+      <View>
+        <AppText size={12} style={{ fontFamily: fonts.sans, color: palette.inkSoft, marginBottom: 2 }}>
+          {label}
+        </AppText>
+        <AppText size={14.5} style={{ fontFamily: fonts.sansBold, color: palette.ink }} className="capitalize">
+          {value}
+        </AppText>
+      </View>
+    </View>
+  );
+}
 
 export default function ClinicalSummary({ profile }) {
   // Combine affected side and area
@@ -16,39 +40,30 @@ export default function ClinicalSummary({ profile }) {
   if (profile?.created_at) {
     const createdDate = new Date(profile.created_at);
     const currentDate = new Date();
-    
+
     // Calculate elapsed months by comparing years and months directly
-    const elapsedMonths = (currentDate.getFullYear() - createdDate.getFullYear()) * 12 
+    const elapsedMonths = (currentDate.getFullYear() - createdDate.getFullYear()) * 12
       + (currentDate.getMonth() - createdDate.getMonth());
-      
+
     // Add elapsed months to the initial value
     monthsInRecovery += elapsedMonths;
   }
+
   return (
-    <View>
-      <Text className="text-lg font-bold text-slate-900 mb-4">Clinical Summary</Text>
-      
-      <View className="flex-row items-center mb-4">
-        <View className="w-12 h-12 rounded-full bg-blue-50 items-center justify-center mr-4">
-          <Activity size={24} color="#2563eb" />
-        </View>
-        <View>
-          <Text className="text-slate-500 text-sm mb-1">Focus Area</Text>
-          <Text className="text-slate-900 font-semibold text-base capitalize">{focusArea}</Text>
-        </View>
-      </View>
-      
-      <View className="flex-row items-center">
-        <View className="w-12 h-12 rounded-full bg-green-50 items-center justify-center mr-4">
-          <Calendar size={24} color="#00875a" />
-        </View>
-        <View>
-          <Text className="text-slate-500 text-sm mb-1">Time in Recovery</Text>
-          <Text className="text-slate-900 font-semibold text-base">
-            {monthsInRecovery} {monthsInRecovery === 1 ? 'month' : 'months'}
-          </Text>
-        </View>
-      </View>
+    <View className="rounded-2xl overflow-hidden" style={{ backgroundColor: palette.card, borderWidth: 1, borderColor: palette.line }}>
+      <StatRow
+        icon={<Activity size={18} color={palette.primary} />}
+        iconBg={palette.primarySoft}
+        label="Focus area"
+        value={focusArea}
+      />
+      <StatRow
+        icon={<Calendar size={18} color={palette.sage} />}
+        iconBg={palette.sageSoft}
+        label="Time in recovery"
+        value={`${monthsInRecovery} ${monthsInRecovery === 1 ? 'month' : 'months'}`}
+        last
+      />
     </View>
   );
 }

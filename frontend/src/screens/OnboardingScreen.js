@@ -5,6 +5,8 @@ import { useOnboarding } from '../hooks/useOnboarding';
 import QuestionCard from '../components/onboarding/QuestionCard';
 import OnboardingNav from '../components/onboarding/OnboardingNav';
 import useAuthStore from '../store/useAuthStore';
+import { palette } from '../constants/palette';
+import { fonts } from '../constants/fonts';
 
 export default function OnboardingScreen({ navigation }) {
   const { getAuthSession } = useAuthStore();
@@ -35,11 +37,30 @@ export default function OnboardingScreen({ navigation }) {
   }, []);
 
   return (
-    <SafeAreaView className="flex-1 bg-slate-50">
-      <View className="flex-1 px-6 pt-12">
-        <Text className="text-xs font-bold text-slate-400 tracking-widest mb-4">
-          STEP {currentStep + 1} OF {questions.length}
-        </Text>
+    <SafeAreaView style={{ flex: 1, backgroundColor: palette.canvas }}>
+      <View style={{ flex: 1, paddingHorizontal: 24, paddingTop: 40 }}>
+        {/* Progress bar */}
+        <View style={{ marginBottom: 20 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+            <Text style={{ fontFamily: fonts.monoSemibold, fontSize: 10, color: palette.inkSoft, letterSpacing: 1.5, textTransform: 'uppercase' }}>
+              Step {currentStep + 1} of {questions.length}
+            </Text>
+            <Text style={{ fontFamily: fonts.monoSemibold, fontSize: 10, color: palette.primary, letterSpacing: 1 }}>
+              {Math.round(((currentStep + 1) / questions.length) * 100)}%
+            </Text>
+          </View>
+          {/* Track */}
+          <View style={{ height: 4, backgroundColor: palette.line, borderRadius: 99 }}>
+            <View
+              style={{
+                height: 4,
+                backgroundColor: palette.primary,
+                borderRadius: 99,
+                width: `${Math.round(((currentStep + 1) / questions.length) * 100)}%`,
+              }}
+            />
+          </View>
+        </View>
 
         <QuestionCard
           question={currentQuestion}
