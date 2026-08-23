@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, Pressable } from 'react-native';
+import { View, TextInput, Pressable } from 'react-native';
 import { User, Pencil, Check } from 'lucide-react-native';
 import usePatientProfileStore from '../../store/usePatientProfileStore';
+import AppText from '../ui/AppText';
+import { palette } from '../../constants/palette';
+import { fonts } from '../../constants/fonts';
 
 // Compose the display name from first + last. Empty last_name (single-
 // name patients) renders as just the first name without a trailing space.
@@ -51,47 +54,69 @@ export default function PatientHeaderProfile({ profile }) {
     ? new Date(profile.created_at).toLocaleDateString('en-US', {
         year: 'numeric',
         month: 'long',
-        day: 'numeric'
+        day: 'numeric',
       })
     : 'Unknown';
 
   return (
-    <View className="flex-row items-center">
-      <View className="w-16 h-16 rounded-full bg-slate-100 items-center justify-center mr-4">
-        <User size={32} color="#0065f1ff" />
+    <View className="flex-row items-center px-5 pb-5 pt-1">
+      <View
+        className="w-16 h-16 rounded-full items-center justify-center mr-3.5"
+        style={{ backgroundColor: palette.primarySoft }}
+      >
+        <User size={28} color={palette.primary} />
       </View>
       <View className="flex-1">
-        <View className="flex-row items-start justify-between">
-          {isEditing ? (
-            <View className="flex-1 mr-2">
-              <TextInput
-                value={editFirst}
-                onChangeText={setEditFirst}
-                placeholder="First name"
-                className="text-xl font-bold text-slate-900 border-b border-blue-600 p-0 mb-1"
-                autoFocus
-              />
-              <TextInput
-                value={editLast}
-                onChangeText={setEditLast}
-                placeholder="Last name"
-                className="text-base font-semibold text-slate-700 border-b border-blue-600 p-0"
-                onSubmitEditing={handleSave}
-              />
-            </View>
-          ) : (
-            <Text className="text-xl font-bold text-slate-900 flex-1">{displayName(profile)}</Text>
-          )}
-
-          <Pressable
-            onPress={isEditing ? handleSave : startEditing}
-            className="p-2 rounded-full bg-slate-100 ml-2"
-          >
-            {isEditing ? <Check size={18} color="#00875a" /> : <Pencil size={18} color="#64748b" />}
-          </Pressable>
-        </View>
-        <Text className="text-slate-500 text-sm mt-1">Account created: {accountCreated}</Text>
+        {isEditing ? (
+          <View className="mr-2">
+            <TextInput
+              value={editFirst}
+              onChangeText={setEditFirst}
+              placeholder="First name"
+              autoFocus
+              style={{
+                fontFamily: fonts.serif,
+                fontSize: 20,
+                color: palette.ink,
+                borderBottomWidth: 1,
+                borderBottomColor: palette.primary,
+                paddingVertical: 2,
+                marginBottom: 3,
+              }}
+            />
+            <TextInput
+              value={editLast}
+              onChangeText={setEditLast}
+              placeholder="Last name"
+              onSubmitEditing={handleSave}
+              style={{
+                fontFamily: fonts.sansSemibold,
+                fontSize: 13,
+                color: palette.inkSoft,
+                borderBottomWidth: 1,
+                borderBottomColor: palette.primary,
+                paddingVertical: 2,
+              }}
+            />
+          </View>
+        ) : (
+          <AppText size={20} style={{ fontFamily: fonts.serif, color: palette.ink, marginBottom: 3 }}>
+            {displayName(profile)}
+          </AppText>
+        )}
+        {!isEditing && (
+          <AppText size={12.5} style={{ fontFamily: fonts.sans, color: palette.inkSoft }}>
+            Account created {accountCreated}
+          </AppText>
+        )}
       </View>
+      <Pressable
+        onPress={isEditing ? handleSave : startEditing}
+        className="w-9 h-9 rounded-xl items-center justify-center ml-2"
+        style={{ backgroundColor: palette.card, borderWidth: 1, borderColor: palette.line }}
+      >
+        {isEditing ? <Check size={16} color={palette.sage} /> : <Pencil size={15} color={palette.inkSoft} />}
+      </Pressable>
     </View>
   );
 }

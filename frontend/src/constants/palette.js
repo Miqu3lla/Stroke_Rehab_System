@@ -17,6 +17,8 @@ export const palette = {
   sageSoft: '#E3EFE4',
   amber: '#C99A3E',
   amberSoft: '#F6EBD6',
+  danger: '#C24B3F',
+  dangerSoft: '#FBEAE7',
   line: '#E4E0D6',
 };
 

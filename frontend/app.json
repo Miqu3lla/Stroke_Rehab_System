@@ -40,7 +40,8 @@
       "expo-secure-store",
       "expo-video",
       "expo-audio",
-      "expo-font"
+      "expo-font",
+      "expo-notifications"
     ],
     "extra": {
       "eas": {
