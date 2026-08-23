@@ -114,6 +114,8 @@ export default function PatientHeaderProfile({ profile }) {
         onPress={isEditing ? handleSave : startEditing}
         className="w-9 h-9 rounded-xl items-center justify-center ml-2"
         style={{ backgroundColor: palette.card, borderWidth: 1, borderColor: palette.line }}
+        accessibilityRole="button"
+        accessibilityLabel={isEditing ? 'Save profile' : 'Edit profile'}
       >
         {isEditing ? <Check size={16} color={palette.sage} /> : <Pencil size={15} color={palette.inkSoft} />}
       </Pressable>

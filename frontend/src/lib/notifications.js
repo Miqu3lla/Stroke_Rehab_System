@@ -35,9 +35,11 @@ export async function ensureNotificationPermission() {
 export async function scheduleSessionReminder() {
   await Notifications.scheduleNotificationAsync({
     identifier: SESSION_REMINDER_ID,
+    // Deliberately generic wording - lock-screen notifications are visible
+    // to anyone near the phone, so avoid naming the app's health context.
     content: {
-      title: 'Time for your exercises',
-      body: "Complete today's session to keep your recovery on track.",
+      title: 'TheraMotion',
+      body: 'You have something waiting for you today.',
     },
     trigger: { type: Notifications.SchedulableTriggerInputTypes.DAILY, hour: 9, minute: 0 },
   });
@@ -51,8 +53,8 @@ export async function scheduleProgressRecap() {
   await Notifications.scheduleNotificationAsync({
     identifier: PROGRESS_RECAP_ID,
     content: {
-      title: 'Your weekly progress recap',
-      body: 'See how your form scores trended this week.',
+      title: 'TheraMotion',
+      body: 'Your weekly summary is ready to view.',
     },
     // weekday 1 = Sunday per expo-notifications' calendar trigger.
     trigger: { type: Notifications.SchedulableTriggerInputTypes.WEEKLY, weekday: 1, hour: 9, minute: 0 },

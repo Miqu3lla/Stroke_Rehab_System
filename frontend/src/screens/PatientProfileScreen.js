@@ -38,6 +38,8 @@ export default function PatientProfileScreen() {
           onPress={() => navigation.goBack()}
           className="w-9 h-9 rounded-xl items-center justify-center"
           style={{ backgroundColor: palette.primarySoft }}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
           <ArrowLeft size={18} color={palette.primary} />
         </Pressable>

@@ -26,6 +26,9 @@ function ToggleRow({ icon, title, subtitle, on, onToggle, last }) {
       onPress={onToggle}
       className="flex-row items-center gap-3.5 py-3.5 px-4"
       style={!last ? { borderBottomWidth: 1, borderBottomColor: palette.line } : null}
+      accessibilityRole="switch"
+      accessibilityState={{ checked: on }}
+      accessibilityLabel={title}
     >
       <View className="w-[38px] h-[38px] rounded-xl items-center justify-center" style={{ backgroundColor: palette.primarySoft }}>
         {icon}
