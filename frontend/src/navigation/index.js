@@ -14,6 +14,27 @@ import useAuthStore from "../store/useAuthStore";
 
 const Stack = createStackNavigator();
 
+// Slide the incoming screen in from the left or right. cardStyleInterpolator
+// isn't given `route`, so direction must be resolved beforehand (from the
+// navbar's `direction` param) and baked into the interpolator per-screen.
+const makeDirectionalSlideInterpolator = (direction) => ({ current, next, layouts }) => {
+  const translateX = current.progress.interpolate({
+    inputRange:  [0, 1],
+    outputRange: [direction === 'left' ? layouts.screen.width : -layouts.screen.width, 0],
+  });
+  const opacity = next
+    ? next.progress.interpolate({ inputRange: [0, 1], outputRange: [1, 0] })
+    : 1;
+  return {
+    cardStyle: { transform: [{ translateX }], opacity },
+  };
+};
+
+// Defaults to 'left' (forward) when the navbar didn't pass a direction.
+const directionalScreenOptions = ({ route }) => ({
+  cardStyleInterpolator: makeDirectionalSlideInterpolator(route.params?.direction ?? 'left'),
+});
+
 const AppNavigator = () => {
   const [user, setUser] = useState(null);
   const { getAuthSession } = useAuthStore();
@@ -36,7 +57,7 @@ const AppNavigator = () => {
 
   // Show nothing (or a loading spinner) while we check the auth state
   if (user === null) {
-    return null; 
+    return null;
   }
 
   return (
@@ -47,14 +68,31 @@ const AppNavigator = () => {
         cardStyle: { backgroundColor: '#ffffff' },
       }}
     >
-      <Stack.Screen name="Login" component={LoginScreen} />
-      <Stack.Screen name="Signup" component={SignupScreen} />
+      {/* Auth screens — keep default slide-from-right */}
+      <Stack.Screen name="Login"          component={LoginScreen} />
+      <Stack.Screen name="Signup"         component={SignupScreen} />
       <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
-      <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} />
-      <Stack.Screen name="Onboarding" component={OnboardingScreen} />
-      <Stack.Screen name="Dashboard" component={HomeScreen} />
-      <Stack.Screen name="Sessions" component={SessionScreen} />
-      <Stack.Screen name="Exercise" component={ExerciseScreen} />
+      <Stack.Screen name="ResetPassword"  component={ResetPasswordScreen} />
+      <Stack.Screen name="Onboarding"     component={OnboardingScreen} />
+
+      {/* Tab screens — directional slide based on navbar direction param */}
+      <Stack.Screen
+        name="Dashboard"
+        component={HomeScreen}
+        options={directionalScreenOptions}
+      />
+      <Stack.Screen
+        name="Sessions"
+        component={SessionScreen}
+        options={directionalScreenOptions}
+      />
+      <Stack.Screen
+        name="Exercise"
+        component={ExerciseScreen}
+        options={directionalScreenOptions}
+      />
+
+      {/* Detail screens — default slide-from-right */}
       <Stack.Screen name="SessionSummary" component={SessionSummaryScreen} />
       <Stack.Screen name="PatientProfile" component={PatientProfileScreen} />
     </Stack.Navigator>
