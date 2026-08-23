@@ -1,43 +1,18 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ActivityIndicator } from 'react-native';
-import { Eye, EyeOff, Check, X } from 'lucide-react-native';
+import { View, Text, TouchableOpacity } from 'react-native';
 import useAuthStore from '../../store/useAuthStore';
-import { PASSWORD_RULES, validatePassword } from '../../utils/passwordPolicy';
-
-// Live checklist rendered under the Password field — patient sees which
-// of the 3 rules they're failing as they type, instead of finding out
-// only after tapping Sign Up.
-function PasswordChecklist({ password }) {
-  return (
-    <View className="mt-3 ml-2">
-      {PASSWORD_RULES.map((rule) => {
-        const passed = rule.test(password);
-        return (
-          <View key={rule.id} className="flex-row items-center mb-1">
-            {passed ? (
-              <Check size={18} color="#16a34a" />
-            ) : (
-              <X size={18} color="#9ca3af" />
-            )}
-            <Text
-              className={`ml-2 text-base ${passed ? 'text-green-600' : 'text-gray-500'}`}
-            >
-              {rule.label}
-            </Text>
-          </View>
-        );
-      })}
-    </View>
-  );
-}
+import AuthBrandHeader from './AuthBrandHeader';
+import AuthTextInput from './AuthTextInput';
+import AuthPrimaryButton from './AuthPrimaryButton';
+import PasswordRules from './PasswordRules';
+import { palette } from '../../constants/palette';
+import { fonts } from '../../constants/fonts';
+import { validatePassword } from '../../utils/passwordPolicy';
 
 export default function SignupCard({ navigation }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirm, setShowConfirm] = useState(false);
-
   const { handleSignUp, loading } = useAuthStore();
 
   // Disable Sign Up until policy passes AND confirm matches. Keeps the
@@ -47,86 +22,53 @@ export default function SignupCard({ navigation }) {
   const canSubmit = !loading && policyOk && confirmMatches;
 
   return (
-    <View className="w-full max-w-sm p-6 bg-white rounded-[32px] shadow-sm border border-gray-100">
-      <View className="mb-6">
-        <Text className="text-gray-900 font-bold mb-2 text-xl ml-2">Email Address</Text>
-        <TextInput
-          className="w-full h-[72px] bg-[#FAFAFA] border border-[#c3c6d6] rounded-[24px] px-6 text-xl text-gray-900"
-          placeholder="Enter your email"
-          placeholderTextColor="#737685"
-          value={email}
-          onChangeText={setEmail}
-          autoCapitalize="none"
-          keyboardType="email-address"
-        />
-      </View>
+    <View className="w-full max-w-sm">
+      <AuthBrandHeader
+        eyebrow="Get started"
+        title={'Start your\nrecovery journey'}
+        subtitle="Create an account to track sessions and see your progress over time."
+      />
 
-      <View className="mb-6">
-        <Text className="text-gray-900 font-bold mb-2 text-xl ml-2">Password</Text>
-        <View className="relative">
-          <TextInput
-            className="w-full h-[72px] bg-[#FAFAFA] border border-[#c3c6d6] rounded-[24px] pl-6 pr-16 text-xl text-gray-900"
-            placeholder="Enter your password"
-            placeholderTextColor="#737685"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry={!showPassword}
-            autoCapitalize="none"
-          />
-          <TouchableOpacity
-            className="absolute right-5 top-0 bottom-0 justify-center"
-            onPress={() => setShowPassword((v) => !v)}
-            accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
-          >
-            {showPassword ? <EyeOff size={24} color="#737685" /> : <Eye size={24} color="#737685" />}
-          </TouchableOpacity>
-        </View>
-        <PasswordChecklist password={password} />
-      </View>
+      <AuthTextInput
+        label="Email address"
+        placeholder="you@email.com"
+        value={email}
+        onChangeText={setEmail}
+        keyboardType="email-address"
+      />
+      <AuthTextInput
+        label="Password"
+        placeholder="Create a password"
+        value={password}
+        onChangeText={setPassword}
+        isPassword
+      />
+      <PasswordRules password={password} />
+      <AuthTextInput
+        label="Confirm password"
+        placeholder="Re-enter your password"
+        value={confirmPassword}
+        onChangeText={setConfirmPassword}
+        isPassword
+      />
+      {confirmPassword.length > 0 && !confirmMatches && (
+        <Text style={{ color: palette.amber, fontFamily: fonts.sans, fontSize: 12, marginTop: -12, marginBottom: 12 }}>
+          Passwords do not match
+        </Text>
+      )}
 
-      <View className="mb-8">
-        <Text className="text-gray-900 font-bold mb-2 text-xl ml-2">Confirm Password</Text>
-        <View className="relative">
-          <TextInput
-            className="w-full h-[72px] bg-[#FAFAFA] border border-[#c3c6d6] rounded-[24px] pl-6 pr-16 text-xl text-gray-900"
-            placeholder="Confirm your password"
-            placeholderTextColor="#737685"
-            value={confirmPassword}
-            onChangeText={setConfirmPassword}
-            secureTextEntry={!showConfirm}
-            autoCapitalize="none"
-          />
-          <TouchableOpacity
-            className="absolute right-5 top-0 bottom-0 justify-center"
-            onPress={() => setShowConfirm((v) => !v)}
-            accessibilityLabel={showConfirm ? 'Hide password' : 'Show password'}
-          >
-            {showConfirm ? <EyeOff size={24} color="#737685" /> : <Eye size={24} color="#737685" />}
-          </TouchableOpacity>
-        </View>
-        {confirmPassword.length > 0 && !confirmMatches && (
-          <Text className="text-red-600 text-base mt-2 ml-2">Passwords do not match</Text>
-        )}
-      </View>
-
-      <TouchableOpacity
-        className={`w-full h-[72px] rounded-full justify-center items-center mb-4 ${canSubmit ? 'bg-[#0052CC]' : 'bg-[#9bb6e0]'}`}
+      <AuthPrimaryButton
+        label="Create account"
         onPress={() => handleSignUp(email, password, confirmPassword, navigation)}
         disabled={!canSubmit}
-      >
-        {loading ? (
-          <ActivityIndicator color="#ffffff" size="large" />
-        ) : (
-          <Text className="text-white text-[22px] font-bold">Sign Up ➔</Text>
-        )}
-      </TouchableOpacity>
+        loading={loading}
+      />
 
-      <TouchableOpacity
-        className="w-full py-4 justify-center items-center"
-        onPress={() => navigation.replace('Login')}
-        disabled={loading}
-      >
-        <Text className="text-[#0052CC] text-[20px] font-bold">Already have an account? Login</Text>
+      <TouchableOpacity className="mt-6 items-center" onPress={() => navigation.replace('Login')} disabled={loading}>
+        <Text style={{ color: palette.inkSoft, fontFamily: fonts.sans, fontSize: 13.5 }}>
+          Already have an account?{' '}
+          <Text style={{ color: palette.primary, fontFamily: fonts.sansBold }}>Sign in</Text>
+        </Text>
       </TouchableOpacity>
     </View>
   );

@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity } from 'react-native';
 import { Activity, Dumbbell } from 'lucide-react-native';
 import usePatientStore from '../../store/usePatientStore';
 import { palette } from '../../constants/palette';
+import { fonts } from '../../constants/fonts';
 
 // Sets-and-modes Phase B (2026-06-04). Sits above the recommendation
 // list on the Sessions tab; toggles the active session mode between
@@ -52,8 +53,8 @@ function ModeButton({ label, icon: Icon, active, onPress }) {
     >
       <Icon size={18} color={active ? '#ffffff' : palette.inkSoft} />
       <Text
-        className="text-[15px] font-bold"
-        style={{ color: active ? '#ffffff' : palette.ink }}
+        className="text-[15px]"
+        style={{ color: active ? '#ffffff' : palette.ink, fontFamily: fonts.sansBold }}
       >
         {label}
       </Text>

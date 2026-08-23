@@ -4,6 +4,7 @@ import { Calendar, TrendingUp, TrendingDown } from 'lucide-react-native';
 import usePatientStore from '../../store/usePatientStore';
 import Skeleton from '../ui/Skeleton';
 import { palette } from '../../constants/palette';
+import { fonts } from '../../constants/fonts';
 import { getExerciseVisual } from '../../utils/exerciseVisuals';
 
 export default function HistoryList() {
@@ -12,7 +13,7 @@ export default function HistoryList() {
   if (historyLoading) {
     return (
       <View className="my-2 mb-8">
-        <Text className="text-lg font-bold ml-1 mb-3" style={{ color: palette.ink }}>Recent activity</Text>
+        <Text className="text-lg ml-1 mb-3" style={{ color: palette.ink, fontFamily: fonts.serif }}>Recent activity</Text>
         <View className="flex-col gap-3">
           <Skeleton height={80} borderRadius={18} className="w-full" />
           <Skeleton height={80} borderRadius={18} className="w-full" />
@@ -25,7 +26,7 @@ export default function HistoryList() {
   if (historyError) {
     return (
       <View className="my-2 mb-6">
-        <Text className="text-sm font-medium text-center" style={{ color: palette.amber }}>Unable to load history</Text>
+        <Text className="text-sm text-center" style={{ color: palette.amber, fontFamily: fonts.sansMedium }}>Unable to load history</Text>
       </View>
     );
   }
@@ -33,9 +34,9 @@ export default function HistoryList() {
   if (!history || history.length === 0) {
     return (
       <View className="my-2 mb-8">
-        <Text className="text-lg font-bold ml-1 mb-3" style={{ color: palette.ink }}>Recent activity</Text>
+        <Text className="text-lg ml-1 mb-3" style={{ color: palette.ink, fontFamily: fonts.serif }}>Recent activity</Text>
         <View className="p-5">
-          <Text className="text-[14px] font-medium text-center" style={{ color: palette.inkSoft }}>
+          <Text className="text-[14px] text-center" style={{ color: palette.inkSoft, fontFamily: fonts.sansMedium }}>
             No current exercises done yet. Start now!
           </Text>
         </View>
@@ -51,7 +52,7 @@ export default function HistoryList() {
 
   return (
     <View className="my-2 mb-8">
-      <Text className="text-lg font-bold ml-1 mb-3" style={{ color: palette.ink }}>Recent activity</Text>
+      <Text className="text-lg ml-1 mb-3" style={{ color: palette.ink, fontFamily: fonts.serif }}>Recent activity</Text>
       <View className="flex-col gap-3">
         {history
           .filter((item, index, self) =>
@@ -77,18 +78,18 @@ export default function HistoryList() {
                 diffElement = (
                   <View className="flex-row items-center gap-1 mt-0.5">
                     <TrendingUp size={12} color={palette.sage} />
-                    <Text className="text-xs font-bold" style={{ color: palette.sage }}>+{diff}% better on average</Text>
+                    <Text className="text-xs" style={{ color: palette.sage, fontFamily: fonts.sansBold }}>+{diff}% better on average</Text>
                   </View>
                 );
               } else if (diff < 0) {
                 diffElement = (
                   <View className="flex-row items-center gap-1 mt-0.5">
                     <TrendingDown size={12} color={palette.amber} />
-                    <Text className="text-xs font-bold" style={{ color: palette.amber }}>{Math.abs(diff)}% less on average</Text>
+                    <Text className="text-xs" style={{ color: palette.amber, fontFamily: fonts.sansBold }}>{Math.abs(diff)}% less on average</Text>
                   </View>
                 );
               } else {
-                diffElement = <Text className="text-xs font-bold mt-0.5" style={{ color: palette.inkSoft }}>Same as before</Text>;
+                diffElement = <Text className="text-xs mt-0.5" style={{ color: palette.inkSoft, fontFamily: fonts.sansBold }}>Same as before</Text>;
               }
             }
 
@@ -102,20 +103,20 @@ export default function HistoryList() {
                 <Icon size={20} color={visual.color} />
               </View>
               <View className="flex-1 pr-3">
-                <Text className="text-[15px] font-bold flex-wrap leading-tight mb-1" style={{ color: palette.ink }}>{item.exercise_name}</Text>
+                <Text className="text-[15px] flex-wrap leading-tight mb-1" style={{ color: palette.ink, fontFamily: fonts.sansBold }}>{item.exercise_name}</Text>
                 <View className="flex-row items-center gap-1.5 mb-1">
                   <Calendar size={14} color={palette.inkSoft} />
-                  <Text className="text-[12px] font-medium" style={{ color: palette.inkSoft }}>
+                  <Text className="text-[12px]" style={{ color: palette.inkSoft, fontFamily: fonts.sansMedium }}>
                     {formatDate(item.created_at)}
                   </Text>
                 </View>
                 {diffElement}
               </View>
               <View className="items-end">
-                <Text className="font-bold text-[22px] leading-none" style={{ color: palette.ink }}>
+                <Text className="text-[22px] leading-none" style={{ color: palette.ink, fontFamily: fonts.monoSemibold }}>
                   {score}
                 </Text>
-                <Text className="text-[9px] font-bold mt-0.5 uppercase tracking-wider" style={{ color: palette.inkSoft }}>
+                <Text className="text-[9px] mt-0.5 uppercase tracking-wider" style={{ color: palette.inkSoft, fontFamily: fonts.monoSemibold }}>
                   Score
                 </Text>
               </View>

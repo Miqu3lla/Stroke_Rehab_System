@@ -6,6 +6,7 @@ import ExerciseModal from '../ui/ExerciseModal';
 import Skeleton from '../ui/Skeleton';
 import { formatExerciseSession } from '../../utils/duration';
 import { palette } from '../../constants/palette';
+import { fonts } from '../../constants/fonts';
 import { getExerciseVisual } from '../../utils/exerciseVisuals';
 
 export default function RecommendationCard({ navigation }) {
@@ -22,7 +23,7 @@ export default function RecommendationCard({ navigation }) {
   if (recommendationLoading) {
     return (
       <View className="my-2">
-        <Text className="text-lg font-bold ml-1 mb-3" style={{ color: palette.ink }}>Recommended today</Text>
+        <Text className="text-lg ml-1 mb-3" style={{ color: palette.ink, fontFamily: fonts.serif }}>Recommended today</Text>
         <View className="flex-col gap-3">
           <Skeleton height={80} borderRadius={18} className="w-full" />
           <Skeleton height={80} borderRadius={18} className="w-full" />
@@ -35,7 +36,7 @@ export default function RecommendationCard({ navigation }) {
   if (recommendationError) {
     return (
       <View className="my-2">
-        <Text className="text-sm font-medium text-center" style={{ color: palette.amber }}>Unable to load recommendations</Text>
+        <Text className="text-sm text-center" style={{ color: palette.amber, fontFamily: fonts.sansMedium }}>Unable to load recommendations</Text>
       </View>
     );
   }
@@ -43,7 +44,7 @@ export default function RecommendationCard({ navigation }) {
   if (!recommendedExercises || recommendedExercises.length === 0) {
     return (
       <View className="my-2">
-        <Text className="text-sm font-medium text-center py-4" style={{ color: palette.inkSoft }}>No exercise recommendations yet</Text>
+        <Text className="text-sm text-center py-4" style={{ color: palette.inkSoft, fontFamily: fonts.sansMedium }}>No exercise recommendations yet</Text>
       </View>
     );
   }
@@ -57,7 +58,7 @@ export default function RecommendationCard({ navigation }) {
 
   return (
     <View className="my-2">
-      <Text className="text-lg font-bold ml-1 mb-3" style={{ color: palette.ink }}>Recommended today</Text>
+      <Text className="text-lg ml-1 mb-3" style={{ color: palette.ink, fontFamily: fonts.serif }}>Recommended today</Text>
       <View className="flex-col gap-3">
         {recommendedExercises.map((exercise) => {
           const visual = getExerciseVisual(exercise.name);
@@ -73,13 +74,13 @@ export default function RecommendationCard({ navigation }) {
                 <Icon size={24} color={visual.color} />
               </View>
               <View className="flex-1 pr-2">
-                <Text className="text-[15px] font-bold flex-wrap leading-tight mb-1.5" style={{ color: palette.ink }}>{exercise.name}</Text>
+                <Text className="text-[15px] flex-wrap leading-tight mb-1.5" style={{ color: palette.ink, fontFamily: fonts.sansBold }}>{exercise.name}</Text>
                 <View className="flex-row items-center gap-1.5 flex-wrap">
                   <View className="px-2 py-0.5 rounded-full" style={{ backgroundColor: palette.primarySoft }}>
-                    <Text className="text-[10px] font-bold uppercase tracking-wide" style={{ color: palette.primary }}>{modeTag}</Text>
+                    <Text className="text-[10px] uppercase tracking-wide" style={{ color: palette.primary, fontFamily: fonts.sansBold }}>{modeTag}</Text>
                   </View>
                   <Clock size={13} color={palette.inkSoft} />
-                  <Text className="text-[12px] font-medium" style={{ color: palette.inkSoft }}>
+                  <Text className="text-[12px]" style={{ color: palette.inkSoft, fontFamily: fonts.sansMedium }}>
                     {formatExerciseSession(exercise)}
                   </Text>
                 </View>
@@ -91,9 +92,9 @@ export default function RecommendationCard({ navigation }) {
       </View>
 
       <View className="mt-1 border border-dashed rounded-2xl p-5" style={{ borderColor: palette.line }}>
-        <Text className="text-center text-[12.5px] leading-5" style={{ color: palette.inkSoft }}>
+        <Text className="text-center text-[12.5px] leading-5" style={{ color: palette.inkSoft, fontFamily: fonts.sans }}>
           Reached the end of today's set.{' '}
-          <Text className="font-bold" style={{ color: palette.ink }}>Nice work</Text> — check back tomorrow for the next set.
+          <Text style={{ color: palette.ink, fontFamily: fonts.sansBold }}>Nice work</Text> — check back tomorrow for the next set.
         </Text>
       </View>
 

@@ -11,6 +11,7 @@ import SignupScreen from "../screens/SignupScreen";
 import ForgotPasswordScreen from "../screens/ForgotPasswordScreen";
 import ResetPasswordScreen from "../screens/ResetPasswordScreen";
 import useAuthStore from "../store/useAuthStore";
+import { palette } from "../constants/palette";
 
 const Stack = createStackNavigator();
 
@@ -65,7 +66,10 @@ const AppNavigator = () => {
       initialRouteName={user ? "Dashboard" : "Login"}
       screenOptions={{
         headerShown: false,
-        cardStyle: { backgroundColor: '#ffffff' },
+        // Behind whatever each screen paints itself — was hardcoded white,
+        // which showed through as a mismatched gap against the Navbar's
+        // canvas-colored top/bottom bars.
+        cardStyle: { backgroundColor: palette.canvas },
       }}
     >
       {/* Auth screens — keep default slide-from-right */}

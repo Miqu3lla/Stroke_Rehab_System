@@ -1,65 +1,65 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity } from 'react-native';
 import useAuthStore from '../../store/useAuthStore';
+import AuthBrandHeader from './AuthBrandHeader';
+import AuthTextInput from './AuthTextInput';
+import AuthPrimaryButton from './AuthPrimaryButton';
+import AuthBadgeRow from './AuthBadgeRow';
+import { palette } from '../../constants/palette';
+import { fonts } from '../../constants/fonts';
 
 export default function LoginCard({ navigation }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-
   const { handleLogin, loading } = useAuthStore();
 
   return (
-    <View className="w-full max-w-sm p-6 bg-white rounded-[32px] shadow-sm border border-gray-100">
-      <View className="mb-6">
-        <Text className="text-gray-900 font-bold mb-2 text-xl ml-2">Email Address</Text>
-        <TextInput
-          className="w-full h-[72px] bg-[#FAFAFA] border border-[#c3c6d6] rounded-[24px] px-6 text-xl text-gray-900"
-          placeholder="Enter your email"
-          placeholderTextColor="#737685"
-          value={email}
-          onChangeText={setEmail}
-          autoCapitalize="none"
-          keyboardType="email-address"
-        />
-      </View>
+    <View className="w-full max-w-sm">
+      <AuthBrandHeader
+        eyebrow="Welcome back"
+        title={'Continue your\nrecovery'}
+        subtitle="Sign in to pick up right where your last session left off."
+      />
 
-      <View className="mb-8">
-        <Text className="text-gray-900 font-bold mb-2 text-xl ml-2">Password</Text>
-        <TextInput
-          className="w-full h-[72px] bg-[#FAFAFA] border border-[#c3c6d6] rounded-[24px] px-6 text-xl text-gray-900"
-          placeholder="Enter your password"
-          placeholderTextColor="#737685"
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-        />
-        <TouchableOpacity
-          className="self-end mt-3 mr-2"
-          onPress={() => navigation.navigate('ForgotPassword')}
-          disabled={loading}
-        >
-          <Text className="text-[#0052CC] text-base font-semibold">Forgot password?</Text>
-        </TouchableOpacity>
-      </View>
+      <AuthTextInput
+        label="Email address"
+        placeholder="you@email.com"
+        value={email}
+        onChangeText={setEmail}
+        keyboardType="email-address"
+      />
+      <AuthTextInput
+        label="Password"
+        placeholder="Enter your password"
+        value={password}
+        onChangeText={setPassword}
+        isPassword
+      />
 
       <TouchableOpacity
-        className="w-full h-[72px] bg-[#0052CC] rounded-full justify-center items-center mb-4"
-        onPress={() => handleLogin(email, password, navigation)}
+        className="self-end -mt-2 mb-5"
+        onPress={() => navigation.navigate('ForgotPassword')}
         disabled={loading}
       >
-        {loading ? (
-          <ActivityIndicator color="#ffffff" size="large" />
-        ) : (
-          <Text className="text-white text-[22px] font-bold">Login</Text>
-        )}
+        <Text style={{ color: palette.primary, fontFamily: fonts.sansBold, fontSize: 13 }}>
+          Forgot password?
+        </Text>
       </TouchableOpacity>
 
-      <TouchableOpacity
-        className="w-full py-4 justify-center items-center"
-        onPress={() => navigation.replace('Signup')}
+      <AuthPrimaryButton
+        label="Sign in"
+        onPress={() => handleLogin(email, password, navigation)}
         disabled={loading}
-      >
-        <Text className="text-[#0052CC] text-[20px] font-bold">New user? Sign Up</Text>
+        loading={loading}
+      />
+
+      <AuthBadgeRow />
+
+      <TouchableOpacity className="mt-6 items-center" onPress={() => navigation.replace('Signup')} disabled={loading}>
+        <Text style={{ color: palette.inkSoft, fontFamily: fonts.sans, fontSize: 13.5 }}>
+          New here?{' '}
+          <Text style={{ color: palette.primary, fontFamily: fonts.sansBold }}>Create an account</Text>
+        </Text>
       </TouchableOpacity>
     </View>
   );

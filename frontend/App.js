@@ -2,6 +2,15 @@ import { useState, useEffect } from 'react';
 import { AppState } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClientProvider } from '@tanstack/react-query';
+import { useFonts } from 'expo-font';
+import { Fraunces_500Medium, Fraunces_600SemiBold } from '@expo-google-fonts/fraunces';
+import {
+  PublicSans_400Regular,
+  PublicSans_500Medium,
+  PublicSans_600SemiBold,
+  PublicSans_700Bold,
+} from '@expo-google-fonts/public-sans';
+import { IBMPlexMono_500Medium, IBMPlexMono_600SemiBold } from '@expo-google-fonts/ibm-plex-mono';
 import AppNavigator from './src/navigation';
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import Navbar from './src/components/ui/navbar';
@@ -13,6 +22,25 @@ import { queryClient } from './src/lib/queryClient';
 export default function App() {
   const navigationRef = useNavigationContainerRef();
   const [currentRoute, setCurrentRoute] = useState("Dashboard");
+
+  // Gates the whole tree the same way the auth check does below — avoids
+  // a flash of system-font text before the redesign's Fraunces/Public
+  // Sans/IBM Plex Mono trio is ready.
+  const [fontsLoaded, fontError] = useFonts({
+    Fraunces_500Medium,
+    Fraunces_600SemiBold,
+    PublicSans_400Regular,
+    PublicSans_500Medium,
+    PublicSans_600SemiBold,
+    PublicSans_700Bold,
+    IBMPlexMono_500Medium,
+    IBMPlexMono_600SemiBold,
+  });
+  // Don't hang on a blank screen forever if a font asset fails to load —
+  // fall through to system fonts rather than blocking the whole app.
+  if (fontError) {
+    console.error('Font load failed, continuing with system fonts:', fontError);
+  }
 
   const user = useAuthStore((state) => state.user)
 //useEffect to track the user status when active 
@@ -72,6 +100,13 @@ export default function App() {
     }
   }, [user])
 
+  // Same pattern as AppNavigator's user===null guard — render nothing
+  // until the redesign's fonts are ready rather than flashing fallback text.
+  // Proceeds on fontError too (see above) so a failed font load degrades
+  // to system fonts instead of blocking the app forever.
+  if (!fontsLoaded && !fontError) {
+    return null;
+  }
 
   return (
     //AppNavigator is wrapped in NavigationContainer to manage navigation state and linking

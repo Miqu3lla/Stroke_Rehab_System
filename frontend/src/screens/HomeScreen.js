@@ -6,6 +6,7 @@ import useOverallProgress from "../hooks/useOverallProgress";
 import HistoryList from "../components/exercise/HistoryList";
 import OverallProgressCard from "../components/exercise/OverallProgressCard";
 import WeeklyHeroCard from "../components/exercise/WeeklyHeroCard";
+import { palette } from "../constants/palette";
 
 const HomeScreen = ({ navigation }) => {
   const { fetchHistory, history } = usePatientStore();
@@ -29,7 +30,7 @@ const HomeScreen = ({ navigation }) => {
   }, []);
 
   return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 20 }}>
+    <ScrollView style={{ flex: 1, backgroundColor: palette.canvas }} contentContainerStyle={{ paddingBottom: 20 }}>
       {hasData && <WeeklyHeroCard overallAverage={overallAverage} topMover={topMover} />}
       <View className="p-4 mt-4">
         <HistoryList />

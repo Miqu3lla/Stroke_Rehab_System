@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text } from 'react-native';
 import { palette } from '../../constants/palette';
+import { fonts } from '../../constants/fonts';
 
 // 7-day bar chart, plain Views (matches redesign's flex-height div bars —
 // no charting lib needed for something this simple). Data from useWeeklyScores.
@@ -28,7 +29,7 @@ export default function WeeklyScoreChart({ days }) {
           <Text
             key={day.key}
             className="flex-1 text-center text-[10px]"
-            style={{ color: palette.inkSoft }}
+            style={{ color: palette.inkSoft, fontFamily: fonts.mono }}
           >
             {day.label}
           </Text>

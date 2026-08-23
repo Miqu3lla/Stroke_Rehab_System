@@ -8,6 +8,7 @@ import useWeeklyScores from '../../hooks/useWeeklyScores';
 import WeeklyScoreChart from './WeeklyScoreChart';
 import Skeleton from '../ui/Skeleton';
 import { palette, scoreTone } from '../../constants/palette';
+import { fonts } from '../../constants/fonts';
 
 // Trend pill — sage/amber/neutral, matches the redesign's .pill.stable style.
 const TrendPill = ({ trend }) => {
@@ -15,7 +16,7 @@ const TrendPill = ({ trend }) => {
     return (
       <View className="flex-row items-center gap-1 px-2.5 py-1.5 rounded-full" style={{ backgroundColor: palette.sageSoft }}>
         <TrendingUp size={12} color={palette.sage} />
-        <Text className="text-xs font-bold" style={{ color: palette.sage }}>+{trend}% improving</Text>
+        <Text className="text-xs" style={{ color: palette.sage, fontFamily: fonts.sansBold }}>+{trend}% improving</Text>
       </View>
     );
   }
@@ -23,14 +24,14 @@ const TrendPill = ({ trend }) => {
     return (
       <View className="flex-row items-center gap-1 px-2.5 py-1.5 rounded-full" style={{ backgroundColor: palette.amberSoft }}>
         <TrendingDown size={12} color={palette.amber} />
-        <Text className="text-xs font-bold" style={{ color: palette.amber }}>{trend}% declining</Text>
+        <Text className="text-xs" style={{ color: palette.amber, fontFamily: fonts.sansBold }}>{trend}% declining</Text>
       </View>
     );
   }
   return (
     <View className="flex-row items-center gap-1 px-2.5 py-1.5 rounded-full" style={{ backgroundColor: palette.primarySoft }}>
       <Minus size={12} color={palette.primary} />
-      <Text className="text-xs font-bold" style={{ color: palette.primary }}>Stable</Text>
+      <Text className="text-xs" style={{ color: palette.primary, fontFamily: fonts.sansBold }}>Stable</Text>
     </View>
   );
 };
@@ -44,7 +45,7 @@ export default function OverallProgressCard() {
   if (historyLoading) {
     return (
       <View className="my-2 mb-8">
-        <Text className="text-lg font-bold ml-1 mb-3" style={{ color: palette.ink }}>Overall progress</Text>
+        <Text className="text-lg ml-1 mb-3" style={{ color: palette.ink, fontFamily: fonts.serif }}>Overall progress</Text>
         <Skeleton height={220} borderRadius={20} className="w-full" />
       </View>
     );
@@ -53,13 +54,13 @@ export default function OverallProgressCard() {
   if (!hasData) {
     return (
       <View className="my-2 mb-8">
-        <Text className="text-lg font-bold ml-1 mb-3" style={{ color: palette.ink }}>Overall progress</Text>
+        <Text className="text-lg ml-1 mb-3" style={{ color: palette.ink, fontFamily: fonts.serif }}>Overall progress</Text>
         <View className="rounded-[20px] p-6 items-center border" style={{ backgroundColor: palette.card, borderColor: palette.line }}>
           <View className="rounded-full p-4 mb-3" style={{ backgroundColor: palette.primarySoft }}>
             <Activity size={28} color={palette.primary} />
           </View>
-          <Text className="text-[15px] font-bold mb-1" style={{ color: palette.ink }}>No progress yet</Text>
-          <Text className="text-[13px] text-center mb-4" style={{ color: palette.inkSoft }}>
+          <Text className="text-[15px] mb-1" style={{ color: palette.ink, fontFamily: fonts.sansBold }}>No progress yet</Text>
+          <Text className="text-[13px] text-center mb-4" style={{ color: palette.inkSoft, fontFamily: fonts.sans }}>
             Complete your first exercise to start tracking your overall progress.
           </Text>
           <TouchableOpacity
@@ -67,7 +68,7 @@ export default function OverallProgressCard() {
             className="px-5 py-2.5 rounded-full"
             style={{ backgroundColor: palette.primary }}
           >
-            <Text className="text-white text-[13px] font-bold">Start an exercise</Text>
+            <Text className="text-white text-[13px]" style={{ fontFamily: fonts.sansBold }}>Start an exercise</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -76,14 +77,14 @@ export default function OverallProgressCard() {
 
   return (
     <View className="my-2 mb-8">
-      <Text className="text-lg font-bold ml-1 mb-3" style={{ color: palette.ink }}>Overall progress</Text>
+      <Text className="text-lg ml-1 mb-3" style={{ color: palette.ink, fontFamily: fonts.serif }}>Overall progress</Text>
       <View className="rounded-[20px] p-5 border" style={{ backgroundColor: palette.card, borderColor: palette.line }}>
 
         {/* Average score + trend pill */}
         <View className="flex-row items-start justify-between mb-4">
           <View>
-            <Text className="text-[12px] mb-0.5" style={{ color: palette.inkSoft }}>Average score, last 7 sessions</Text>
-            <Text className="text-[32px] font-bold" style={{ color: scoreTone(overallAverage) }}>
+            <Text className="text-[12px] mb-0.5" style={{ color: palette.inkSoft, fontFamily: fonts.sans }}>Average score, last 7 sessions</Text>
+            <Text style={{ color: scoreTone(overallAverage), fontFamily: fonts.serif, fontSize: 32 }}>
               {overallAverage}%
             </Text>
           </View>
@@ -98,7 +99,7 @@ export default function OverallProgressCard() {
           style={{ backgroundColor: palette.coral }}
         >
           <Play size={15} color="#fff" fill="#fff" />
-          <Text className="text-[14px] font-bold text-white">Do it again</Text>
+          <Text className="text-[14px] text-white" style={{ fontFamily: fonts.sansBold }}>Do it again</Text>
         </TouchableOpacity>
       </View>
     </View>
