@@ -1,8 +1,10 @@
 import React from 'react';
 import { View, Text, ActivityIndicator } from 'react-native';
-import { Calendar } from 'lucide-react-native';
+import { Calendar, TrendingUp, TrendingDown } from 'lucide-react-native';
 import usePatientStore from '../../store/usePatientStore';
 import Skeleton from '../ui/Skeleton';
+import { palette } from '../../constants/palette';
+import { getExerciseVisual } from '../../utils/exerciseVisuals';
 
 export default function HistoryList() {
   const { history, historyLoading, historyError } = usePatientStore();
@@ -10,11 +12,11 @@ export default function HistoryList() {
   if (historyLoading) {
     return (
       <View className="my-2 mb-8">
-        <Text className="text-lg font-bold text-[#191b23] ml-1 mb-3">Past exercises</Text>
+        <Text className="text-lg font-bold ml-1 mb-3" style={{ color: palette.ink }}>Recent activity</Text>
         <View className="flex-col gap-3">
-          <Skeleton height={80} borderRadius={16} className="w-full" />
-          <Skeleton height={80} borderRadius={16} className="w-full" />
-          <Skeleton height={80} borderRadius={16} className="w-full" />
+          <Skeleton height={80} borderRadius={18} className="w-full" />
+          <Skeleton height={80} borderRadius={18} className="w-full" />
+          <Skeleton height={80} borderRadius={18} className="w-full" />
         </View>
       </View>
     );
@@ -23,7 +25,7 @@ export default function HistoryList() {
   if (historyError) {
     return (
       <View className="my-2 mb-6">
-        <Text className="text-sm font-medium text-[#ba1a1a] text-center">Unable to load history</Text>
+        <Text className="text-sm font-medium text-center" style={{ color: palette.amber }}>Unable to load history</Text>
       </View>
     );
   }
@@ -31,9 +33,9 @@ export default function HistoryList() {
   if (!history || history.length === 0) {
     return (
       <View className="my-2 mb-8">
-        <Text className="text-lg font-bold text-[#191b23] ml-1 mb-3">Recent Activity</Text>
+        <Text className="text-lg font-bold ml-1 mb-3" style={{ color: palette.ink }}>Recent activity</Text>
         <View className="p-5">
-          <Text className="text-[14px] font-medium text-[#8a8d9b] text-center">
+          <Text className="text-[14px] font-medium text-center" style={{ color: palette.inkSoft }}>
             No current exercises done yet. Start now!
           </Text>
         </View>
@@ -49,18 +51,19 @@ export default function HistoryList() {
 
   return (
     <View className="my-2 mb-8">
-      <Text className="text-lg font-bold text-[#191b23] ml-1 mb-3">Recent Activity</Text>
+      <Text className="text-lg font-bold ml-1 mb-3" style={{ color: palette.ink }}>Recent activity</Text>
       <View className="flex-col gap-3">
         {history
-          .filter((item, index, self) => 
+          .filter((item, index, self) =>
             // Keep only the first occurrence of each exercise_id
             index === self.findIndex((t) => t.exercise_id === item.exercise_id)
           )
           .slice(0, 3)
           .map((item, index) => {
             const score = Math.round(Number(item.latest_form_score) || 0);
-            const tone = score >= 85 ? '#4CAF50' : score >= 60 ? '#FFC107' : '#FF5252';
-            
+            const visual = getExerciseVisual(item.exercise_name);
+            const Icon = visual.icon;
+
             // Find the index in the original history array
             const historyIndex = history.findIndex(h => h.id === item.id);
             const prevItem = item.exercise_id && historyIndex !== -1
@@ -71,34 +74,48 @@ export default function HistoryList() {
               const prevScoreRounded = Math.round(Number(prevItem.latest_form_score) || 0);
               const diff = score - prevScoreRounded;
               if (diff > 0) {
-                diffElement = <Text className="text-[#4CAF50] text-xs font-bold mt-0.5">+{diff}% better on average</Text>;
+                diffElement = (
+                  <View className="flex-row items-center gap-1 mt-0.5">
+                    <TrendingUp size={12} color={palette.sage} />
+                    <Text className="text-xs font-bold" style={{ color: palette.sage }}>+{diff}% better on average</Text>
+                  </View>
+                );
               } else if (diff < 0) {
-                diffElement = <Text className="text-[#FF5252] text-xs font-bold mt-0.5">{Math.abs(diff)}% less on average</Text>;
+                diffElement = (
+                  <View className="flex-row items-center gap-1 mt-0.5">
+                    <TrendingDown size={12} color={palette.amber} />
+                    <Text className="text-xs font-bold" style={{ color: palette.amber }}>{Math.abs(diff)}% less on average</Text>
+                  </View>
+                );
               } else {
-                diffElement = <Text className="text-[#8a8d9b] text-xs font-bold mt-0.5">Same as before</Text>;
+                diffElement = <Text className="text-xs font-bold mt-0.5" style={{ color: palette.inkSoft }}>Same as before</Text>;
               }
             }
-            
+
             return (
             <View
               key={item.id || index}
-              className="w-full flex-row items-center justify-between p-4 bg-white border border-[#e7e7f2] rounded-2xl shadow-sm"
+              className="w-full flex-row items-center gap-3.5 p-4 rounded-[18px] border"
+              style={{ backgroundColor: palette.card, borderColor: palette.line }}
             >
+              <View className="w-11 h-11 rounded-xl items-center justify-center" style={{ backgroundColor: visual.soft }}>
+                <Icon size={20} color={visual.color} />
+              </View>
               <View className="flex-1 pr-3">
-                <Text className="text-[16px] font-bold text-[#191b23] flex-wrap leading-tight mb-1">{item.exercise_name}</Text>
+                <Text className="text-[15px] font-bold flex-wrap leading-tight mb-1" style={{ color: palette.ink }}>{item.exercise_name}</Text>
                 <View className="flex-row items-center gap-1.5 mb-1">
-                  <Calendar size={14} color="#8a8d9b" />
-                  <Text className="text-[14px] font-medium text-[#8a8d9b]">
+                  <Calendar size={14} color={palette.inkSoft} />
+                  <Text className="text-[12px] font-medium" style={{ color: palette.inkSoft }}>
                     {formatDate(item.created_at)}
                   </Text>
                 </View>
                 {diffElement}
               </View>
-              <View className="items-end pl-2 border-l border-[#e7e7f2]">
-                <Text className="text-2xl font-black" style={{ color: tone }}>
-                  {score}%
+              <View className="items-end">
+                <Text className="font-bold text-[22px] leading-none" style={{ color: palette.ink }}>
+                  {score}
                 </Text>
-                <Text className="text-[10px] font-bold text-[#8a8d9b] mt-0.5 uppercase tracking-wider">
+                <Text className="text-[9px] font-bold mt-0.5 uppercase tracking-wider" style={{ color: palette.inkSoft }}>
                   Score
                 </Text>
               </View>

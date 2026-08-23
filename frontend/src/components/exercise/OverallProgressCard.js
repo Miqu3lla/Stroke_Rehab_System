@@ -1,36 +1,36 @@
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
-import { TrendingUp, TrendingDown, Minus, Activity } from 'lucide-react-native';
+import { TrendingUp, TrendingDown, Minus, Activity, Play } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 import usePatientStore from '../../store/usePatientStore';
 import useOverallProgress from '../../hooks/useOverallProgress';
+import useWeeklyScores from '../../hooks/useWeeklyScores';
+import WeeklyScoreChart from './WeeklyScoreChart';
 import Skeleton from '../ui/Skeleton';
+import { palette, scoreTone } from '../../constants/palette';
 
-const ScoreColor = (score) =>
-  score >= 85 ? '#4CAF50' : score >= 60 ? '#FFC107' : '#FF5252';
-
-
-const TrendBadge = ({ trend }) => {
+// Trend pill — sage/amber/neutral, matches the redesign's .pill.stable style.
+const TrendPill = ({ trend }) => {
   if (trend > 0) {
     return (
-      <View className="flex-row items-center gap-1 bg-[#e8f5e9] px-2 py-1 rounded-full">
-        <TrendingUp size={12} color="#4CAF50" />
-        <Text className="text-[#4CAF50] text-xs font-bold">+{trend}% improving!!</Text>
+      <View className="flex-row items-center gap-1 px-2.5 py-1.5 rounded-full" style={{ backgroundColor: palette.sageSoft }}>
+        <TrendingUp size={12} color={palette.sage} />
+        <Text className="text-xs font-bold" style={{ color: palette.sage }}>+{trend}% improving</Text>
       </View>
     );
   }
   if (trend < 0) {
     return (
-      <View className="flex-row items-center gap-1 bg-[#ffebee] px-2 py-1 rounded-full">
-        <TrendingDown size={12} color="#FF5252" />
-        <Text className="text-[#FF5252] text-xs font-bold">{trend}% declining</Text>
+      <View className="flex-row items-center gap-1 px-2.5 py-1.5 rounded-full" style={{ backgroundColor: palette.amberSoft }}>
+        <TrendingDown size={12} color={palette.amber} />
+        <Text className="text-xs font-bold" style={{ color: palette.amber }}>{trend}% declining</Text>
       </View>
     );
   }
   return (
-    <View className="flex-row items-center gap-1 bg-[#f0f0f5] px-2 py-1 rounded-full">
-      <Minus size={12} color="#8a8d9b" />
-      <Text className="text-[#8a8d9b] text-xs font-bold">Stable</Text>
+    <View className="flex-row items-center gap-1 px-2.5 py-1.5 rounded-full" style={{ backgroundColor: palette.primarySoft }}>
+      <Minus size={12} color={palette.primary} />
+      <Text className="text-xs font-bold" style={{ color: palette.primary }}>Stable</Text>
     </View>
   );
 };
@@ -38,13 +38,14 @@ const TrendBadge = ({ trend }) => {
 export default function OverallProgressCard() {
   const { history, historyLoading } = usePatientStore();
   const { overallAverage, trend, hasData } = useOverallProgress(history);
+  const weeklyDays = useWeeklyScores(history);
   const navigation = useNavigation();
 
   if (historyLoading) {
     return (
       <View className="my-2 mb-8">
-        <Text className="text-lg font-bold text-[#191b23] ml-1 mb-3">Overall Progress</Text>
-        <Skeleton height={200} borderRadius={16} className="w-full" />
+        <Text className="text-lg font-bold ml-1 mb-3" style={{ color: palette.ink }}>Overall progress</Text>
+        <Skeleton height={220} borderRadius={20} className="w-full" />
       </View>
     );
   }
@@ -52,18 +53,19 @@ export default function OverallProgressCard() {
   if (!hasData) {
     return (
       <View className="my-2 mb-8">
-        <Text className="text-lg font-bold text-[#191b23] ml-1 mb-3">Overall Progress</Text>
-        <View className="bg-white border border-[#e7e7f2] rounded-2xl shadow-sm p-6 items-center">
-          <View className="bg-[#f0f0f5] rounded-full p-4 mb-3">
-            <Activity size={28} color="#8a8d9b" />
+        <Text className="text-lg font-bold ml-1 mb-3" style={{ color: palette.ink }}>Overall progress</Text>
+        <View className="rounded-[20px] p-6 items-center border" style={{ backgroundColor: palette.card, borderColor: palette.line }}>
+          <View className="rounded-full p-4 mb-3" style={{ backgroundColor: palette.primarySoft }}>
+            <Activity size={28} color={palette.primary} />
           </View>
-          <Text className="text-[15px] font-bold text-[#191b23] mb-1">No progress yet</Text>
-          <Text className="text-[13px] text-[#8a8d9b] text-center mb-4">
+          <Text className="text-[15px] font-bold mb-1" style={{ color: palette.ink }}>No progress yet</Text>
+          <Text className="text-[13px] text-center mb-4" style={{ color: palette.inkSoft }}>
             Complete your first exercise to start tracking your overall progress.
           </Text>
           <TouchableOpacity
             onPress={() => navigation.navigate('Sessions')}
-            className="bg-[#191b23] px-5 py-2.5 rounded-full"
+            className="px-5 py-2.5 rounded-full"
+            style={{ backgroundColor: palette.primary }}
           >
             <Text className="text-white text-[13px] font-bold">Start an exercise</Text>
           </TouchableOpacity>
@@ -72,32 +74,31 @@ export default function OverallProgressCard() {
     );
   }
 
-  const scoreColor = ScoreColor(overallAverage);
-
   return (
     <View className="my-2 mb-8">
-      <Text className="text-lg font-bold text-[#191b23] ml-1 mb-3">Overall Progress</Text>
-      <View className="bg-white border border-[#e7e7f2] rounded-2xl shadow-sm p-4">
+      <Text className="text-lg font-bold ml-1 mb-3" style={{ color: palette.ink }}>Overall progress</Text>
+      <View className="rounded-[20px] p-5 border" style={{ backgroundColor: palette.card, borderColor: palette.line }}>
 
-        {/* Average score + trend badge */}
-        <View className="flex-row items-center justify-between mb-4">
+        {/* Average score + trend pill */}
+        <View className="flex-row items-start justify-between mb-4">
           <View>
-            <Text className="text-[13px] font-medium text-[#8a8d9b] mb-0.5">Average score</Text>
-            <Text className="text-5xl font-black" style={{ color: scoreColor }}>
+            <Text className="text-[12px] mb-0.5" style={{ color: palette.inkSoft }}>Average score, last 7 sessions</Text>
+            <Text className="text-[32px] font-bold" style={{ color: scoreTone(overallAverage) }}>
               {overallAverage}%
             </Text>
           </View>
-          <TrendBadge trend={trend} />
+          <TrendPill trend={trend} />
         </View>
 
-        <View className="h-px bg-[#e7e7f2] mb-3" />
+        <WeeklyScoreChart days={weeklyDays} />
 
         <TouchableOpacity
           onPress={() => navigation.navigate('Sessions')}
-          className="flex-row items-center justify-center gap-1.5 bg-[#f0f0f5] py-2.5 rounded-xl"
+          className="flex-row items-center justify-center gap-2 py-3.5 rounded-2xl mt-4"
+          style={{ backgroundColor: palette.coral }}
         >
-          <Activity size={13} color="#191b23" />
-          <Text className="text-[13px] font-bold text-[#191b23]">Do it again</Text>
+          <Play size={15} color="#fff" fill="#fff" />
+          <Text className="text-[14px] font-bold text-white">Do it again</Text>
         </TouchableOpacity>
       </View>
     </View>
