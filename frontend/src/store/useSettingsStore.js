@@ -94,9 +94,33 @@ const useSettingsStore = create(
   )
 );
 
+// Reconcile the OS-level schedule to whichever patient's state just loaded -
+// runs after cold-start hydration AND after the manual rehydrate() below, so
+// a switched-in patient's reminders actually get (re)scheduled, not just
+// shown as "on" in the UI. Silently turns a toggle back off if permission
+// isn't granted for this device/patient, rather than lying about it.
+useSettingsStore.persist.onFinishHydration(async (state) => {
+  const updates = {};
+
+  if (state.sessionReminders) {
+    if (await ensureNotificationPermission()) await scheduleSessionReminder();
+    else updates.sessionReminders = false;
+  } else {
+    await cancelSessionReminder().catch(() => {});
+  }
+
+  if (state.progressRecap) {
+    if (await ensureNotificationPermission()) await scheduleProgressRecap();
+    else updates.progressRecap = false;
+  } else {
+    await cancelProgressRecap().catch(() => {});
+  }
+
+  if (Object.keys(updates).length) useSettingsStore.setState(updates);
+});
+
 // Only react to an actual user-id change, not every token refresh - reset
-// + rehydrate from the new patient's scoped key, and cancel any pending
-// reminder since its identifier isn't patient-scoped.
+// then rehydrate from the new patient's scoped key (triggers the sync above).
 let lastUserId;
 supabase.auth.onAuthStateChange((_event, session) => {
   const nextUserId = session?.user?.id ?? null;
@@ -108,8 +132,6 @@ supabase.auth.onAuthStateChange((_event, session) => {
   lastUserId = nextUserId;
 
   useSettingsStore.setState({ sessionReminders: false, progressRecap: false, textScale: 'base' });
-  cancelSessionReminder().catch(() => {});
-  cancelProgressRecap().catch(() => {});
   useSettingsStore.persist.rehydrate();
 });
 
