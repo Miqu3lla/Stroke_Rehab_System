@@ -1,6 +1,7 @@
 import React, { useEffect, useCallback, useRef } from 'react';
 import { View, Text, TouchableOpacity, Alert } from 'react-native';
 import { ChevronLeft } from 'lucide-react-native';
+import { useKeepAwake } from 'expo-keep-awake';
 import CameraComponent from '../components/exercise/CameraComponent';
 import RestState from '../components/exercise/RestState';
 import useAuthStore from '../store/useAuthStore';
@@ -12,6 +13,12 @@ import useSessionStore from '../store/useSessionStore';
 const ExerciseScreen = ({ navigation }) => {
   const { getAuthSession } = useAuthStore();
   const { session, saveCurrentScore, moveToNext, endSession } = useSessionStore();
+
+  // Keep the screen awake for the entire session so the camera feed
+  // and pose-tracking don't get interrupted by the device's auto-lock.
+  // The wake lock is released automatically when this screen unmounts.
+  useKeepAwake();
+
 
   const playlist = session.playlist || [];
   const currentIndex = session.currentIndex || 0;

@@ -34,7 +34,7 @@ export default function Navbar({ title, currentRoute, children, navigationRef })
 
   const insets = useSafeAreaInsets();
 
-  const hideNavbar = !session || currentRoute === "Onboarding" || currentRoute === "Login" || currentRoute === "Signup" || currentRoute === "PatientProfile" || currentRoute === "Exercise";
+  const hideNavbar = !session || currentRoute === "Onboarding" || currentRoute === "Login" || currentRoute === "Signup" || currentRoute === "PatientProfile" || currentRoute === "Exercise" || currentRoute === "SessionSummary";
 
   return (
     <View className="flex-1" style={{ backgroundColor: palette.canvas }}>
