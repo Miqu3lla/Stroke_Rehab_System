@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import shutil
 import subprocess
 from typing import Any, Dict, List, Optional
@@ -241,18 +242,25 @@ def pick_exercises_for_action(
 ) -> List[Dict[str, Any]]:
     """Select up to `count` exercises for the patient's daily session.
 
-    Body-area rules (enforced strictly):
-      - affected_area='arms' → ONLY arm exercises, never a leg
-      - affected_area='legs' → ONLY leg exercises, never an arm
+    Body-area rules:
+      - affected_area='arms' → (count-1) arm exercises (difficulty-ranked)
+        + 1 leg exercise picked at random, for variety. 2026-08-23: was
+        arms-only; a single cross-body exercise keeps the plan from
+        feeling repetitive without diluting the affected-area focus.
+      - affected_area='legs' → mirrored: (count-1) legs + 1 random arm.
       - affected_area='both' → INTERLEAVE arm + leg (slot 0 = arm,
         slot 1 = leg, …) so the patient gets a guaranteed mix.
         If one pool runs out, the remaining slots are filled from the
         other pool — still without duplication.
+      - count < 2 → no room for a bonus slot; falls back to the old
+        strict same-area-only selection.
 
     Difficulty rules (within each body-area pool):
       - downgrade → easier first (lower difficulty_level)
       - upgrade → harder first
       - maintain → mid-difficulty first
+    The random cross-area pick ignores difficulty ranking on purpose —
+    it's there for engagement, not trajectory-driven progression.
 
     Duplicate rule (applies to ALL branches): an exercise is never
     repeated within the returned list. If the available unique pool is
@@ -294,8 +302,18 @@ def pick_exercises_for_action(
                     i_arm += 1
         return picked[:count]
 
-    # ── Single body-area patient: STRICT filter, unique only ────────────
-    # Only return unique exercises — no duplicates even if catalog is small.
-    # The frontend will show however many are available (up to count).
+    # ── Single body-area patient: mostly same-area + 1 random cross-area ─
+    other_area = "legs" if area == "arms" else "arms" if area == "legs" else None
+    if other_area is not None and count >= 2:
+        primary = _rank_for_action(filter_by_area(catalog, area), action)[: count - 1]
+        cross_pool = filter_by_area(catalog, other_area)
+        if cross_pool:
+            return primary + [random.choice(cross_pool)]
+        # No cross-area exercises available (data gap) — better to fill
+        # the plan than short it by one.
+        return _rank_for_action(filter_by_area(catalog, area), action)[:count]
+
+    # count < 2, or an unrecognized area string: STRICT same-area filter,
+    # unique only. The frontend will show however many are available.
     ranked = _rank_for_action(filter_by_area(catalog, area), action)
     return ranked[:count]
