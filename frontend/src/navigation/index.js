@@ -79,7 +79,11 @@ const AppNavigator = () => {
       <Stack.Screen name="ResetPassword"  component={ResetPasswordScreen} />
       <Stack.Screen name="Onboarding"     component={OnboardingScreen} />
 
-      {/* Tab screens — directional slide based on navbar direction param */}
+      {/* Tab screens — directional slide based on navbar direction param.
+          Navbar navigates here with { pop: true } (StackRouter's NAVIGATE
+          pop option) so switching back to an already-visited tab actually
+          pops+unmounts what's above it, instead of plain navigate()'s
+          default of pushing a brand new instance every time. */}
       <Stack.Screen
         name="Dashboard"
         component={HomeScreen}
