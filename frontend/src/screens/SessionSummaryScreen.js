@@ -63,7 +63,7 @@ const SessionSummaryScreen = ({ route, navigation }) => {
     >
       {/* Header */}
       <Text
-        style={{ fontFamily: fonts.serif, fontSize: 34, color: palette.ink, marginTop: 16, marginBottom: 4 }}
+        style={{ fontFamily: fonts.serif, fontSize: 34, color: palette.ink, marginTop: 70, marginBottom: 4 }}
       >
         Session Complete
       </Text>
