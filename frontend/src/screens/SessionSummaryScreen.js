@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
 import { CheckCircle2, XCircle, AlertTriangle, TrendingUp, TrendingDown } from 'lucide-react-native';
 import usePatientStore from '../store/usePatientStore';
 import useSessionStore from '../store/useSessionStore';
-import { supabase } from '../services/supabase';
+import usePreviousScores from '../hooks/usePreviousScores';
 import { palette, scoreTone } from '../constants/palette';
 import { fonts } from '../constants/fonts';
 
@@ -44,7 +44,7 @@ const SessionSummaryScreen = ({ route, navigation }) => {
     navigation.reset({ index: 0, routes: [{ name: 'Dashboard' }] });
   };
 
-  const [previousScores, setPreviousScores] = useState({});
+  const { previousScores } = usePreviousScores(session.sessionId);
 
   // If there's no active workout session, send the user back to the dashboard
   useEffect(() => {
@@ -52,46 +52,6 @@ const SessionSummaryScreen = ({ route, navigation }) => {
       navigation.reset({ index: 0, routes: [{ name: 'Dashboard' }] });
     }
   }, []);
-
-  // Fetch previous scores for comparison
-  useEffect(() => {
-    const fetchPreviousScores = async () => {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return;
-
-        const { data, error } = await supabase
-          .from('recommendation_logs')
-          .select('latest_form_score, recommendation, created_at')
-          .eq('patient_id', user.id)
-          .gt('latest_form_score', 0)
-          .order('created_at', { ascending: false });
-
-        if (error) throw error;
-
-        const prev = {};
-        for (const row of data) {
-          const rec = row.recommendation;
-          if (!rec) continue;
-          
-          // Skip the session we literally just completed
-          if (rec.session_id === session.sessionId) continue;
-          
-          const exId = rec.recommendation_id;
-          if (exId && prev[exId] === undefined) {
-             prev[exId] = row.latest_form_score;
-          }
-        }
-        setPreviousScores(prev);
-      } catch (err) {
-        console.error("Failed to fetch previous scores:", err);
-      }
-    };
-
-    if (session.sessionId) {
-      fetchPreviousScores();
-    }
-  }, [session.sessionId]);
 
   const overallTone = scoreTone(overallScore);
   const overallToneSoft = overallScore >= 70 ? palette.sageSoft : palette.amberSoft;
