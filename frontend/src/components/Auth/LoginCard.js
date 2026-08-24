@@ -4,7 +4,6 @@ import useAuthStore from '../../store/useAuthStore';
 import AuthBrandHeader from './AuthBrandHeader';
 import AuthTextInput from './AuthTextInput';
 import AuthPrimaryButton from './AuthPrimaryButton';
-import AuthBadgeRow from './AuthBadgeRow';
 import { palette } from '../../constants/palette';
 import { fonts } from '../../constants/fonts';
 
@@ -52,8 +51,6 @@ export default function LoginCard({ navigation }) {
         disabled={loading}
         loading={loading}
       />
-
-      <AuthBadgeRow />
 
       <TouchableOpacity className="mt-6 items-center" onPress={() => navigation.replace('Signup')} disabled={loading}>
         <Text style={{ color: palette.inkSoft, fontFamily: fonts.sans, fontSize: 13.5 }}>

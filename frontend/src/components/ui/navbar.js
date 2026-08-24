@@ -86,7 +86,10 @@ export default function Navbar({ title, currentRoute, children, navigationRef })
               const fromIdx = ROUTE_ORDER[currentRoute] ?? 0;
               const toIdx   = ROUTE_ORDER[route]        ?? 0;
               const direction = toIdx > fromIdx ? 'left' : 'right';
-              navigationRef?.navigate(route, { direction });
+              // pop: true - if `route` is already deeper in the stack, pop back to
+              // it (unmounting whatever's above) instead of pushing a new instance
+              // on top every tap, which piled up unbounded mounted screens.
+              navigationRef?.navigate(route, { direction }, { pop: true });
             };
             return (
               <Pressable

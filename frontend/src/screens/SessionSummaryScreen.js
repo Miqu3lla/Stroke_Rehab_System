@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
 import { CheckCircle2, XCircle, AlertTriangle, TrendingUp, TrendingDown } from 'lucide-react-native';
 import usePatientStore from '../store/usePatientStore';
 import useSessionStore from '../store/useSessionStore';
-import { supabase } from '../services/supabase';
+import usePreviousScores from '../hooks/usePreviousScores';
 import { palette, scoreTone } from '../constants/palette';
 import { fonts } from '../constants/fonts';
 
@@ -39,57 +39,19 @@ const SessionSummaryScreen = ({ route, navigation }) => {
     // so the dashboard is up-to-date when they go back. force:true bypasses
     // the query cache since the recommendation genuinely changed server-side.
     fetchRecommendation({ force: true });
-    navigation.replace('Dashboard');
+    // reset (not replace) so the Dashboard/Sessions screens buried under this
+    // one actually unmount, instead of piling up as ghost instances every workout.
+    navigation.reset({ index: 0, routes: [{ name: 'Dashboard' }] });
   };
 
-  const [previousScores, setPreviousScores] = useState({});
+  const { previousScores } = usePreviousScores(session.sessionId);
 
   // If there's no active workout session, send the user back to the dashboard
   useEffect(() => {
     if (!session.sessionId && (!session.playlist || session.playlist.length === 0)) {
-      navigation.replace('Dashboard');
+      navigation.reset({ index: 0, routes: [{ name: 'Dashboard' }] });
     }
   }, []);
-
-  // Fetch previous scores for comparison
-  useEffect(() => {
-    const fetchPreviousScores = async () => {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return;
-
-        const { data, error } = await supabase
-          .from('recommendation_logs')
-          .select('latest_form_score, recommendation, created_at')
-          .eq('patient_id', user.id)
-          .gt('latest_form_score', 0)
-          .order('created_at', { ascending: false });
-
-        if (error) throw error;
-
-        const prev = {};
-        for (const row of data) {
-          const rec = row.recommendation;
-          if (!rec) continue;
-          
-          // Skip the session we literally just completed
-          if (rec.session_id === session.sessionId) continue;
-          
-          const exId = rec.recommendation_id;
-          if (exId && prev[exId] === undefined) {
-             prev[exId] = row.latest_form_score;
-          }
-        }
-        setPreviousScores(prev);
-      } catch (err) {
-        console.error("Failed to fetch previous scores:", err);
-      }
-    };
-
-    if (session.sessionId) {
-      fetchPreviousScores();
-    }
-  }, [session.sessionId]);
 
   const overallTone = scoreTone(overallScore);
   const overallToneSoft = overallScore >= 70 ? palette.sageSoft : palette.amberSoft;
@@ -101,7 +63,7 @@ const SessionSummaryScreen = ({ route, navigation }) => {
     >
       {/* Header */}
       <Text
-        style={{ fontFamily: fonts.serif, fontSize: 34, color: palette.ink, marginTop: 16, marginBottom: 4 }}
+        style={{ fontFamily: fonts.serif, fontSize: 34, color: palette.ink, marginTop: 70, marginBottom: 4 }}
       >
         Session Complete
       </Text>

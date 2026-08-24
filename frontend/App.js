@@ -43,42 +43,49 @@ export default function App() {
   }
 
   const user = useAuthStore((state) => state.user)
-//useEffect to track the user status when active 
+  // Key off the id, not the object - session.user is a fresh reference on
+  // every getAuthSession() call, so keying on `user` itself was tearing down
+  // and reopening this channel on every screen remount, not just real login changes.
+  const userId = user?.id
+//useEffect to track the user status when active
   useEffect(() => {
-    if (!user) return 
+    if (!userId) return
     //creates a channel
     const presenceChannel = supabase.channel('tracking')
 
     let appStateSubscription;
+    // Subscribe's callback resolves async - if cleanup already ran by then
+    // (e.g. another rapid nav), skip so we don't register a listener nothing will ever remove.
+    let cancelled = false;
 
     //Subscribes to presence events in the channel
     presenceChannel.subscribe(async(status) => {
       console.log("Websocket Status: ", status)
       //if the user exists
-      if (status == 'SUBSCRIBED') {
+      if (status == 'SUBSCRIBED' && !cancelled) {
         try {
           await presenceChannel.track({
-            patient_id: user.id,
+            patient_id: userId,
             status: "Active",
             updated_at: new Date().toISOString()
           })
         } catch (error) {
           console.error("Error tracking presence:", error)
         }
-        
+
         //checks for when the user comes back to the app via eventListener on change
         appStateSubscription = AppState.addEventListener('change', async (nextAppState) => {
           if (nextAppState === 'background' || nextAppState === 'inactive') {
             try {
               await presenceChannel.untrack()
-              console.log('tracking ended for user:', user.id)
+              console.log('tracking ended for user:', userId)
             } catch (error) {
               console.error("Error untracking presence:", error)
             }
           } else if (nextAppState === 'active') {
             try {
               await presenceChannel.track({
-                patient_id: user.id,
+                patient_id: userId,
                 status: "Active",
                 updated_at: new Date().toISOString()
               })
@@ -93,12 +100,13 @@ export default function App() {
 
     //cleanup when user logs out or app closes
     return () => {
+      cancelled = true;
       if (appStateSubscription) {
         appStateSubscription.remove();
       }
       supabase.removeChannel(presenceChannel)
     }
-  }, [user])
+  }, [userId])
 
   // Same pattern as AppNavigator's user===null guard — render nothing
   // until the redesign's fonts are ready rather than flashing fallback text.
