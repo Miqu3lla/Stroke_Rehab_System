@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import useCamera from '../../hooks/useCamera';
 import SkeletonOverlay from './SkeletonOverlay';
+import SkeletonLegend from './SkeletonLegend';
 import BeforeYouStart from './BeforeYouStart';
 import BreakScreen from './BreakScreen';
 import ExerciseInfoCard from './ExerciseInfoCard';
@@ -151,6 +152,8 @@ export default function CameraComponent({ exercise, onComplete }) {
       {/* ── Active-set HUD — hidden when between sets ── */}
       {isExercising && !isBetweenSets && (
         <>
+          <SkeletonLegend />
+
           <ExerciseInfoCard
             exercise={exercise}
             currentSetIndex={currentSetIndex}

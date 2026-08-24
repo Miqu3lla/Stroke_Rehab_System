@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { StyleSheet } from 'react-native';
 import Svg, { Line, Circle } from 'react-native-svg';
 import { isArmExercise, isLegExercise } from '../../utils/repCounter';
+import { palette } from '../../constants/palette';
 
 // MediaPipe Pose connections — pairs of keypoint indices to draw as bones
 const CONNECTIONS = [
@@ -25,42 +26,44 @@ const SEGMENT_MAP = {
   LEG_RIGHT: new Set(['24-26', '26-28']),
 };
 
-// Cyan baseline matches the physiotherapy reference style; traffic-light colours override active segments.
-const NEUTRAL = 'rgba(0, 229, 255, 0.75)';
-// 0.4 is the rendering floor — server-side MediaPipe Pose already rejects
-// background false-positives at the inference level, so a strict threshold
-// here only hides valid joints in typical indoor lighting.
+
+// White so the untracked rest-of-skeleton stays legible instead of blending into the app palette.
+const NEUTRAL = '#FFFFFF';
+const NEUTRAL_OPACITY = 0.8;
+// 0.4 is the rendering floor — MediaPipe already rejects background
+// false-positives server-side, so stricter here would just hide valid joints.
 const MIN_CONFIDENCE = 0.4;
 
-// Phase 3: 60 FPS skeleton interpolation. The WS delivers pose updates at
-// ~8-12 FPS — without smoothing the skeleton visibly steps between frames.
-// We LERP each keypoint toward the latest WS value every animation frame so
-// the rendered skeleton glides at 60 FPS even though the underlying data
-// rate hasn't changed.
-//
-// Smoothing factor 0.45 means we close 45% of the remaining gap to the
-// target each frame. At 60 FPS that catches up ~97% within ~100ms — which
-// is roughly one WS interval — so visible lag is minimal and the motion
-// reads as continuous. Lower values (0.2-0.3) feel slow; higher (0.6+)
-// reintroduce the stepping we're trying to hide.
+
+const BAND_COLOR_MAP = {
+  '#4CAF50': palette.sage,
+  '#FFC107': palette.amber,
+  '#F44336': palette.danger,
+  '#888888': NEUTRAL,
+};
+function mapBandColor(hex) {
+  if (!hex) return null;
+  return BAND_COLOR_MAP[hex.toUpperCase()] ?? hex;
+}
+
+// WS pose updates land at ~8-12 FPS; without smoothing the skeleton visibly
+// steps between frames. We LERP position every animation frame toward the
+// latest WS value so it renders at 60 FPS. 0.45 closes ~97% of the gap
+// within ~100ms (about one WS interval) without feeling laggy or twitchy.
 const SMOOTHING_FACTOR = 0.45;
-// Below this distance from target we stop animating and snap, so the RAF
-// loop isn't spinning forever on sub-pixel deltas after the target settles.
+// Below this distance we snap instead of animating, so the RAF loop isn't
+// spinning on sub-pixel deltas forever.
 const SNAP_DISTANCE_PX = 0.5;
 
-// Hook: takes the raw keypoints from props (updates ~10x/sec from the
-// pose WS) and returns smoothed keypoints that update at 60 FPS via
-// requestAnimationFrame. The render uses these instead of the raw prop.
+// Takes raw WS keypoints and returns the same list smoothed to 60 FPS via RAF.
 function useSmoothedKeypoints(rawKeypoints) {
   const targetRef = useRef([]);
   const displayedRef = useRef([]);
   const rafRef = useRef(null);
   const [, forceRender] = useState(0);
 
-  // Whenever the WS delivers fresh keypoints, set them as the new target
-  // for the interpolation loop. If we don't have any displayed values
-  // yet (first frame, or after a reset), snap immediately rather than
-  // animating from (0, 0) — that would cause an ugly fly-in.
+  // New WS keypoints become the interpolation target. Snap immediately (no
+  // fly-in from origin) on the first frame or after a reset.
   useEffect(() => {
     if (!Array.isArray(rawKeypoints) || rawKeypoints.length === 0) {
       targetRef.current = [];
@@ -75,10 +78,7 @@ function useSmoothedKeypoints(rawKeypoints) {
     }
   }, [rawKeypoints]);
 
-  // The 60 FPS animation loop. Mounted once; tears down on unmount. We
-  // run it always (not gated on isExercising) because gating would need
-  // extra props plumbing and the cost of an idle loop with no keypoints
-  // is negligible — it short-circuits within microseconds.
+  // Runs for the component's lifetime; short-circuits cheaply when idle.
   useEffect(() => {
     let cancelled = false;
 
@@ -99,12 +99,8 @@ function useSmoothedKeypoints(rawKeypoints) {
           }
           const dx = t.x - d.x;
           const dy = t.y - d.y;
-          // Track confidence delta too — a joint whose position has
-          // already settled but whose MediaPipe visibility dropped
-          // below MIN_CONFIDENCE still needs the overlay to repaint
-          // and hide that bone. The old code only checked dx/dy, so
-          // stale visibility could keep a phantom bone drawn until
-          // the joint moved again.
+          // A joint can settle positionally but still need a repaint if its
+          // MediaPipe confidence crossed MIN_CONFIDENCE (hides/shows a bone).
           const scoreChanged = Math.abs((d.score || 0) - (t.score || 0)) > 0.01;
           if (Math.abs(dx) < SNAP_DISTANCE_PX && Math.abs(dy) < SNAP_DISTANCE_PX) {
             next[i] = { x: t.x, y: t.y, z: t.z, score: t.score };
@@ -116,9 +112,8 @@ function useSmoothedKeypoints(rawKeypoints) {
             x: d.x + dx * SMOOTHING_FACTOR,
             y: d.y + dy * SMOOTHING_FACTOR,
             z: t.z,
-            // Use the target's confidence directly — interpolating a
-            // probability would just produce a confidence value the
-            // server never returned.
+            // Use the target's confidence directly - interpolating a
+            // probability would produce a value the server never returned.
             score: t.score,
           };
         }
@@ -140,6 +135,63 @@ function useSmoothedKeypoints(rawKeypoints) {
   return displayedRef.current;
 }
 
+function hexToRgb(hex) {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex || '');
+  if (!m) return null;
+  return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
+}
+
+function rgbToHex([r, g, b]) {
+  const c = (n) => Math.round(Math.max(0, Math.min(255, n))).toString(16).padStart(2, '0');
+  return `#${c(r)}${c(g)}${c(b)}`;
+}
+
+// Same RAF-LERP approach as useSmoothedKeypoints, applied to color channels
+// instead of position - an instant green/amber/red snap read as raw sensor
+// output, this makes band changes feel like an intentional UI response.
+function useSmoothedColor(targetHex) {
+  const fallback = hexToRgb(targetHex) || [0, 0, 0];
+  const displayedRef = useRef(fallback);
+  const targetRef = useRef(fallback);
+  const rafRef = useRef(null);
+  const [, forceRender] = useState(0);
+
+  useEffect(() => {
+    const rgb = hexToRgb(targetHex);
+    if (rgb) targetRef.current = rgb;
+  }, [targetHex]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const tick = () => {
+      if (cancelled) return;
+      const d = displayedRef.current;
+      const t = targetRef.current;
+      const delta = [t[0] - d[0], t[1] - d[1], t[2] - d[2]];
+      if (delta.some((v) => Math.abs(v) > 0.5)) {
+        displayedRef.current = [
+          d[0] + delta[0] * SMOOTHING_FACTOR,
+          d[1] + delta[1] * SMOOTHING_FACTOR,
+          d[2] + delta[2] * SMOOTHING_FACTOR,
+        ];
+        forceRender((n) => n + 1);
+      } else if (d !== t && (d[0] !== t[0] || d[1] !== t[1] || d[2] !== t[2])) {
+        displayedRef.current = t;
+        forceRender((n) => n + 1);
+      }
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => {
+      cancelled = true;
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    };
+  }, []);
+
+  return rgbToHex(displayedRef.current);
+}
+
 export default function SkeletonOverlay({
   keypoints,
   jointColors,
@@ -150,9 +202,11 @@ export default function SkeletonOverlay({
   affectedSide = 'right',
   exerciseType = '',
 }) {
-  // Smoothed keypoints update at 60 FPS via the RAF loop above; raw
-  // `keypoints` only changes when the WS delivers a new pose result.
+  // Smoothed keypoints/colors update at 60 FPS via RAF; raw props only
+  // change when the WS delivers a new pose result.
   const smoothedKeypoints = useSmoothedKeypoints(keypoints);
+  const bicepColor = useSmoothedColor(mapBandColor(jointColors?.bicepCurl) ?? NEUTRAL);
+  const kneeColor = useSmoothedColor(mapBandColor(jointColors?.kneeFlexion) ?? NEUTRAL);
 
   if (
     !smoothedKeypoints?.length ||
@@ -160,9 +214,8 @@ export default function SkeletonOverlay({
     !imageWidth || !imageHeight
   ) return null;
 
-  // The camera preview uses "cover" mode: the photo is scaled up and cropped
-  // to fill the view. We must apply the same transform to the keypoints so
-  // the skeleton aligns with what the user sees on screen.
+  // Camera preview uses "cover" mode (scaled + cropped to fill the view) -
+  // apply the same transform to keypoints so the skeleton lines up on screen.
   const scale = Math.max(viewWidth / imageWidth, viewHeight / imageHeight);
   const offsetX = (viewWidth - imageWidth * scale) / 2;
   const offsetY = (viewHeight - imageHeight * scale) / 2;
@@ -172,48 +225,44 @@ export default function SkeletonOverlay({
     if (!kp || (kp.score ?? kp.confidence ?? 0) < MIN_CONFIDENCE) return null;
     const x = kp.x * scale + offsetX;
     const y = kp.y * scale + offsetY;
-    // Discard joints that fall outside the visible camera area — cover-mode
-    // crops the edges of the captured photo, so edge joints appear off-screen
-    // and produce diagonal lines flying into the background.
+    // Cover-mode crops the captured photo's edges, so an off-screen joint
+    // here would otherwise draw a stray diagonal line into empty space.
     if (x < -10 || x > viewWidth + 10 || y < -10 || y > viewHeight + 10) return null;
     return { x, y };
   };
 
-  // Highlight the AFFECTED limb: affected right → right, left → left, both →
-  // both. Normalize first (trim + lowercase, unknown → clinical right) so it
-  // matches the backend score_pose mapping exactly. The front camera feed is
-  // MIRRORED (shirt text reads backwards), so the patient's clinical RIGHT
-  // limb is drawn with MediaPipe's LEFT segments (11/13/15, 23/25/27) and
-  // vice-versa; "both" lights up both. Swap the two single-side lines below
-  // if testing shows it inverted — kept in sync with backend tracked_sides.
+  // Front camera feed is mirrored, so clinical RIGHT maps to MediaPipe's LEFT
+  // landmarks (11/13/15/23/25/27) and vice-versa - kept in sync with the
+  // backend's score_pose tracked_sides mapping. Swap the two lines below if
+  // testing ever shows the highlight on the wrong side.
   const normalizedSide = (affectedSide || 'right').toString().trim().toLowerCase();
   const trackedSegSides =
     normalizedSide === 'both' ? ['LEFT', 'RIGHT']
-      : normalizedSide === 'left' ? ['RIGHT']   // clinical left → MediaPipe RIGHT (mirrored)
-        : ['LEFT'];                             // clinical right → MediaPipe LEFT (mirrored)
+      : normalizedSide === 'left' ? ['RIGHT']
+        : ['LEFT'];
 
   const getLineColor = (i1, i2) => {
     const key = `${i1}-${i2}`;
 
     if (isArmExercise(exerciseType)) {
       if (trackedSegSides.some((s) => SEGMENT_MAP[`ARM_${s}`].has(key))) {
-        return jointColors?.bicepCurl ?? NEUTRAL;
+        return { color: bicepColor, opacity: 1 };
       }
     } else if (isLegExercise(exerciseType)) {
       if (trackedSegSides.some((s) => SEGMENT_MAP[`LEG_${s}`].has(key))) {
-        return jointColors?.kneeFlexion ?? NEUTRAL;
+        return { color: kneeColor, opacity: 1 };
       }
     } else {
       // Generic fallback — highlight whichever angle was calculated
       if (SEGMENT_MAP.ARM_LEFT.has(key) || SEGMENT_MAP.ARM_RIGHT.has(key)) {
-        return jointColors?.bicepCurl ?? NEUTRAL;
+        return { color: bicepColor, opacity: 1 };
       }
       if (SEGMENT_MAP.LEG_LEFT.has(key) || SEGMENT_MAP.LEG_RIGHT.has(key)) {
-        return jointColors?.kneeFlexion ?? NEUTRAL;
+        return { color: kneeColor, opacity: 1 };
       }
     }
 
-    return NEUTRAL;
+    return { color: NEUTRAL, opacity: NEUTRAL_OPACITY };
   };
 
   return (
@@ -229,13 +278,14 @@ export default function SkeletonOverlay({
         // detections while allowing fully-extended arm bones to render.
         const boneLen = Math.hypot(p2.x - p1.x, p2.y - p1.y);
         if (boneLen > viewHeight * 0.55) return null;
-        const color = getLineColor(i1, i2);
+        const { color, opacity } = getLineColor(i1, i2);
         return (
           <Line
             key={`${i1}-${i2}`}
             x1={p1.x} y1={p1.y}
             x2={p2.x} y2={p2.y}
             stroke={color}
+            strokeOpacity={opacity}
             strokeWidth={5}
             strokeLinecap="round"
           />
@@ -246,9 +296,8 @@ export default function SkeletonOverlay({
         if (idx < 11) return null;
         const p = getPoint(idx);
         if (!p) return null;
-        // Pick the most relevant segment color for this joint if it's part of
-        // an active bone. Uses the same trackedSegSides as the bone lines so
-        // the dots and bones highlight the same (affected) limb(s).
+        // Same trackedSegSides as the bone lines, so dots and bones agree on
+        // which limb is highlighted.
         const isActiveArm = isArmExercise(exerciseType) && (
           ([11, 13, 15].includes(idx) && trackedSegSides.includes('LEFT')) ||
           ([12, 14, 16].includes(idx) && trackedSegSides.includes('RIGHT'))
@@ -257,11 +306,8 @@ export default function SkeletonOverlay({
           ([23, 25, 27].includes(idx) && trackedSegSides.includes('LEFT')) ||
           ([24, 26, 28].includes(idx) && trackedSegSides.includes('RIGHT'))
         );
-        const dotColor = isActiveArm
-          ? (jointColors?.bicepCurl ?? NEUTRAL)
-          : isActiveLeg
-          ? (jointColors?.kneeFlexion ?? NEUTRAL)
-          : NEUTRAL;
+        const dotColor = isActiveArm ? bicepColor : isActiveLeg ? kneeColor : NEUTRAL;
+        const dotOpacity = isActiveArm || isActiveLeg ? 1 : NEUTRAL_OPACITY;
         return (
           <Circle
             key={idx}
@@ -269,6 +315,7 @@ export default function SkeletonOverlay({
             cy={p.y}
             r={5}
             fill={dotColor}
+            fillOpacity={dotOpacity}
             stroke="rgba(0,0,0,0.35)"
             strokeWidth={1}
           />

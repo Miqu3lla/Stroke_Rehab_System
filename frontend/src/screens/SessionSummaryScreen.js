@@ -39,7 +39,9 @@ const SessionSummaryScreen = ({ route, navigation }) => {
     // so the dashboard is up-to-date when they go back. force:true bypasses
     // the query cache since the recommendation genuinely changed server-side.
     fetchRecommendation({ force: true });
-    navigation.replace('Dashboard');
+    // reset (not replace) so the Dashboard/Sessions screens buried under this
+    // one actually unmount, instead of piling up as ghost instances every workout.
+    navigation.reset({ index: 0, routes: [{ name: 'Dashboard' }] });
   };
 
   const [previousScores, setPreviousScores] = useState({});
@@ -47,7 +49,7 @@ const SessionSummaryScreen = ({ route, navigation }) => {
   // If there's no active workout session, send the user back to the dashboard
   useEffect(() => {
     if (!session.sessionId && (!session.playlist || session.playlist.length === 0)) {
-      navigation.replace('Dashboard');
+      navigation.reset({ index: 0, routes: [{ name: 'Dashboard' }] });
     }
   }, []);
 
