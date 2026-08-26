@@ -14,9 +14,7 @@ const ExerciseScreen = ({ navigation }) => {
   const { getAuthSession } = useAuthStore();
   const { session, saveCurrentScore, moveToNext, endSession } = useSessionStore();
 
-  // Keep the screen awake for the entire session so the camera feed
-  // and pose-tracking don't get interrupted by the device's auto-lock.
-  // The wake lock is released automatically when this screen unmounts.
+  // Keep the screen awake for the entire session 
   useKeepAwake();
 
 
@@ -44,12 +42,6 @@ const ExerciseScreen = ({ navigation }) => {
 
   // Saves the exercise score when the user finishes it (or the timer runs out),
   // and switches the view to the Rest screen.
-  //
-  // Phase E (sets-and-modes, 2026-06-04): forward the structured
-  // setResults[], holdScore, and mode fields useCamera now emits. Dropping
-  // them here would silently zero out the therapist dashboard's per-set
-  // fatigue curve, lose every Strength-mode hold score, and tag every
-  // session with mode=null — defeating Phase E end-to-end.
   const handleExerciseComplete = useCallback((payload) => {
     saveCurrentScore(payload);
   }, [saveCurrentScore]);

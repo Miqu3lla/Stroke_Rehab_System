@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { AppState } from 'react-native';
+import * as SplashScreen from 'expo-splash-screen';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { useFonts } from 'expo-font';
+import AnimatedSplash from './src/components/ui/AnimatedSplash';
 import { Fraunces_500Medium, Fraunces_600SemiBold } from '@expo-google-fonts/fraunces';
 import {
   PublicSans_400Regular,
@@ -19,9 +21,20 @@ import { supabase } from './src/services/supabase';
 import useAuthStore from './src/store/useAuthStore';
 import { queryClient } from './src/lib/queryClient';
 
+// Keep the native splash visible until JS is hydrated, then our
+// AnimatedSplash component takes over with the pulsing-dot animation.
+SplashScreen.preventAutoHideAsync();
+
 export default function App() {
   const navigationRef = useNavigationContainerRef();
   const [currentRoute, setCurrentRoute] = useState("Dashboard");
+  // Ensures the animated splash is visible for at least 2 s even when fonts
+  // are already cached and resolve in milliseconds.
+  const [minTimeDone, setMinTimeDone] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setMinTimeDone(true), 2000);
+    return () => clearTimeout(t);
+  }, []);
 
   // Gates the whole tree the same way the auth check does below — avoids
   // a flash of system-font text before the redesign's Fraunces/Public
@@ -96,8 +109,6 @@ export default function App() {
         })
       }
     })
-
-
     //cleanup when user logs out or app closes
     return () => {
       cancelled = true;
@@ -108,12 +119,19 @@ export default function App() {
     }
   }, [userId])
 
-  // Same pattern as AppNavigator's user===null guard — render nothing
-  // until the redesign's fonts are ready rather than flashing fallback text.
-  // Proceeds on fontError too (see above) so a failed font load degrades
-  // to system fonts instead of blocking the app forever.
-  if (!fontsLoaded && !fontError) {
-    return null;
+  // Hide the native splash as soon as fonts resolve (or fail), then hand
+  // off to AnimatedSplash which shows the logo + pulsing-dot loader.
+  // Both the font load AND the 2-second minimum timer must finish before
+  // the main app renders so the splash is always visibly animated.
+  const fontsReady = fontsLoaded || fontError;
+  useEffect(() => {
+    if (fontsReady) {
+      SplashScreen.hideAsync();
+    }
+  }, [fontsReady]);
+
+  if (!fontsReady || !minTimeDone) {
+    return <AnimatedSplash />;
   }
 
   return (

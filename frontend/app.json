@@ -4,7 +4,7 @@
     "slug": "frontend",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/theramotion-icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "runtimeVersion": {
@@ -14,7 +14,7 @@
       "url": "https://u.expo.dev/489e559d-3f76-4432-bb50-38fe53af7013"
     },
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/theramotion-splash.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
@@ -24,7 +24,7 @@
     "android": {
       "package": "com.theramotion.app",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/theramotion-icon.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
