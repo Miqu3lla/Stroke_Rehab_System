@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { View, Text } from 'react-native';
+import { View, Text, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useOnboarding } from '../hooks/useOnboarding';
 import QuestionCard from '../components/onboarding/QuestionCard';
@@ -62,13 +62,19 @@ export default function OnboardingScreen({ navigation }) {
           </View>
         </View>
 
-        <QuestionCard
-          question={currentQuestion}
-          selectedOption={selectedOption}
-          onSelect={setAnswer}
-          answers={answers}
-          setFieldAnswer={setFieldAnswer}
-        />
+        <ScrollView
+          style={{ flex: 1 }}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <QuestionCard
+            question={currentQuestion}
+            selectedOption={selectedOption}
+            onSelect={setAnswer}
+            answers={answers}
+            setFieldAnswer={setFieldAnswer}
+          />
+        </ScrollView>
 
         <OnboardingNav
           currentStep={currentStep}

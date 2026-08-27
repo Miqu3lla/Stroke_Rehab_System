@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Keyboard } from 'react-native';
 import { instance } from '../lib/api';
 import { supabase } from '../services/supabase';
 
@@ -67,10 +68,9 @@ export function useOnboarding(navigation) {
   //navigates to the next page of the onboarding
   //or submits the data to the backend if on the last page
   const handleNext = async () => {
-   
+    Keyboard.dismiss();
     if (isSubmitting) return;
 
-   
     if (!hasAnswer) return;
 
     if (!isLastStep) {
