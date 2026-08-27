@@ -81,7 +81,7 @@ export default function QuestionCard({
                   borderRadius: 18,
                   borderWidth: 2,
                   backgroundColor: isSelected
-                    ? palette.primary
+                    ? palette.primarySoft
                     : pressed
                       ? palette.primarySoft
                       : palette.canvas,
@@ -93,7 +93,7 @@ export default function QuestionCard({
                   style={{
                     fontFamily: fonts.sansSemibold,
                     fontSize: 16,
-                    color: isSelected ? '#ffffff' : palette.ink,
+                    color: isSelected ? palette.primary : palette.ink,
                     flex: 1,
                     marginRight: 8,
                   }}
@@ -101,9 +101,8 @@ export default function QuestionCard({
                   {option}
                 </Text>
 
-                {/* Checkmark icon when selected, empty circle when not */}
                 {isSelected ? (
-                  <CheckCircle2 color="#ffffff" size={22} strokeWidth={2.5} />
+                  <CheckCircle2 color={palette.primary} size={22} strokeWidth={2.5} />
                 ) : (
                   <Circle color={palette.line} size={22} strokeWidth={2.5} />
                 )}
