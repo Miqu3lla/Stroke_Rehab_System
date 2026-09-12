@@ -6,17 +6,11 @@
     "orientation": "portrait",
     "icon": "./assets/theramotion-icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
     "runtimeVersion": {
       "policy": "appVersion"
     },
     "updates": {
       "url": "https://u.expo.dev/489e559d-3f76-4432-bb50-38fe53af7013"
-    },
-    "splash": {
-      "image": "./assets/theramotion-splash.png",
-      "resizeMode": "cover",
-      "backgroundColor": "#ffffff"
     },
     "ios": {
       "supportsTablet": true
@@ -27,7 +21,6 @@
         "foregroundImage": "./assets/theramotion-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true,
       "permissions": [
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS"
@@ -41,7 +34,17 @@
       "expo-video",
       "expo-audio",
       "expo-font",
-      "expo-notifications"
+      "expo-notifications",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/theramotion-splash.png",
+          "resizeMode": "cover",
+          "backgroundColor": "#ffffff"
+        }
+      ],
+      "expo-status-bar",
+      "expo-asset"
     ],
     "extra": {
       "eas": {
