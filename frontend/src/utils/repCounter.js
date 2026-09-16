@@ -119,6 +119,23 @@ export function repAwareHint(snapshot, activeColor, fallbackHint) {
   return fallbackHint;
 }
 
+// hint_key companion to repAwareHint — voice_config's HINT_TEXT (backend
+// services/pose_service.py) carries the matching spoken text for each of
+// these. Returns null when repAwareHint isn't overriding (caller should keep
+// speaking the raw WS hint_key in that case). Kept as a separate function
+// rather than folding into repAwareHint so a caller that only wants the
+// display text isn't forced to also handle the key.
+export function repAwareHintKey(snapshot, activeColor) {
+  if (!snapshot) return null;
+  const { state } = snapshot;
+  if (state === 'at_top') {
+    if (activeColor === COLOR_GREEN) return 'rep.counted_return';
+    if (activeColor === COLOR_YELLOW) return 'rep.return_to_start';
+  }
+  if (state === 'initial' && activeColor === COLOR_GREEN) return 'rep.move_to_start';
+  return null;
+}
+
 // Checks if the exercise name targets arms.
 // "mouth" matches hand_to_mouth (elbow-flexion arm exercise) — its display
 // name "Hand to Mouth" and slug both lack any other arm keyword, so without

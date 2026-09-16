@@ -122,6 +122,18 @@ HINT_TEXT: Dict[str, str] = {
     "knee_extension.start": "Sit upright, then lift your foot and straighten your knee out in front of you",
     # Cross-body fallback
     "fallback.show_full_body": "Step back — show your full body",
+    # Cross-exercise rep/hold coaching — produced client-side by the generic
+    # RepCounter (utils/repCounter.js's repAwareHint/repAwareHintKey), not by
+    # any backend hint function above. Listed here anyway because HINT_TEXT is
+    # the single source of truth the voice generator reads from; the frontend
+    # strings must stay word-for-word identical to these or the spoken clip
+    # won't match the on-screen text. The rep count itself is left out of the
+    # spoken line (unlike the on-screen text) since a fixed clip can't carry a
+    # changing number and the HUD already shows the count visually.
+    "rep.counted_return": "Nice rep! Return to start position",
+    "rep.return_to_start": "Keep returning to start position",
+    "rep.move_to_start": "Move to start position before your first rep",
+    "hold.keep_holding": "Keep holding — every second counts",
 }
 
 
