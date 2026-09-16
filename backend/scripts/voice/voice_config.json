@@ -1,8 +1,8 @@
 {
   "_comment": "Config for scripts/generate_voice.py. To swap in the therapist's cloned voice later, set voice.reference_wav to her recording + voice.reference_text to its transcript, bump voice.id, and re-run the generator. Nothing in the app changes.",
   "voice": {
-    "id": "candidate2",
-    "reference_wav": "scripts/voice/candidates/candidate_2.wav",
+    "id": "candidate10",
+    "reference_wav": "scripts/voice/candidates/candidate_10.wav",
     "reference_text": "Great form. Raise your arm up, and hold it there."
   },
   "model_id": "openbmb/VoxCPM2",

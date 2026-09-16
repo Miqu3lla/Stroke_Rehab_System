@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback } from 'react';
-import { pickActiveColor, repAwareHint, COLOR_GREEN } from '../utils/repCounter';
+import { pickActiveColor, repAwareHint, repAwareHintKey, COLOR_GREEN } from '../utils/repCounter';
 
 const REP_SET_CAP_SECONDS = 120;
 const HOLD_FORM_BROKEN_LIMIT_MS = 30 * 1000;
@@ -295,10 +295,6 @@ const usePoseResultHandler = ({
       setJointColors(colors);
       setFeedbackColor(null);
 
-      // Voice cue for this frame's form state. The hook edge-triggers on
-      // hint_key change (with a cooldown) so this fires every frame cheaply.
-      voicePlayRef.current?.(result.hint_key);
-
       // Advance the rep counter for rep-format sets. Hold sets ignore
       // RepCounter entirely (handled by the timer + form-broken tracking).
       //
@@ -308,6 +304,13 @@ const usePoseResultHandler = ({
       //   2. Otherwise repAwareHint overrides the backend wording when a
       //      rep just counted (return to start, not hold).
       //   3. Else the WS hint stands (ascent guidance is correct mid-set).
+      //
+      // Voice mirrors whichever text wins above — repAwareHintKey resolves
+      // to the matching spoken clip, or null to keep the raw WS hint_key
+      // (the countdown case has no dedicated clip; a changing number can't
+      // be a single pre-recorded line). Exactly one voicePlayRef call per
+      // frame — calling it twice would spend the cooldown on the first
+      // (generic) key and could silently swallow the more specific one.
       if (currentSet?.format === 'reps') {
         const activeColor = pickActiveColor(colors, exerciseHint);
         const snapshot = repCounterRef.current.update(activeColor, dt);
@@ -326,6 +329,7 @@ const usePoseResultHandler = ({
         );
 
         let hintForRep;
+        let voiceHintKey = result.hint_key;
         if (snapshot.holdMsPerRep > 0
             && activeColor === COLOR_GREEN
             && snapshot.state === 'waiting_for_top'
@@ -335,8 +339,10 @@ const usePoseResultHandler = ({
           hintForRep = `Hold it — ${heldS}s of ${targetS}s`;
         } else {
           hintForRep = repAwareHint(snapshot, activeColor, result.hint);
+          voiceHintKey = repAwareHintKey(snapshot, activeColor) ?? result.hint_key;
         }
         if (hintForRep) setFeedbackText(hintForRep);
+        voicePlayRef.current?.(voiceHintKey);
 
         if (snapshot.setComplete) {
           // Set finished by rep target. Cap is handled by the elapsed-
@@ -376,18 +382,24 @@ const usePoseResultHandler = ({
 
         // Hint for hold: when actively in form, encourage the patient
         // to hold; when broken, surface the countdown to auto-end.
+        // Voice mirrors the text below, same one-call-per-frame rule as
+        // the reps branch — the countdown has no dedicated clip (the
+        // number changes every second), so it keeps the raw WS hint_key.
+        let voiceHintKey = result.hint_key;
         if (brokenMsRef.current >= 1000) {
           const remainingMs = Math.max(0, HOLD_FORM_BROKEN_LIMIT_MS - brokenMsRef.current);
           const remainingSec = Math.ceil(remainingMs / 1000);
           setFeedbackText(`Form broken — ${remainingSec}s before the set ends`);
         } else if (isInForm) {
           setFeedbackText('Keep holding — every second counts');
+          voiceHintKey = 'hold.keep_holding';
         } else if (result.hint) {
           // Brief out-of-form moments (< 1s) — show the backend hint
           // so the patient knows how to correct without the alarming
           // countdown text yet.
           setFeedbackText(result.hint);
         }
+        voicePlayRef.current?.(voiceHintKey);
 
         // Auto-end if patient has been out of form for the full window.
         if (brokenMsRef.current >= HOLD_FORM_BROKEN_LIMIT_MS) {
@@ -398,6 +410,7 @@ const usePoseResultHandler = ({
       } else {
         // Unknown set format — fall back to the backend hint.
         if (result.hint) setFeedbackText(result.hint);
+        voicePlayRef.current?.(result.hint_key);
       }
     }
 
